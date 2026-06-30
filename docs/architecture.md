@@ -84,6 +84,9 @@ The architecture is split across a small set of durable planning documents:
 - `docs/implementation_plan.md`: phased work packages and execution order.
 - `docs/decisions.md`: architecture decision backlog.
 - `docs/tower_route_inventory.md`: current Tower API readiness for Wingman Drive and signer work.
+- `docs/tower_drive_contract.md`: file, folder, version, tombstone, and delta contract for the sync core.
+- `docs/device_key_contract.md`: per-device Nostr key registration, grant, audit, and revocation contract.
+- `docs/api_gap_harness.md`: signed API smoke harness and Tower follow-up gap tickets.
 
 ## High-Level Architecture
 
@@ -250,6 +253,16 @@ The audit also found gaps that block production write sync:
 - no confirmed device-key registration/revocation route.
 
 The detailed inventory lives in `docs/tower_route_inventory.md`.
+
+### Phase 1 Contract Outcome
+
+Phase 1 defines the contract that the first native crate should implement against:
+
+- metadata sync can start with existing scope, channel, file-folder, file, and event routes;
+- lazy hydration can start with the current full-object file route;
+- write sync must stay feature-gated until Tower adds content version replacement, deletes/tombstones, byte ranges, and base-version conflict checks;
+- device auth should be modelled as per-device Nostr keys, with the current workspace-key route treated as prototype-compatible rather than final UX;
+- the core should hide Tower route details behind a client boundary so Drive-specific tree and delta routes can replace composed prototype calls later.
 
 ## Local Data Model
 

@@ -16,3 +16,6 @@ See:
 - [Decision Backlog](docs/decisions.md)
 - [Implementation Plan](docs/implementation_plan.md)
 - [Tower Route Inventory](docs/tower_route_inventory.md)
+- [Tower Drive Contract](docs/tower_drive_contract.md)
+- [Device Key Contract](docs/device_key_contract.md)
+- [API Gap Harness](docs/api_gap_harness.md)

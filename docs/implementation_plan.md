@@ -38,6 +38,9 @@ Initial capabilities:
 - `docs/architecture.md`: product and system architecture.
 - `docs/decisions.md`: architecture decision backlog for open/proposed/accepted choices.
 - `docs/tower_route_inventory.md`: current Tower route support and gaps for Drive and signer work.
+- `docs/tower_drive_contract.md`: Phase 1 file, folder, version, tombstone, and delta contract.
+- `docs/device_key_contract.md`: Phase 1 device key and NIP-98 grant contract.
+- `docs/api_gap_harness.md`: Phase 1 signed smoke harness and Tower gap tickets.
 
 ## Work Package Index
 
@@ -114,6 +117,10 @@ Findings:
 
 #### WP-01-02: File, Folder, Version, And Delta Contract
 
+Status:
+
+- Complete. `docs/tower_drive_contract.md` defines the Drive metadata, version, tombstone, content, and delta contract.
+
 Scope:
 
 - Define the Tower-side metadata contract required by the sync core.
@@ -127,7 +134,16 @@ Acceptance:
 
 - The contract supports online-only placeholders, lazy hydration, optimistic writes, conflict detection, and deletes.
 
+Findings:
+
+- The first crate can compose existing file-folder, file, object, and event routes for read-only sync.
+- Production writes require Tower to add file versions, content replacement with `base_version_id`, tombstones, range reads, and a Drive delta endpoint or documented event profile.
+
 #### WP-01-03: Device Key And NIP-98 Grant Contract
+
+Status:
+
+- Complete. `docs/device_key_contract.md` defines the device-key model and maps it to current workspace-key routes.
 
 Scope:
 
@@ -143,7 +159,16 @@ Acceptance:
 - A revoked device key fails closed.
 - A granted device key can sign NIP-98 requests without exposing the user's master key.
 
+Findings:
+
+- Current `/api/v4/user/workspace-keys` routes prove delegated Nostr-key auth but do not yet provide labelled device records, policy, last-seen, or direct revoke UX.
+- The native crate should expose device-key abstractions now and feature-gate registration/revocation until Tower adds first-class device routes.
+
 #### WP-01-04: API Gap Harness And Tickets
+
+Status:
+
+- Complete. `tools/tower_drive_smoke.mjs` and `docs/api_gap_harness.md` define the signed smoke flow and Tower follow-up work.
 
 Scope:
 
@@ -158,6 +183,11 @@ Acceptance:
 
 - A signed request can list visible files and download one file where current APIs support it.
 - Missing API routes are captured as explicit follow-up work.
+
+Findings:
+
+- The harness covers workspace discovery, descriptor, `me`, scopes, optional channels, optional file folders/files, events, and optional full file object hydration.
+- Tower gap work is captured as `WMAPP TOWER-GAP-*` follow-up cards.
 
 ### Phase 2: Native Core Spike
 

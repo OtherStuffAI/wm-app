@@ -152,7 +152,7 @@ Accept after WP-03-04 proves the prompt flow and WP-10-01 defines trusted WApp i
 
 ## ADR-0008: Tower Route Readiness For Drive
 
-Status: Proposed
+Status: Accepted
 Owner: Rick / wm21
 Related work packages: WP-01-01, WP-01-02, WP-01-04
 
@@ -168,6 +168,29 @@ Consequence:
 
 WP-02 and WP-04 can proceed against existing routes for read-only prototypes. WP-06 must wait for versioned content replacement, deletes, and conflict-safe write contracts.
 
-Finalization trigger:
+Evidence:
 
-Accept after WP-01-02 defines the missing file/folder/version/delta contract and WP-01-04 turns route gaps into Tower tasks.
+WP-01-02 defines the missing file/folder/version/delta contract in `docs/tower_drive_contract.md`. WP-01-04 defines the signed harness and turns missing Tower capabilities into `WMAPP TOWER-GAP-*` follow-up cards.
+
+## ADR-0009: First Crate Tower Contract
+
+Status: Accepted
+Owner: Rick / wm21
+Related work packages: WP-01-02, WP-01-03, WP-01-04, WP-02-01, WP-02-03
+
+Context:
+
+The first native crate needs stable boundaries before Tower has every production Drive route.
+
+Decision:
+
+Implement the first crate against a read-first Tower client boundary:
+
+- list workspaces, scopes, channels, folders, files, and events through current Tower routes;
+- hydrate file content through the current full-object file route;
+- model write methods in the interface but return an unsupported contract error until Tower adds versioned writes, tombstones, and range reads;
+- model auth as per-device Nostr keys even when local development uses an existing workspace/agent key.
+
+Consequence:
+
+WP-02 can start without waiting for Tower write-sync gaps, but it must not accidentally promise production bidirectional sync.

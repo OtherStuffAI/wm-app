@@ -157,6 +157,12 @@ These gaps should be handled before production desktop write sync:
 8. Device key registration, grant, audit, and revocation routes.
 9. WApp trusted origin/app identity route for the signer browser.
 
+Phase 1 contract documents:
+
+- `docs/tower_drive_contract.md` defines the target Drive contract.
+- `docs/device_key_contract.md` defines the target device-key contract.
+- `docs/api_gap_harness.md` defines the smoke harness and follow-up Tower cards.
+
 ## Impact On Work Packages
 
 - WP-02-03 can use current Tower routes for a typed read-only client.
@@ -164,3 +170,7 @@ These gaps should be handled before production desktop write sync:
 - WP-06-01 through WP-06-03 should not start until versioned file writes and delete/tombstone contracts exist.
 - WP-01-02 should define the missing file/folder/version/delta contract from this inventory.
 - WP-01-04 should turn the required follow-up contracts into Tower implementation tasks.
+
+## Harness
+
+`tools/tower_drive_smoke.mjs` exercises the current read-only Tower path with NIP-98 signed requests. It is the validation harness for the first native crate's initial Tower client.
