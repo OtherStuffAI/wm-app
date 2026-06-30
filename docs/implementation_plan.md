@@ -33,7 +33,642 @@ Initial capabilities:
 - Platform file integration is adapter-specific.
 - Do not fork Keychat.
 
+## Work Package Index
+
+Each phase is split into numbered work packages. Flight Deck tasks should use the same IDs in their titles so planning, task board state, and repo-local docs can be reconciled without guessing.
+
+### Phase 0: Repo And Design
+
+#### WP-00-01: Repo Seed And Documentation Baseline
+
+Scope:
+
+- Keep `wm-app` as a standalone repo under `~/code/wingmanbefree/wm-app`.
+- Maintain the initial README, architecture, and implementation plan.
+- Capture the product boundary: Flutter shell, native core, Tower source of truth, per-platform adapters.
+
+Deliverable:
+
+- Documentation baseline committed in `wm-app`.
+
+Acceptance:
+
+- `docs/architecture.md` and `docs/implementation_plan.md` explain the product shape and first implementation path.
+- The repo can be handed to a fresh worker without relying on chat context.
+
+#### WP-00-02: Architecture Decision Backlog
+
+Scope:
+
+- Create a lightweight decision log for major unresolved choices.
+- Track decisions for Flutter/Rust split, macFUSE vs File Provider, local daemon API, device key model, and WApp signer policy.
+
+Deliverable:
+
+- A decision-log document or section with open, proposed, and accepted decisions.
+
+Acceptance:
+
+- Each open decision includes owner, context, options, recommendation, and trigger for finalizing.
+
+### Phase 1: Tower Storage And Auth Contract Audit
+
+#### WP-01-01: Tower Route Inventory
+
+Scope:
+
+- Inspect `wingman-tower` Flight Deck PG task, file, folder, document, storage, and event routes.
+- Identify which current routes can support Wingman Drive and which are missing.
+
+Deliverable:
+
+- Route inventory with current route, method, auth, request payload, response payload, and suitability.
+
+Acceptance:
+
+- The audit covers file listing, file object download, storage upload, file metadata creation, scopes, channels, workspace discovery, and events.
+
+#### WP-01-02: File, Folder, Version, And Delta Contract
+
+Scope:
+
+- Define the Tower-side metadata contract required by the sync core.
+- Specify stable IDs, folder records, tombstones, version IDs, ETags, object refs, and delta cursor behavior.
+
+Deliverable:
+
+- Draft API contract for file/folder/version/delta routes.
+
+Acceptance:
+
+- The contract supports online-only placeholders, lazy hydration, optimistic writes, conflict detection, and deletes.
+
+#### WP-01-03: Device Key And NIP-98 Grant Contract
+
+Scope:
+
+- Define how per-device Nostr keys are registered, granted, audited, and revoked in Tower.
+- Confirm how Tower resolves a device npub to user/workspace permissions.
+
+Deliverable:
+
+- Device key registration and authorization contract.
+
+Acceptance:
+
+- A revoked device key fails closed.
+- A granted device key can sign NIP-98 requests without exposing the user's master key.
+
+#### WP-01-04: API Gap Harness And Tickets
+
+Scope:
+
+- Build or document a small signed script/CLI flow that exercises the current Tower API.
+- Convert missing capabilities into follow-up Tower tasks.
+
+Deliverable:
+
+- API smoke-test notes plus a list of Tower gap tasks.
+
+Acceptance:
+
+- A signed request can list visible files and download one file where current APIs support it.
+- Missing API routes are captured as explicit follow-up work.
+
+### Phase 2: Native Core Spike
+
+#### WP-02-01: Rust Workspace And Core Crate Skeleton
+
+Scope:
+
+- Add the native core project structure.
+- Define modules for auth, Tower client, sync, cache, SQLite, and control API.
+
+Deliverable:
+
+- Compilable native core skeleton.
+
+Acceptance:
+
+- Native core builds locally.
+- Module boundaries match the architecture document.
+
+#### WP-02-02: Nostr Key Manager And NIP-98 Signer
+
+Scope:
+
+- Implement device key generation/import.
+- Implement NIP-98 signing for Tower HTTP requests.
+- Use a development storage backend first, with secure storage adapters planned separately.
+
+Deliverable:
+
+- CLI/API can generate a device npub and sign a NIP-98 request.
+
+Acceptance:
+
+- Generated signatures verify against the device npub.
+- NIP-98 payload hashes are included for request bodies.
+
+#### WP-02-03: Tower HTTP Client And Models
+
+Scope:
+
+- Implement typed client calls for workspace discovery, scopes, channels, files, file objects, and events.
+- Model Tower responses in native code.
+
+Deliverable:
+
+- Core can call Tower and deserialize workspace/file metadata.
+
+Acceptance:
+
+- `wmapp-core status` and `wmapp-core list-files` work against a configured Tower.
+
+#### WP-02-04: SQLite Index And Object Cache
+
+Scope:
+
+- Add local SQLite schema for accounts, workspaces, scopes, channels, items, versions, cache entries, transfers, permissions, and cursors.
+- Add object cache layout and basic eviction metadata.
+
+Deliverable:
+
+- Local metadata index and content cache implementation.
+
+Acceptance:
+
+- A sync pass persists visible metadata.
+- A downloaded object can be read from cache after restart.
+
+#### WP-02-05: Sync CLI And Local Control API
+
+Scope:
+
+- Add a CLI and/or local control API for status, sync once, list items, cat file, pin, and evict.
+
+Deliverable:
+
+- Headless core can be tested without Flutter.
+
+Acceptance:
+
+- `sync --once` populates metadata.
+- `cat <fileId>` streams from cache or Tower.
+- `status` reports account, device npub, Tower URL, and sync health.
+
+### Phase 3: Flutter Shell Spike
+
+#### WP-03-01: Flutter App Shell And Account Setup
+
+Scope:
+
+- Create the Flutter app shell.
+- Add Tower URL configuration, account setup, key import/generate, and basic navigation.
+
+Deliverable:
+
+- Flutter app launches on at least one desktop target with account setup screens.
+
+Acceptance:
+
+- User can enter Tower URL and create/import a device key.
+
+#### WP-03-02: Native Bridge To Core Status And Config
+
+Scope:
+
+- Connect Flutter to native core through platform channels, FFI, or local control API.
+- Expose status, account config, and basic sync commands.
+
+Deliverable:
+
+- Flutter can display native core status and trigger sync.
+
+Acceptance:
+
+- UI shows device npub, Tower URL, and latest sync result from the native core.
+
+#### WP-03-03: Embedded WebView With `window.nostr` Injection
+
+Scope:
+
+- Add WebView for Flight Deck and WApps.
+- Inject a minimal NIP-07-style `window.nostr` bridge for approved origins.
+
+Deliverable:
+
+- Test page can call `window.nostr.getPublicKey()`.
+
+Acceptance:
+
+- Unknown origins do not get the bridge.
+- Approved origin receives only the supported methods.
+
+#### WP-03-04: NIP-98 Permission Prompt Prototype
+
+Scope:
+
+- Implement native approval flow for WebView NIP-98 signing requests.
+- Add remembered approval for safe Tower auth requests.
+
+Deliverable:
+
+- WebView can request and receive a NIP-98 signature through the native bridge.
+
+Acceptance:
+
+- The prompt shows origin, URL, method, event kind, and device npub before approval.
+
+### Phase 4: Linux FUSE Read-Only Mount
+
+#### WP-04-01: Linux FUSE Adapter Skeleton
+
+Scope:
+
+- Add Linux FUSE adapter.
+- Mount and unmount a local `~/FlightDeck` filesystem from the core.
+
+Deliverable:
+
+- Empty or fixture-backed mount works on Linux.
+
+Acceptance:
+
+- `ls ~/FlightDeck` returns without errors.
+- Mount and unmount are controlled by CLI or local API.
+
+#### WP-04-02: Metadata Projection To Mount Tree
+
+Scope:
+
+- Project workspace, scope, channel, folder, and file metadata into filesystem paths.
+
+Deliverable:
+
+- Read-only directory tree from local SQLite metadata.
+
+Acceptance:
+
+- `find ~/FlightDeck -maxdepth 4` shows expected Tower-backed hierarchy.
+
+#### WP-04-03: Lazy Read And Range Hydration
+
+Scope:
+
+- Implement file open/read by fetching missing ranges from Tower into cache.
+
+Deliverable:
+
+- Opening a file hydrates content on demand.
+
+Acceptance:
+
+- Files are visible before content is downloaded.
+- Reopening hydrated content uses cache.
+
+#### WP-04-04: Doc URL Entries And Read-Only Validation
+
+Scope:
+
+- Expose Flight Deck docs as `.flightdeck.url` entries.
+- Validate read-only desktop behavior.
+
+Deliverable:
+
+- Docs open in the default browser, not as editable local document bodies.
+
+Acceptance:
+
+- Opening a doc entry launches the Flight Deck URL.
+- Write operations are rejected or ignored clearly in read-only mode.
+
+### Phase 5: macOS Early Mount
+
+#### WP-05-01: macFUSE Adapter
+
+Scope:
+
+- Add macFUSE support reusing the Linux FUSE semantics where practical.
+
+Deliverable:
+
+- macOS read-only mounted Wingman Drive.
+
+Acceptance:
+
+- Finder can browse workspace/scope/channel/file hierarchy.
+- File open hydrates from Tower.
+
+#### WP-05-02: macOS Mount UX And Tray Controls
+
+Scope:
+
+- Add tray/menu controls for mount, unmount, reveal in Finder, sync status, and cache actions.
+
+Deliverable:
+
+- Basic macOS user controls for the early mount.
+
+Acceptance:
+
+- User can mount/unmount without terminal commands.
+
+#### WP-05-03: macOS Early-Mount Decision Gate
+
+Scope:
+
+- Compare macFUSE UX against File Provider needs.
+- Decide whether to continue macFUSE for beta or prioritize File Provider.
+
+Deliverable:
+
+- Written decision with recommendation.
+
+Acceptance:
+
+- Decision covers install friction, Finder behavior, placeholder UX, permissions, and distribution impact.
+
+### Phase 6: Desktop Write Support
+
+#### WP-06-01: Local Write Detection And Upload Queue
+
+Scope:
+
+- Detect creates, writes, renames, moves, and deletes in desktop adapters.
+- Queue uploads and metadata mutations.
+
+Deliverable:
+
+- Dirty local state transitions into upload queue entries.
+
+Acceptance:
+
+- A new local file appears as a pending upload.
+
+#### WP-06-02: Versioned Uploads And Conflict Handling
+
+Scope:
+
+- Implement optimistic `baseVersion` uploads.
+- Detect remote/local divergence and create conflict copies.
+
+Deliverable:
+
+- Conflict-safe upload flow.
+
+Acceptance:
+
+- Remote edit races produce a conflict file rather than overwriting remote data.
+
+#### WP-06-03: Desktop Transfer UI And Retries
+
+Scope:
+
+- Add transfer status, retries, backoff, and user-visible errors.
+
+Deliverable:
+
+- Desktop UI for upload/download queue health.
+
+Acceptance:
+
+- Failed transfers are visible and retryable.
+
+### Phase 7: Android DocumentsProvider
+
+#### WP-07-01: Android Shell And Key Storage
+
+Scope:
+
+- Add Android build target and secure key storage through Android Keystore.
+
+Deliverable:
+
+- Android app can store a device key and sign NIP-98.
+
+Acceptance:
+
+- Device key survives app restart without exposing raw private key to WebView content.
+
+#### WP-07-02: DocumentsProvider Browse And Open
+
+Scope:
+
+- Implement Android DocumentsProvider browsing and lazy open behavior.
+
+Deliverable:
+
+- Wingman appears in Android file picker flows.
+
+Acceptance:
+
+- A third-party app can browse and open a Wingman file.
+
+#### WP-07-03: Android WApp Signer WebView
+
+Scope:
+
+- Add Android WebView signer bridge and permission prompts.
+
+Deliverable:
+
+- Approved WApps can request NIP-98 signatures in the Android app.
+
+Acceptance:
+
+- Unknown origins are denied by default.
+
+### Phase 8: iOS File Provider
+
+#### WP-08-01: iOS Shell And Key Storage
+
+Scope:
+
+- Add iOS target and Keychain-backed device key storage.
+
+Deliverable:
+
+- iOS app can store a device key and sign NIP-98.
+
+Acceptance:
+
+- Key custody works across app restarts and denies direct WebView access.
+
+#### WP-08-02: iOS File Provider Enumeration
+
+Scope:
+
+- Implement iOS File Provider item enumeration from Tower metadata.
+
+Deliverable:
+
+- Wingman appears in the iOS Files app with workspace/scope/channel hierarchy.
+
+Acceptance:
+
+- Files are visible as provider-backed items without downloading all bytes.
+
+#### WP-08-03: iOS Lazy Download And Signer Browser
+
+Scope:
+
+- Implement File Provider download-on-open.
+- Add WApp browser signer support in the main iOS app.
+
+Deliverable:
+
+- iOS can open files lazily and sign WApp/Tower auth requests.
+
+Acceptance:
+
+- Opening a file downloads from Tower.
+- Approved WApp can obtain a NIP-98 signature.
+
+### Phase 9: Native File Provider Upgrade For macOS
+
+#### WP-09-01: macOS File Provider Architecture Spike
+
+Scope:
+
+- Build a minimal macOS File Provider proof of concept.
+- Map Tower item IDs to File Provider identifiers.
+
+Deliverable:
+
+- Spike showing enumeration and placeholder behavior.
+
+Acceptance:
+
+- The spike proves whether the shared core model fits macOS File Provider.
+
+#### WP-09-02: Finder Placeholder And Hydration Flow
+
+Scope:
+
+- Implement native Finder placeholder, download, eviction, and pin states.
+
+Deliverable:
+
+- File Provider-backed Finder integration.
+
+Acceptance:
+
+- Placeholder, hydrated, and pinned states behave as expected.
+
+#### WP-09-03: Migration From macFUSE To File Provider
+
+Scope:
+
+- Define migration path for users and cache/index reuse.
+
+Deliverable:
+
+- Migration plan and implementation if File Provider is adopted.
+
+Acceptance:
+
+- Existing cache and account config survive migration where practical.
+
+### Phase 10: WApp Signer Policy
+
+#### WP-10-01: WApp Trusted Identity And Origin Contract
+
+Scope:
+
+- Define how Wingman App knows a WApp origin is trusted.
+- Bind WApp records, app IDs, workspace IDs, and origins.
+
+Deliverable:
+
+- Trusted WApp identity contract.
+
+Acceptance:
+
+- Origin alone is not enough to receive signing access.
+
+#### WP-10-02: Signer Policy Engine And Audit Log
+
+Scope:
+
+- Implement local signer policy for origins, event kinds, NIP-98 targets, and NIP-44 operations.
+- Record local audit events.
+
+Deliverable:
+
+- Policy engine with conservative defaults.
+
+Acceptance:
+
+- Unknown origins are denied.
+- Arbitrary signing and decrypt requests require explicit approval.
+
+#### WP-10-03: Permission Management UI
+
+Scope:
+
+- Build UI to view, grant, revoke, and reset WApp signer permissions.
+
+Deliverable:
+
+- User-facing permission management.
+
+Acceptance:
+
+- Revoking a WApp permission immediately blocks future signing requests.
+
+### Phase 11: Packaging And Distribution
+
+#### WP-11-01: macOS And Linux Packaging
+
+Scope:
+
+- Package desktop app and native core for macOS and Linux.
+- Include install checks for macFUSE/FUSE where needed.
+
+Deliverable:
+
+- Installable desktop builds.
+
+Acceptance:
+
+- Fresh install can configure Tower, store device key, and run the app shell.
+
+#### WP-11-02: Android And iOS Distribution
+
+Scope:
+
+- Prepare Android APK/AAB and iOS TestFlight distribution.
+
+Deliverable:
+
+- Mobile install artifacts.
+
+Acceptance:
+
+- Fresh mobile install can configure Tower, store device key, and open signer browser.
+
+#### WP-11-03: Updates, Diagnostics, And Uninstall Policy
+
+Scope:
+
+- Define update channels, diagnostics export, crash/log policy, and uninstall cleanup.
+
+Deliverable:
+
+- Operational lifecycle policy and initial implementation hooks.
+
+Acceptance:
+
+- User can export diagnostics without leaking private keys.
+- Uninstall can remove keys/cache according to user choice.
+
 ## Phase 0: Repo And Design
+
+Work packages:
+
+- WP-00-01: Repo Seed And Documentation Baseline.
+- WP-00-02: Architecture Decision Backlog.
 
 Deliverables:
 
@@ -52,6 +687,13 @@ Status:
 - Complete for documentation seed.
 
 ## Phase 1: Tower Storage And Auth Contract Audit
+
+Work packages:
+
+- WP-01-01: Tower Route Inventory.
+- WP-01-02: File, Folder, Version, And Delta Contract.
+- WP-01-03: Device Key And NIP-98 Grant Contract.
+- WP-01-04: API Gap Harness And Tickets.
 
 Purpose:
 
@@ -98,6 +740,14 @@ Validation:
 - Missing APIs are captured as implementation tickets.
 
 ## Phase 2: Native Core Spike
+
+Work packages:
+
+- WP-02-01: Rust Workspace And Core Crate Skeleton.
+- WP-02-02: Nostr Key Manager And NIP-98 Signer.
+- WP-02-03: Tower HTTP Client And Models.
+- WP-02-04: SQLite Index And Object Cache.
+- WP-02-05: Sync CLI And Local Control API.
 
 Purpose:
 
@@ -149,6 +799,13 @@ Validation:
 
 ## Phase 3: Flutter Shell Spike
 
+Work packages:
+
+- WP-03-01: Flutter App Shell And Account Setup.
+- WP-03-02: Native Bridge To Core Status And Config.
+- WP-03-03: Embedded WebView With `window.nostr` Injection.
+- WP-03-04: NIP-98 Permission Prompt Prototype.
+
 Purpose:
 
 Prove Flutter can act as the user-facing shell and control the native core.
@@ -173,6 +830,13 @@ Validation:
 - WebView page can request a NIP-98 signature for an approved Tower URL.
 
 ## Phase 4: Linux FUSE Read-Only Mount
+
+Work packages:
+
+- WP-04-01: Linux FUSE Adapter Skeleton.
+- WP-04-02: Metadata Projection To Mount Tree.
+- WP-04-03: Lazy Read And Range Hydration.
+- WP-04-04: Doc URL Entries And Read-Only Validation.
 
 Purpose:
 
@@ -205,6 +869,12 @@ Acceptance:
 
 ## Phase 5: macOS Early Mount
 
+Work packages:
+
+- WP-05-01: macFUSE Adapter.
+- WP-05-02: macOS Mount UX And Tray Controls.
+- WP-05-03: macOS Early-Mount Decision Gate.
+
 Purpose:
 
 Get macOS desktop parity before investing in File Provider.
@@ -229,6 +899,12 @@ Decision Gate:
 
 ## Phase 6: Desktop Write Support
 
+Work packages:
+
+- WP-06-01: Local Write Detection And Upload Queue.
+- WP-06-02: Versioned Uploads And Conflict Handling.
+- WP-06-03: Desktop Transfer UI And Retries.
+
 Purpose:
 
 Allow local file creation and edits with conflict-safe upload.
@@ -252,6 +928,12 @@ Validation:
 
 ## Phase 7: Android DocumentsProvider
 
+Work packages:
+
+- WP-07-01: Android Shell And Key Storage.
+- WP-07-02: DocumentsProvider Browse And Open.
+- WP-07-03: Android WApp Signer WebView.
+
 Purpose:
 
 Expose Wingman Drive through Android's document provider/file picker model.
@@ -272,6 +954,12 @@ Validation:
 - WApp WebView can request a NIP-98 signature from native code.
 
 ## Phase 8: iOS File Provider
+
+Work packages:
+
+- WP-08-01: iOS Shell And Key Storage.
+- WP-08-02: iOS File Provider Enumeration.
+- WP-08-03: iOS Lazy Download And Signer Browser.
 
 Purpose:
 
@@ -296,6 +984,12 @@ Validation:
 
 ## Phase 9: Native File Provider Upgrade For macOS
 
+Work packages:
+
+- WP-09-01: macOS File Provider Architecture Spike.
+- WP-09-02: Finder Placeholder And Hydration Flow.
+- WP-09-03: Migration From macFUSE To File Provider.
+
 Purpose:
 
 Move macOS from a FUSE-style prototype to a polished cloud-files integration if needed.
@@ -314,6 +1008,12 @@ Validation:
 - App handles restart, offline, and account revocation cleanly.
 
 ## Phase 10: WApp Signer Policy
+
+Work packages:
+
+- WP-10-01: WApp Trusted Identity And Origin Contract.
+- WP-10-02: Signer Policy Engine And Audit Log.
+- WP-10-03: Permission Management UI.
 
 Purpose:
 
@@ -340,6 +1040,12 @@ Validation:
 - Permission revocation takes effect immediately.
 
 ## Phase 11: Packaging And Distribution
+
+Work packages:
+
+- WP-11-01: macOS And Linux Packaging.
+- WP-11-02: Android And iOS Distribution.
+- WP-11-03: Updates, Diagnostics, And Uninstall Policy.
 
 Purpose:
 
