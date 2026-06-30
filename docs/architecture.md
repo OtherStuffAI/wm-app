@@ -17,7 +17,6 @@ The app should feel like a cloud drive plus a secure Wingman browser:
 
 ## Non-Goals
 
-- Do not fork Keychat. It is only a reference for the native signer plus embedded browser pattern.
 - Do not introduce peer-to-peer sync as an authority path. Tower is the source of truth.
 - Do not make SovThing part of the product architecture. It is useful prior art for file transfer and sync UX only.
 - Do not build a full bidirectional desktop editor for Flight Deck docs in v1.
@@ -76,6 +75,15 @@ Tower is the authority for:
 - WApp assignment and launch visibility.
 
 The app is a local projection and cache. It must not decide durable access rights without Tower verification.
+
+## Planning Documents
+
+The architecture is split across a small set of durable planning documents:
+
+- `docs/architecture.md`: product and system architecture.
+- `docs/implementation_plan.md`: phased work packages and execution order.
+- `docs/decisions.md`: architecture decision backlog.
+- `docs/tower_route_inventory.md`: current Tower API readiness for Wingman Drive and signer work.
 
 ## High-Level Architecture
 
@@ -217,6 +225,31 @@ A file record should include:
 - Sync flags or server hints where needed.
 
 Folders should be records with stable IDs, not inferred S3 prefixes.
+
+### Current Tower Route Reality
+
+The initial Tower route audit shows that Tower already exposes enough typed PG routes for a read-only Wingman Drive prototype:
+
+- visible workspace, scope, and channel listing;
+- channel file-folder listing and creation;
+- channel file listing and file metadata creation;
+- file metadata read and metadata patch;
+- full file-object read as base64 JSON through the Flight Deck PG file object route;
+- generic storage object prepare, upload, complete, metadata, and content routes;
+- docs listing and doc body read for `.flightdeck.url` or later read-only export behavior;
+- visible event polling and SSE streaming.
+
+The audit also found gaps that block production write sync:
+
+- no byte-range reads;
+- no file delete/tombstone route;
+- no folder delete/tombstone route;
+- no first-class file content replacement/version route;
+- no optimistic `baseVersion` upload contract for file edits;
+- no Drive-specific tree/delta endpoint beyond the general visible event feed;
+- no confirmed device-key registration/revocation route.
+
+The detailed inventory lives in `docs/tower_route_inventory.md`.
 
 ## Local Data Model
 

@@ -13,4 +13,6 @@ Tower remains the source of truth for workspace identity, scopes, channels, grou
 See:
 
 - [Architecture](docs/architecture.md)
+- [Decision Backlog](docs/decisions.md)
 - [Implementation Plan](docs/implementation_plan.md)
+- [Tower Route Inventory](docs/tower_route_inventory.md)

@@ -33,6 +33,12 @@ Initial capabilities:
 - Platform file integration is adapter-specific.
 - Do not fork Keychat.
 
+## Supporting Documents
+
+- `docs/architecture.md`: product and system architecture.
+- `docs/decisions.md`: architecture decision backlog for open/proposed/accepted choices.
+- `docs/tower_route_inventory.md`: current Tower route support and gaps for Drive and signer work.
+
 ## Work Package Index
 
 Each phase is split into numbered work packages. Flight Deck tasks should use the same IDs in their titles so planning, task board state, and repo-local docs can be reconciled without guessing.
@@ -40,6 +46,10 @@ Each phase is split into numbered work packages. Flight Deck tasks should use th
 ### Phase 0: Repo And Design
 
 #### WP-00-01: Repo Seed And Documentation Baseline
+
+Status:
+
+- Complete. The repo has a documentation baseline plus supporting decision and route-inventory docs.
 
 Scope:
 
@@ -50,6 +60,7 @@ Scope:
 Deliverable:
 
 - Documentation baseline committed in `wm-app`.
+- README links to architecture, implementation plan, decision backlog, and route inventory.
 
 Acceptance:
 
@@ -58,6 +69,10 @@ Acceptance:
 
 #### WP-00-02: Architecture Decision Backlog
 
+Status:
+
+- Complete. `docs/decisions.md` tracks the current architecture decisions and finalization triggers.
+
 Scope:
 
 - Create a lightweight decision log for major unresolved choices.
@@ -65,7 +80,7 @@ Scope:
 
 Deliverable:
 
-- A decision-log document or section with open, proposed, and accepted decisions.
+- `docs/decisions.md` with open, proposed, and accepted decisions.
 
 Acceptance:
 
@@ -75,6 +90,10 @@ Acceptance:
 
 #### WP-01-01: Tower Route Inventory
 
+Status:
+
+- Complete. `docs/tower_route_inventory.md` records current Tower route support and Drive-blocking gaps.
+
 Scope:
 
 - Inspect `wingman-tower` Flight Deck PG task, file, folder, document, storage, and event routes.
@@ -82,11 +101,16 @@ Scope:
 
 Deliverable:
 
-- Route inventory with current route, method, auth, request payload, response payload, and suitability.
+- `docs/tower_route_inventory.md` with current route, method, auth, response suitability, and gaps.
 
 Acceptance:
 
 - The audit covers file listing, file object download, storage upload, file metadata creation, scopes, channels, workspace discovery, and events.
+
+Findings:
+
+- Existing Tower routes are enough for a read-only metadata listing and full-object hydration prototype.
+- Production write sync still needs byte-range reads, file/folder deletes, file content version replacement, optimistic `baseVersion`, and a Drive-specific tree/delta or event-consumption contract.
 
 #### WP-01-02: File, Folder, Version, And Delta Contract
 
