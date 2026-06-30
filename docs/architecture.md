@@ -146,6 +146,8 @@ Rust/native code is a better fit for:
 - Conflict detection.
 - Platform service integration.
 
+The initial Rust workspace now starts at `crates/wmapp-core`. Its first implemented surface is auth: development device-key generation/import and NIP-98 signing. The Tower, sync, cache, SQLite, and control modules are present as crate boundaries for the next Phase 2 work packages.
+
 ## Platform Adapters
 
 The shared core should be reused, but the OS integration must be platform-specific.

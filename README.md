@@ -10,6 +10,19 @@ The initial product combines:
 
 Tower remains the source of truth for workspace identity, scopes, channels, groups, file metadata, and object storage.
 
+## Native Core
+
+The first Rust core crate lives at `crates/wmapp-core`.
+
+Useful commands:
+
+```bash
+cargo test
+cargo run --bin wmapp-core -- status
+cargo run --bin wmapp-core -- device generate --show-secret
+cargo run --bin wmapp-core -- sign-nip98 --secret <hex-or-nsec> --method POST --url https://tower.example/api --body '{"hello":"wingman"}'
+```
+
 See:
 
 - [Architecture](docs/architecture.md)

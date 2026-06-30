@@ -223,3 +223,18 @@ The first native crate should expose:
 - `revoke_device` as a Tower-client method, initially returning `UnsupportedByTowerContract`
 
 The crate should keep key storage behind an interface so Flutter and platform adapters can use Keychain, libsecret/KWallet, Android Keystore, and iOS Keychain later.
+
+## Implemented In WP-02-02
+
+`crates/wmapp-core` now implements:
+
+- `DeviceKey::generate`;
+- `DeviceKey::import` for hex and `nsec` secrets;
+- `DeviceKey::npub` and public-key hex derivation;
+- `DevelopmentKeyStore` as a non-secure development storage backend;
+- `Nip98Signer` for kind `27235` events;
+- `wmapp-core device generate`;
+- `wmapp-core device import`;
+- `wmapp-core sign-nip98`.
+
+Platform secure storage remains a later adapter task.

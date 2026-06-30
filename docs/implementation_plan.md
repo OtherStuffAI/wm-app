@@ -193,6 +193,10 @@ Findings:
 
 #### WP-02-01: Rust Workspace And Core Crate Skeleton
 
+Status:
+
+- Complete. `crates/wmapp-core` is a compiling Rust crate with auth, Tower client, sync, cache, SQLite, and control module boundaries.
+
 Scope:
 
 - Add the native core project structure.
@@ -207,7 +211,16 @@ Acceptance:
 - Native core builds locally.
 - Module boundaries match the architecture document.
 
+Findings:
+
+- The Tower client boundary is read-first and leaves write methods behind `UnsupportedByTowerContract` errors until Tower gap cards land.
+- Cache, SQLite, sync, and control modules are intentionally skeletal; WP-02-04 and WP-02-05 will fill them in.
+
 #### WP-02-02: Nostr Key Manager And NIP-98 Signer
+
+Status:
+
+- Complete. `wmapp-core` can generate/import development device keys and sign NIP-98 requests.
 
 Scope:
 
@@ -223,6 +236,12 @@ Acceptance:
 
 - Generated signatures verify against the device npub.
 - NIP-98 payload hashes are included for request bodies.
+
+Findings:
+
+- Device keys round-trip through hex and `nsec`.
+- `sign-nip98` emits a `Nostr <base64-json-event>` authorization header.
+- Unit tests verify Schnorr signatures and assert the `payload` tag is present for non-empty bodies.
 
 #### WP-02-03: Tower HTTP Client And Models
 
