@@ -6,9 +6,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
     DeviceKey, DeviceSeenRequest, DriveDeltaOptions, DriveItemType, DriveProjection,
-    DriveTreeOptions, Nip98Request, Nip98Signer, ObjectCache, ObjectCacheConfig, ObjectCacheError,
-    RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig, SyncEngine, TowerClient,
-    TowerClientConfig, VisibleMetadata,
+    DriveTreeOptions, FuseMountConfig, Nip98Request, Nip98Signer, ObjectCache, ObjectCacheConfig,
+    ObjectCacheError, RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig, SyncEngine,
+    TowerClient, TowerClientConfig, VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -609,12 +609,18 @@ fn mount_drive(args: MountArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    Err(format!(
-        "kernel mounting is not wired in this build yet. On macOS install macFUSE before the adapter is enabled. For now use: wmapp-core mount --dry-run --workspace-id {} --mountpoint {}",
-        args.workspace_id,
+    eprintln!(
+        "mounting read-only Wingman Drive projection at {}. Keep this process running; unmount from another shell when finished.",
         mountpoint.display()
-    )
-    .into())
+    );
+    wmapp_core::mount_read_only_projection(
+        projection,
+        FuseMountConfig {
+            mountpoint,
+            fs_name: format!("wmapp-{}", args.workspace_id),
+        },
+    )?;
+    Ok(())
 }
 
 fn validate_channel(args: ChannelArgs) -> Result<(), Box<dyn std::error::Error>> {

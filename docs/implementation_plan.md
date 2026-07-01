@@ -634,7 +634,7 @@ Acceptance:
 
 Status:
 
-- Started on macOS as a shared projection skeleton. `wmapp-core mount --dry-run` now renders the read-only Drive tree from local SQLite metadata. macFUSE 5.2.0 is installed on the current Mac host; actual kernel mounting is still blocked on FUSE/macFUSE adapter work in `wmapp-core`.
+- Adapter skeleton implemented in `wmapp-core`. `mount --dry-run` renders the read-only Drive tree from local SQLite metadata, and non-dry-run `mount` now enters the FUSE/macFUSE foreground mount path after host preflight. On the current Mac host, macFUSE 5.2.0 is installed but the kernel device cannot be loaded yet, so live `ls` acceptance remains blocked by host macFUSE approval/loading rather than missing adapter code.
 
 Scope:
 
@@ -652,10 +652,10 @@ Acceptance:
 
 Current validation:
 
-- `cargo test` passes with projection coverage.
+- `cargo test` passes with projection and mount-tree coverage.
 - Live dry-run on macOS after `sync --once` projected `/Wingman Suite/Wingman App/wmapp-cli-test.txt` from Tower-backed metadata.
 - Host macFUSE check on 2026-07-01 found `/Library/Filesystems/macfuse.fs`, package receipts, and `mount_macfuse` version `5.2.0` under `/Library/Filesystems/macfuse.fs/Contents/Resources/`.
-- Running `mount` without `--dry-run` fails closed with a macFUSE/FUSE guidance message instead of pretending a kernel mount exists.
+- Running `mount` without `--dry-run` on 2026-07-02 fails closed at macOS preflight: `/Library/Filesystems/macfuse.fs/Contents/Resources/load_macfuse` exits `1`, and no `/dev/macfuse*`, `/dev/osxfuse*`, or `/dev/fuse*` device is present. Real `ls` acceptance is not passed on this host until macFUSE can load.
 
 #### WP-04-02: Metadata Projection To Mount Tree
 

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod cache;
 pub mod control;
+pub mod mount;
 pub mod projection;
 pub mod sqlite;
 pub mod sync;
@@ -10,6 +11,7 @@ pub use auth::{
     DevelopmentKeyStore, DeviceKey, DeviceKeyStore, Nip98Request, Nip98Signer, SignedNip98Event,
 };
 pub use cache::{ObjectCache, ObjectCacheConfig, ObjectCacheError};
+pub use mount::{mount_read_only_projection, FuseMountConfig, FuseMountError};
 pub use projection::{DriveProjection, DriveProjectionError, ProjectedEntry, ProjectedEntryKind};
 pub use sqlite::{
     CacheEntry, CacheEntryInput, LocalChannel, LocalItem, LocalScope, SqliteIndex,

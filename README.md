@@ -44,9 +44,10 @@ cargo run --bin wmapp-core -- cat --workspace-id <workspace-id> <file-id> --outp
 cargo run --bin wmapp-core -- pin <file-id>
 cargo run --bin wmapp-core -- evict <file-id> --force
 cargo run --bin wmapp-core -- mount --dry-run --workspace-id <workspace-id> --mountpoint ~/FlightDeck
+cargo run --bin wmapp-core -- mount --workspace-id <workspace-id> --mountpoint ~/FlightDeck
 ```
 
-The `mount --dry-run` command prints the read-only Drive tree that a FUSE/macFUSE mount will expose. Actual kernel mounting requires FUSE on Linux or macFUSE on macOS and is intentionally gated until the host driver and adapter are available.
+The `mount --dry-run` command prints the read-only Drive tree that the FUSE/macFUSE adapter exposes. The non-dry-run mount is a foreground read-only kernel mount: keep the process running and unmount the mountpoint from another shell. On macOS the CLI preflights macFUSE and fails clearly if the kernel device cannot be loaded or approved.
 
 ## Flutter Shell
 
