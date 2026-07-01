@@ -1,8 +1,13 @@
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
-    DeviceKey, DriveItemType, DriveTreeOptions, Nip98Request, Nip98Signer, TowerClient,
-    TowerClientConfig,
+    DeviceKey, DriveDeltaOptions, DriveItemType, DriveTreeOptions, Nip98Request, Nip98Signer,
+    ObjectCache, ObjectCacheConfig, ObjectCacheError, SqliteIndex, SqliteIndexConfig, SyncEngine,
+    TowerClient, TowerClientConfig, VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -15,9 +20,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print native core status, optionally including live Tower read status.
+    /// Print native core status, optionally including live Tower and local index status.
     Status(StatusArgs),
-    /// List visible Drive file/folder items from Tower.
+    /// Run a one-shot Tower-to-local metadata sync.
+    Sync(SyncArgs),
+    /// List locally indexed Drive file/folder items.
+    ListItems(ListItemsArgs),
+    /// Read a file from cache, hydrating from Tower on cache miss when Tower config is present.
+    Cat(CatArgs),
+    /// Keep a cached file local.
+    Pin(CacheFileArgs),
+    /// Remove a cached file from local storage.
+    Evict(EvictArgs),
+    /// List visible Drive file/folder items from Tower without persisting them.
     ListFiles(ListFilesArgs),
     /// Generate or inspect development device keys.
     Device {
@@ -51,12 +66,91 @@ struct TowerReadArgs {
 }
 
 #[derive(Parser, Debug, Clone, Default)]
+struct LocalDataArgs {
+    /// Local wmapp data directory. Falls back to WMAPP_DATA_DIR or ~/.wmapp.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug, Clone, Default)]
 struct StatusArgs {
     #[command(flatten)]
     tower: TowerReadArgs,
+    #[command(flatten)]
+    local: LocalDataArgs,
     /// Optional workspace id for descriptor/me checks.
     #[arg(long)]
     workspace_id: Option<String>,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct SyncArgs {
+    #[command(flatten)]
+    tower: TowerReadArgs,
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// Run a single foreground sync pass. Continuous sync is intentionally out of scope for WP-02-05.
+    #[arg(long)]
+    once: bool,
+    /// Workspace id to sync.
+    #[arg(long)]
+    workspace_id: String,
+    /// Optional scope filter.
+    #[arg(long)]
+    scope_id: Option<String>,
+    /// Optional channel filter.
+    #[arg(long)]
+    channel_id: Option<String>,
+    /// Optional parent folder filter.
+    #[arg(long)]
+    parent_folder_id: Option<String>,
+    /// Page size.
+    #[arg(long, default_value_t = 100)]
+    limit: u16,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct ListItemsArgs {
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// Workspace id to list from the local index.
+    #[arg(long)]
+    workspace_id: String,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct CatArgs {
+    #[command(flatten)]
+    tower: TowerReadArgs,
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// Workspace id used for Tower hydration on cache miss.
+    #[arg(long)]
+    workspace_id: String,
+    /// Write bytes to this file instead of stdout.
+    #[arg(long)]
+    output: Option<PathBuf>,
+    /// File id to read.
+    file_id: String,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct CacheFileArgs {
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// File id to pin.
+    file_id: String,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct EvictArgs {
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// Evict even when the cache entry is pinned.
+    #[arg(long)]
+    force: bool,
+    /// File id to evict.
+    file_id: String,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -106,10 +200,22 @@ struct DeviceOutput {
     nsec: Option<String>,
 }
 
+#[derive(Debug)]
+struct LocalPaths {
+    data_dir: PathBuf,
+    db_path: PathBuf,
+    cache_root: PathBuf,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Status(args) => print_status(args)?,
+        Command::Sync(args) => sync_once(args)?,
+        Command::ListItems(args) => list_items(args)?,
+        Command::Cat(args) => cat_file(args)?,
+        Command::Pin(args) => pin_file(args)?,
+        Command::Evict(args) => evict_file(args)?,
         Command::ListFiles(args) => list_files(args)?,
         Command::Device { command } => match command {
             DeviceCommand::Generate { show_secret } => {
@@ -143,6 +249,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let local_status = match SqliteIndex::open(SqliteIndexConfig {
+        path: local.db_path.clone(),
+    }) {
+        Ok(index) => serde_json::json!({
+            "data_dir": local.data_dir,
+            "db_path": index.path(),
+            "cache_root": local.cache_root,
+            "schema_version": index.schema_version()?,
+        }),
+        Err(error) => serde_json::json!({
+            "data_dir": local.data_dir,
+            "db_path": local.db_path,
+            "cache_root": local.cache_root,
+            "error": error.to_string(),
+        }),
+    };
+
     match tower_client_from_args(&args.tower, false)? {
         Some(client) => {
             let service = client.service()?;
@@ -157,6 +281,7 @@ fn print_status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                 "ok": true,
                 "crate": "wmapp-core",
                 "phase": "native-core-spike",
+                "local": local_status,
                 "tower": {
                     "url": client.config().tower_url.as_str(),
                     "app_npub": client.config().app_npub,
@@ -175,6 +300,7 @@ fn print_status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                 "ok": true,
                 "crate": "wmapp-core",
                 "phase": "native-core-spike",
+                "local": local_status,
                 "tower": {
                     "configured": false,
                     "missing": ["tower_url", "app_npub", "secret"]
@@ -182,6 +308,201 @@ fn print_status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
             }))?;
         }
     }
+    Ok(())
+}
+
+fn sync_once(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
+    if !args.once {
+        return Err("only sync --once is supported in WP-02-05".into());
+    }
+    let client =
+        tower_client_from_args(&args.tower, true)?.ok_or("Tower config is required for sync")?;
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+
+    let workspaces = client.list_workspaces()?;
+    let descriptor = client.workspace_descriptor(&args.workspace_id)?;
+    let me = client.workspace_me(&args.workspace_id)?;
+    let scopes_response = client.list_scopes(&args.workspace_id)?;
+    let scopes: Vec<_> = scopes_response
+        .scopes
+        .into_iter()
+        .filter(|scope| {
+            args.scope_id
+                .as_deref()
+                .map(|scope_id| scope.id == scope_id)
+                .unwrap_or(true)
+        })
+        .collect();
+
+    let mut channels = Vec::new();
+    for scope in &scopes {
+        let response = client.list_channels(&args.workspace_id, &scope.id, Some(args.limit))?;
+        channels.extend(response.channels.into_iter().filter(|channel| {
+            args.channel_id
+                .as_deref()
+                .map(|channel_id| channel.id == channel_id)
+                .unwrap_or(true)
+        }));
+    }
+
+    let previous_delta_cursor = index.get_cursor(
+        &args.workspace_id,
+        "drive_delta",
+        args.scope_id.as_deref(),
+        args.channel_id.as_deref(),
+    )?;
+    let tree = client.drive_tree(
+        &args.workspace_id,
+        DriveTreeOptions {
+            scope_id: args.scope_id.as_deref(),
+            channel_id: args.channel_id.as_deref(),
+            parent_folder_id: args.parent_folder_id.as_deref(),
+            cursor: None,
+            limit: Some(args.limit),
+        },
+    )?;
+    let delta = client.drive_delta(
+        &args.workspace_id,
+        DriveDeltaOptions {
+            scope_id: args.scope_id.as_deref(),
+            channel_id: args.channel_id.as_deref(),
+            cursor: previous_delta_cursor.as_deref(),
+            limit: Some(args.limit),
+        },
+    )?;
+
+    let summary = SyncEngine::new().persist_visible_metadata(
+        &index,
+        VisibleMetadata {
+            workspace_summaries: &workspaces.workspaces,
+            workspace_descriptor: Some(&descriptor),
+            workspace_me: Some(&me),
+            scopes: &scopes,
+            channels: &channels,
+            drive_tree: Some(&tree),
+            drive_delta: Some(&delta),
+        },
+    )?;
+    index.put_cursor(
+        &args.workspace_id,
+        "drive_tree",
+        args.scope_id.as_deref(),
+        args.channel_id.as_deref(),
+        tree.next_cursor.as_deref(),
+        tree.items.iter().map(|item| item.row_version).max(),
+    )?;
+    index.put_cursor(
+        &args.workspace_id,
+        "drive_delta",
+        args.scope_id.as_deref(),
+        args.channel_id.as_deref(),
+        delta.next_cursor.as_deref(),
+        delta
+            .changes
+            .iter()
+            .map(|change| change.event_row_version)
+            .max(),
+    )?;
+    let items = index.list_items(&args.workspace_id)?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "workspace_id": args.workspace_id,
+        "scope_id": args.scope_id,
+        "channel_id": args.channel_id,
+        "parent_folder_id": args.parent_folder_id,
+        "data_dir": local.data_dir,
+        "db_path": local.db_path,
+        "cache_root": local.cache_root,
+        "summary": summary,
+        "local_item_count": items.len(),
+        "tree_next_cursor": tree.next_cursor,
+        "delta_next_cursor": delta.next_cursor,
+    }))?;
+    Ok(())
+}
+
+fn list_items(args: ListItemsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+    let items = index.list_items(&args.workspace_id)?;
+    let file_count = items.iter().filter(|item| item.item_type == "file").count();
+    let folder_count = items
+        .iter()
+        .filter(|item| item.item_type == "folder")
+        .count();
+    print_json(&serde_json::json!({
+        "ok": true,
+        "workspace_id": args.workspace_id,
+        "data_dir": local.data_dir,
+        "db_path": local.db_path,
+        "file_count": file_count,
+        "folder_count": folder_count,
+        "items": items,
+    }))?;
+    Ok(())
+}
+
+fn cat_file(args: CatArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+    let cache = open_cache(&local)?;
+
+    let (bytes, source) = match cache.read_file(&index, &args.file_id) {
+        Ok(bytes) => (bytes, "cache"),
+        Err(ObjectCacheError::MissingEntry(_)) => {
+            let client = tower_client_from_args(&args.tower, true)?
+                .ok_or("Tower config is required to hydrate an uncached file")?;
+            let object = client.get_file_object(&args.workspace_id, &args.file_id)?;
+            cache.put_file_object(&index, &object)?;
+            (cache.read_file(&index, &args.file_id)?, "tower")
+        }
+        Err(error) => return Err(Box::new(error)),
+    };
+
+    if let Some(output) = args.output {
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&output, &bytes)?;
+        print_json(&serde_json::json!({
+            "ok": true,
+            "workspace_id": args.workspace_id,
+            "file_id": args.file_id,
+            "source": source,
+            "output": output,
+            "bytes": bytes.len(),
+        }))?;
+    } else {
+        io::stdout().write_all(&bytes)?;
+    }
+    Ok(())
+}
+
+fn pin_file(args: CacheFileArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+    let cache = open_cache(&local)?;
+    let entry = cache.set_pinned(&index, &args.file_id, true)?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "file_id": args.file_id,
+        "entry": entry,
+    }))?;
+    Ok(())
+}
+
+fn evict_file(args: EvictArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+    let cache = open_cache(&local)?;
+    let entry = cache.evict_file(&index, &args.file_id, args.force)?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "file_id": args.file_id,
+        "evicted": entry,
+        "forced": args.force,
+    }))?;
     Ok(())
 }
 
@@ -235,6 +556,35 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+fn open_index(local: &LocalPaths) -> Result<SqliteIndex, Box<dyn std::error::Error>> {
+    if let Some(parent) = local.db_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(SqliteIndex::open(SqliteIndexConfig {
+        path: local.db_path.clone(),
+    })?)
+}
+
+fn open_cache(local: &LocalPaths) -> Result<ObjectCache, Box<dyn std::error::Error>> {
+    Ok(ObjectCache::open(ObjectCacheConfig {
+        root: local.cache_root.clone(),
+    })?)
+}
+
+fn local_paths(args: &LocalDataArgs) -> Result<LocalPaths, Box<dyn std::error::Error>> {
+    let data_dir = args
+        .data_dir
+        .clone()
+        .or_else(|| std::env::var_os("WMAPP_DATA_DIR").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".wmapp")))
+        .ok_or("missing data directory; pass --data-dir or set WMAPP_DATA_DIR")?;
+    Ok(LocalPaths {
+        db_path: data_dir.join("index.sqlite"),
+        cache_root: data_dir.join("cache"),
+        data_dir,
+    })
+}
+
 fn tower_client_from_args(
     args: &TowerReadArgs,
     required: bool,
@@ -255,7 +605,7 @@ fn tower_client_from_args(
         .or_else(|| std::env::var("WINGMAN_PRIV").ok())
         .or_else(|| std::env::var("AGENT_NSEC").ok());
 
-    if tower_url.is_none() && app_npub.is_none() && !required {
+    if tower_url.is_none() && app_npub.is_none() && secret.is_none() && !required {
         return Ok(None);
     }
 

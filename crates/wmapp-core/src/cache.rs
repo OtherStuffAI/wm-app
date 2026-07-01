@@ -6,7 +6,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::sqlite::{CacheEntryInput, SqliteIndex, SqliteIndexError};
+use crate::sqlite::{CacheEntry, CacheEntryInput, SqliteIndex, SqliteIndexError};
 use crate::tower::FileObjectResponse;
 
 #[derive(Debug, Error)]
@@ -19,6 +19,8 @@ pub enum ObjectCacheError {
     Index(#[from] SqliteIndexError),
     #[error("cache entry is missing for file {0}")]
     MissingEntry(String),
+    #[error("cache entry for file {0} is pinned; pass force to evict")]
+    PinnedEntry(String),
     #[error("cached object path escapes cache root")]
     InvalidPath,
 }
@@ -94,6 +96,38 @@ impl ObjectCache {
         Ok(bytes)
     }
 
+    pub fn set_pinned(
+        &self,
+        index: &SqliteIndex,
+        file_id: &str,
+        pinned: bool,
+    ) -> Result<CacheEntry, ObjectCacheError> {
+        index
+            .set_cache_entry_pinned_for_file(file_id, pinned)?
+            .ok_or_else(|| ObjectCacheError::MissingEntry(file_id.to_string()))
+    }
+
+    pub fn evict_file(
+        &self,
+        index: &SqliteIndex,
+        file_id: &str,
+        force: bool,
+    ) -> Result<CacheEntry, ObjectCacheError> {
+        let entry = index
+            .cache_entry_for_file(file_id)?
+            .ok_or_else(|| ObjectCacheError::MissingEntry(file_id.to_string()))?;
+        if entry.pinned && !force {
+            return Err(ObjectCacheError::PinnedEntry(file_id.to_string()));
+        }
+
+        let path = self.path_from_relative(&entry.relative_path)?;
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        index.remove_cache_entry_for_file(file_id)?;
+        Ok(entry)
+    }
+
     pub fn object_path(&self, storage_object_id: &str) -> Result<PathBuf, ObjectCacheError> {
         let safe_id = storage_object_id.trim();
         if safe_id.is_empty() || safe_id.contains('/') || safe_id.contains('\\') || safe_id == ".."
@@ -166,6 +200,46 @@ mod tests {
         assert_eq!(bytes, b"hello cache");
         let item = reopened_index.get_item("file-1").unwrap().unwrap();
         assert_eq!(item.local_state, "cached");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pinned_cache_entries_require_force_to_evict() {
+        let root = std::env::temp_dir().join(format!(
+            "wmapp-cache-pin-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let index = SqliteIndex::open(SqliteIndexConfig {
+            path: root.join("index.sqlite"),
+        })
+        .unwrap();
+        let cache = ObjectCache::open(ObjectCacheConfig {
+            root: root.join("cache"),
+        })
+        .unwrap();
+        cache
+            .put_file_object(&index, &file_object_response(b"pin me"))
+            .unwrap();
+
+        let pinned = cache.set_pinned(&index, "file-1", true).unwrap();
+        assert!(pinned.pinned);
+        assert!(matches!(
+            cache.evict_file(&index, "file-1", false),
+            Err(ObjectCacheError::PinnedEntry(file_id)) if file_id == "file-1"
+        ));
+
+        let evicted = cache.evict_file(&index, "file-1", true).unwrap();
+        assert_eq!(evicted.file_id, "file-1");
+        assert!(matches!(
+            cache.read_file(&index, "file-1"),
+            Err(ObjectCacheError::MissingEntry(file_id)) if file_id == "file-1"
+        ));
+        let item = index.get_item("file-1").unwrap().unwrap();
+        assert_eq!(item.local_state, "online_only");
         fs::remove_dir_all(root).unwrap();
     }
 

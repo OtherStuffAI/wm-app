@@ -496,7 +496,8 @@ impl SqliteIndex {
         self.conn
             .query_row(
                 "SELECT storage_object_id, workspace_id, file_id, version_id, relative_path,
-                        size_bytes, sha256_hex, content_type, etag, cached_at, last_accessed_at
+                        size_bytes, sha256_hex, content_type, etag, cached_at, last_accessed_at,
+                        pinned
                  FROM cache_entries
                  WHERE file_id = :file_id
                  ORDER BY cached_at DESC
@@ -515,7 +516,8 @@ impl SqliteIndex {
         self.conn
             .query_row(
                 "SELECT storage_object_id, workspace_id, file_id, version_id, relative_path,
-                        size_bytes, sha256_hex, content_type, etag, cached_at, last_accessed_at
+                        size_bytes, sha256_hex, content_type, etag, cached_at, last_accessed_at,
+                        pinned
                  FROM cache_entries
                  WHERE storage_object_id = :storage_object_id",
                 named_params! { ":storage_object_id": storage_object_id },
@@ -534,6 +536,60 @@ impl SqliteIndex {
             },
         )?;
         Ok(())
+    }
+
+    pub fn set_cache_entry_pinned_for_file(
+        &self,
+        file_id: &str,
+        pinned: bool,
+    ) -> Result<Option<CacheEntry>, SqliteIndexError> {
+        let Some(entry) = self.cache_entry_for_file(file_id)? else {
+            return Ok(None);
+        };
+        self.conn.execute(
+            "UPDATE cache_entries
+             SET pinned = :pinned, last_accessed_at = :last_accessed_at
+             WHERE storage_object_id = :storage_object_id",
+            named_params! {
+                ":pinned": if pinned { 1 } else { 0 },
+                ":last_accessed_at": now_ms(),
+                ":storage_object_id": entry.storage_object_id,
+            },
+        )?;
+        self.conn.execute(
+            "UPDATE items
+             SET local_state = :local_state, synced_at = :synced_at
+             WHERE id = :file_id",
+            named_params! {
+                ":file_id": file_id,
+                ":local_state": if pinned { "pinned" } else { "cached" },
+                ":synced_at": now_ms(),
+            },
+        )?;
+        self.cache_entry_for_file(file_id)
+    }
+
+    pub fn remove_cache_entry_for_file(
+        &self,
+        file_id: &str,
+    ) -> Result<Option<CacheEntry>, SqliteIndexError> {
+        let Some(entry) = self.cache_entry_for_file(file_id)? else {
+            return Ok(None);
+        };
+        self.conn.execute(
+            "DELETE FROM cache_entries WHERE storage_object_id = :storage_object_id",
+            named_params! { ":storage_object_id": entry.storage_object_id },
+        )?;
+        self.conn.execute(
+            "UPDATE items
+             SET local_state = 'online_only', synced_at = :synced_at
+             WHERE id = :file_id AND local_state IN ('hydrating', 'cached', 'pinned')",
+            named_params! {
+                ":file_id": file_id,
+                ":synced_at": now_ms(),
+            },
+        )?;
+        Ok(Some(entry))
     }
 
     pub fn put_cursor(
@@ -861,7 +917,7 @@ impl SqliteIndex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LocalItem {
     pub id: String,
     pub item_type: String,
@@ -878,7 +934,7 @@ pub struct LocalItem {
     pub deleted_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheEntry {
     pub storage_object_id: String,
     pub workspace_id: String,
@@ -891,6 +947,7 @@ pub struct CacheEntry {
     pub etag: Option<String>,
     pub cached_at: i64,
     pub last_accessed_at: i64,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -937,6 +994,7 @@ fn row_to_cache_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<CacheEntry> {
         etag: row.get(8)?,
         cached_at: row.get(9)?,
         last_accessed_at: row.get(10)?,
+        pinned: row.get::<_, i64>(11)? != 0,
     })
 }
 

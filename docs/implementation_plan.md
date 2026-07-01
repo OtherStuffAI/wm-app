@@ -59,21 +59,23 @@ Key commits:
 
 - `bbd7958 Complete wm-app phase 1 contracts`.
 - `67ed27d Add wmapp core crate and NIP-98 signer`.
+- `3e015a6 Add wmapp Tower HTTP client`.
+- `0786732 Add wmapp SQLite index and object cache`.
 - Tower `e58c874 Add Flight Deck PG Drive tree delta routes`.
 - Tower `9f38bb4 Add Flight Deck PG file byte ranges`.
 
 Latest completed package:
 
-- `WP-02-03: Tower HTTP Client And Models`.
+- `WP-02-05: Sync CLI And Local Control API`.
 
-Current next package:
+Current checkpoint:
 
-- `WP-02-04: SQLite Metadata Index`.
+- Manual headless CLI testing against real Drive data, then choose the next spike: signer-browser (`WP-03-*`) or read-only filesystem mount (`WP-04-*`).
 
 Current working assumption:
 
-- Build Phase 2 in order: `WP-02-03`, then `WP-02-04`, then `WP-02-05`, but treat the Tower gap cards below as gates for production behavior.
-- Do not start Flutter shell work until the headless core can authenticate, list Tower workspace/scope/channel/file metadata, persist it locally, and expose a basic sync/control surface.
+- Phase 2 is now complete enough for manual testing. The headless core can authenticate, list Tower workspace/scope/channel/file metadata, persist it locally, expose basic sync/control commands, and cache/pin/evict hydrated objects.
+- Do not promise production write sync until the remaining Tower write/delete/version gap cards are clear.
 
 ## Tower Gap Gates
 
@@ -331,6 +333,10 @@ Findings:
 
 #### WP-02-04: SQLite Index And Object Cache
 
+Status:
+
+- Complete. `wmapp-core` persists Tower-visible metadata to SQLite and stores hydrated file objects under a content cache.
+
 Scope:
 
 - Add local SQLite schema for accounts, workspaces, scopes, channels, items, versions, cache entries, transfers, permissions, and cursors.
@@ -345,7 +351,18 @@ Acceptance:
 - A sync pass persists visible metadata.
 - A downloaded object can be read from cache after restart.
 
+Findings:
+
+- The SQLite schema covers accounts, workspaces, scopes, channels, Drive items, versions, cache entries, transfers, permissions, and cursors.
+- `SyncEngine::persist_visible_metadata` stores workspace, permission, scope/channel, Drive tree, and Drive delta state.
+- Object cache writes decoded Tower file objects to a stable local object path, records cache metadata, and can read cached bytes after reopening the index/cache.
+- Validation: `cargo test` passed with 13 tests at package handoff; the follow-up WP-02-05 suite now passes with 14 tests.
+
 #### WP-02-05: Sync CLI And Local Control API
+
+Status:
+
+- Complete. The headless CLI exposes the local control surface needed before Flutter/FUSE work.
 
 Scope:
 
@@ -360,6 +377,14 @@ Acceptance:
 - `sync --once` populates metadata.
 - `cat <fileId>` streams from cache or Tower.
 - `status` reports account, device npub, Tower URL, and sync health.
+
+Findings:
+
+- New commands: `sync --once`, `list-items`, `cat`, `pin`, and `evict`.
+- Local state uses `--data-dir`, `WMAPP_DATA_DIR`, or `~/.wmapp` with `index.sqlite` plus a `cache/objects` tree.
+- `cat` reads cached bytes first and hydrates from Tower on cache miss when Tower credentials are configured.
+- `pin` marks cached files as pinned; `evict` refuses pinned entries unless `--force` is passed.
+- Live smoke against local Tower on 2026-07-01 passed for `sync --once` and `list-items` on workspace `2e5caefd-dd65-45d2-b747-ee874e8e5fc9` and channel `d8d00881-ac84-41eb-ab0d-2c2afb77ddf3`. That channel currently had zero Drive items, so live object hydration still needs a real file in manual testing.
 
 ### Phase 3: Flutter Shell Spike
 
@@ -1255,7 +1280,7 @@ Milestone B: Core CLI Prototype
 - Workdir: `~/code/wingmanbefree/wm-app`.
 - Deliverable: Rust CLI can sign NIP-98 and list Tower files.
 - No Flutter required.
-- Status: Partially complete. Device-key and NIP-98 signing landed in `67ed27d`; Tower listing belongs to `WP-02-03`.
+- Status: Complete. Device-key signing, Tower listing, SQLite persistence, local item listing, cache hydration, pinning, and eviction are implemented through `WP-02-05`.
 
 Milestone C: Flutter Signer Browser Prototype
 
@@ -1285,9 +1310,10 @@ Milestone E: macOS Read-Only Drive
 
 ## Recommended Next Step
 
-Continue Phase 2 in dependency order:
+Phase 2 is complete enough for the first manual checkpoint:
 
-1. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
-2. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
+1. Add at least one real Drive file to the test channel or choose a channel with existing files.
+2. Run `wmapp-core sync --once`, `list-items`, `cat --output`, `pin`, and `evict` against that data.
+3. Decide whether the next implementation branch should validate WApp signing/browser identity first (`WP-03-*`) or filesystem projection first (`WP-04-*`).
 
 After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first. Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.

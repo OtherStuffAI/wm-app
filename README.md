@@ -12,9 +12,9 @@ Tower remains the source of truth for workspace identity, scopes, channels, grou
 
 ## Current Status
 
-Phase 1 contracts and the first Phase 2 core/auth/client packages are complete.
+Phase 1 contracts and the Phase 2 headless native core are complete.
 
-Latest package: `WP-02-03: Tower HTTP Client And Models`.
+Latest package: `WP-02-05: Sync CLI And Local Control API`.
 
 ## Native Core
 
@@ -38,6 +38,11 @@ export WINGMAN_NSEC="<hex-or-nsec-device-or-agent-key>"
 
 cargo run --bin wmapp-core -- status --workspace-id <workspace-id>
 cargo run --bin wmapp-core -- list-files --workspace-id <workspace-id> --channel-id <channel-id>
+cargo run --bin wmapp-core -- sync --once --workspace-id <workspace-id> --channel-id <channel-id>
+cargo run --bin wmapp-core -- list-items --workspace-id <workspace-id>
+cargo run --bin wmapp-core -- cat --workspace-id <workspace-id> <file-id> --output /tmp/file.out
+cargo run --bin wmapp-core -- pin <file-id>
+cargo run --bin wmapp-core -- evict <file-id> --force
 ```
 
 See:

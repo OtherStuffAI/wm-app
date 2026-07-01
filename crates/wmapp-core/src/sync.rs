@@ -3,6 +3,7 @@ use crate::tower::{
     Channel, DriveDeltaResponse, DriveTreeResponse, Scope, WorkspaceDescriptor,
     WorkspaceMeResponse, WorkspaceSummary,
 };
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalItemState {
@@ -18,7 +19,7 @@ pub enum LocalItemState {
 #[derive(Debug, Default)]
 pub struct SyncEngine;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SyncSummary {
     pub workspaces: usize,
     pub scopes: usize,
