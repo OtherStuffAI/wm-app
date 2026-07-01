@@ -1,7 +1,7 @@
 # Wingman App Implementation Plan
 
-Status: design draft
-Date: 2026-06-30
+Status: active implementation plan
+Date: 2026-07-01
 
 ## Goal
 
@@ -44,7 +44,13 @@ Initial capabilities:
 
 ## Current State
 
-Last reconciled from live Wingman session `57858e8e-7500-4382-9270-b706d9432325` on 2026-07-01.
+Last reconciled from the Flight Deck board and local repo on 2026-07-01.
+
+Numbering model:
+
+- `WP-*` tasks are client/app implementation packages in this repo unless the package explicitly says otherwise.
+- `TOWER-GAP-*` tasks are cross-repo Tower pickup tasks discovered by the Phase 1 API audit.
+- Do not renumber existing `WP-*` or `TOWER-GAP-*` IDs without also updating the Flight Deck board tasks. These IDs are now the stable reconciliation keys.
 
 Completed:
 
@@ -66,6 +72,8 @@ Key commits:
 - `0786732 Add wmapp SQLite index and object cache`.
 - `82a3bfb Add wmapp sync control CLI`.
 - `0dc9292 Add wmapp drive mount projection`.
+- `c6b400a Update wmapp implementation plan status`.
+- `776c6a7 Record macFUSE host validation`.
 - Tower `e58c874 Add Flight Deck PG Drive tree delta routes`.
 - Tower `9f38bb4 Add Flight Deck PG file byte ranges`.
 
@@ -87,9 +95,35 @@ Current working assumption:
 - Phase 4 should proceed as a shared FUSE/macFUSE adapter path because the current development host is macOS, while Linux remains the simplest CI/runtime target for first kernel-mount validation.
 - Do not promise production write sync until the remaining Tower write/delete/version gap cards are clear.
 
+## Board Status Snapshot
+
+This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as authoritative if a later worker sees a mismatch.
+
+| ID range | Board state | Meaning |
+| --- | --- | --- |
+| `WP-00-01` to `WP-02-02` | `review` | Repo-local work is complete enough to build from, but board review has not been closed. |
+| `WP-02-03` to `WP-02-05` | `done` | Native core read path, SQLite/cache, and headless control CLI are implemented and validated. |
+| `WP-04-01` | `in_progress` | Shared projection and macFUSE host validation are done; kernel mount adapter remains. |
+| `WP-03-*`, `WP-04-02` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
+| `TOWER-GAP-01` to `TOWER-GAP-02` | `done` | Read-only Drive route prerequisites are clear. |
+| `TOWER-GAP-03` to `TOWER-GAP-08` | `ready` | Tower pickup queue. These are not started in the current wm-app repo state. |
+
 ## Tower Gap Gates
 
 The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase 1 audit. These are already part of the plan as cross-repo Tower prerequisites, but they affect the order in which wm-app work should be treated as shippable.
+
+Tower gap pickup tasks should stay numbered separately from client `WP-*` tasks because they are Tower contracts, not app implementation packages. Use this queue:
+
+| Gap | Board state | Blocks | Pickup guidance |
+| --- | --- | --- | --- |
+| `TOWER-GAP-01` | `done` | Previously blocked Drive tree/delta reads. | No further pickup needed unless route regressions appear. |
+| `TOWER-GAP-02` | `done` | Previously blocked byte-range reads. | No further pickup needed unless range smoke tests fail. |
+| `TOWER-GAP-03` | `ready` | `WP-06-*` write sync and conflict-safe overwrites. | Pick up before implementing production uploads or offline edits. |
+| `TOWER-GAP-04` | `ready` | `WP-06-*` delete/tombstone behavior. | Pick up before exposing deletes or rename/move semantics. |
+| `TOWER-GAP-05` | `ready` | `WP-06-*` version history and conflict UX. | Pick up before claiming version browsing or robust conflict resolution. |
+| `TOWER-GAP-06` | `ready` | Polished channel lookup and some CLI ergonomics. | Useful before app-shell UX polish, but not a blocker for current read-only mount work. |
+| `TOWER-GAP-07` | `ready` | Production device onboarding/revoke. | Pick up before replacing development keys with production device enrollment. |
+| `TOWER-GAP-08` | `ready` | `WP-10-*` WApp signer policy. | Pick up before granting trusted WApp signing permissions. |
 
 Cleared for the read-only Drive spine:
 
@@ -98,19 +132,19 @@ Cleared for the read-only Drive spine:
 
 These two gaps are now clear enough for `WP-02-03`, `WP-02-04`, `WP-02-05`, and the read-only FUSE work in `WP-04-*` to target the Tower read path directly. `WP-02-03` should model `/drive/tree`, `/drive/delta`, and ranged `/files/:fileId/object` reads as the primary read contracts.
 
-Clear before write support:
+Ready before write support:
 
-- `WMAPP TOWER-GAP-03`: file version replacement with `base_version_id`.
-- `WMAPP TOWER-GAP-04`: file and folder tombstones.
-- `WMAPP TOWER-GAP-05`: file version listing.
+- `WMAPP TOWER-GAP-03`: file version replacement with `base_version_id`. Status: ready.
+- `WMAPP TOWER-GAP-04`: file and folder tombstones. Status: ready.
+- `WMAPP TOWER-GAP-05`: file version listing. Status: ready.
 
 These block `WP-06-*` production write sync, conflict handling, and delete semantics. Do not promise offline writes, overwrite safety, or conflict resolution until these routes are implemented and covered by smoke tests.
 
-Clear before polished device and signer flows:
+Ready before polished device and signer flows:
 
-- `WMAPP TOWER-GAP-06`: single-channel read or documented lookup alternative.
-- `WMAPP TOWER-GAP-07`: device-key lifecycle routes.
-- `WMAPP TOWER-GAP-08`: trusted WApp origin identity.
+- `WMAPP TOWER-GAP-06`: single-channel read or documented lookup alternative. Status: ready.
+- `WMAPP TOWER-GAP-07`: device-key lifecycle routes. Status: ready.
+- `WMAPP TOWER-GAP-08`: trusted WApp origin identity. Status: ready.
 
 `TOWER-GAP-06` is mostly a client ergonomics and reliability gap. `TOWER-GAP-07` gates production device onboarding/revocation beyond development keys. `TOWER-GAP-08` gates `WP-10-*` signer policy because the native app needs a stable Tower-backed origin identity before granting WApp signing permissions.
 
@@ -394,7 +428,7 @@ Findings:
 - Local state uses `--data-dir`, `WMAPP_DATA_DIR`, or `~/.wmapp` with `index.sqlite` plus a `cache/objects` tree.
 - `cat` reads cached bytes first and hydrates from Tower on cache miss when Tower credentials are configured.
 - `pin` marks cached files as pinned; `evict` refuses pinned entries unless `--force` is passed.
-- Live smoke against local Tower on 2026-07-01 passed for `sync --once` and `list-items` on workspace `2e5caefd-dd65-45d2-b747-ee874e8e5fc9` and channel `d8d00881-ac84-41eb-ab0d-2c2afb77ddf3`. That channel currently had zero Drive items, so live object hydration still needs a real file in manual testing.
+- Live smoke against local Tower on 2026-07-01 passed for `sync --once`, `list-items`, `cat --output`, `pin`, and `evict` on workspace `2e5caefd-dd65-45d2-b747-ee874e8e5fc9` and channel `d8d00881-ac84-41eb-ab0d-2c2afb77ddf3` using `wmapp-cli-test.txt`.
 
 ### Phase 3: Flutter Shell Spike
 
@@ -493,6 +527,7 @@ Current validation:
 Status:
 
 - Partially complete through the shared projection module. The dry-run tree already maps workspace-local scopes, channels, folders, and files into user-facing paths.
+- Board state remains `new`; the committed projection work landed under the active `WP-04-01` slice because it was needed before the kernel adapter could be wired.
 
 Scope:
 
