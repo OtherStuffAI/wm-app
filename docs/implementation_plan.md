@@ -75,11 +75,11 @@ Latest completed package:
 
 Current checkpoint:
 
-- Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available; kernel mounting still needs the FUSE/macFUSE adapter and host driver.
+- Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available. macFUSE 5.2.0 is installed on the current Mac host, but kernel mounting still needs the Rust FUSE/macFUSE adapter wiring.
 
 Active package:
 
-- `WP-04-01: Linux FUSE Adapter Skeleton` is in progress on the Flight Deck board. The projection and dry-run surface are committed; the actual `ls ~/FlightDeck` mount acceptance is not complete until FUSE/macFUSE adapter wiring and host driver validation are done.
+- `WP-04-01: Linux FUSE Adapter Skeleton` is in progress on the Flight Deck board. The projection and dry-run surface are committed; the actual `ls ~/FlightDeck` mount acceptance is not complete until FUSE/macFUSE adapter wiring is done and validated against the installed macFUSE host driver.
 
 Current working assumption:
 
@@ -465,7 +465,7 @@ Acceptance:
 
 Status:
 
-- Started on macOS as a shared projection skeleton. `wmapp-core mount --dry-run` now renders the read-only Drive tree from local SQLite metadata. Actual kernel mounting is still blocked on FUSE/macFUSE adapter work and macFUSE is not installed on the current Mac host.
+- Started on macOS as a shared projection skeleton. `wmapp-core mount --dry-run` now renders the read-only Drive tree from local SQLite metadata. macFUSE 5.2.0 is installed on the current Mac host; actual kernel mounting is still blocked on FUSE/macFUSE adapter work in `wmapp-core`.
 
 Scope:
 
@@ -485,6 +485,7 @@ Current validation:
 
 - `cargo test` passes with projection coverage.
 - Live dry-run on macOS after `sync --once` projected `/Wingman Suite/Wingman App/wmapp-cli-test.txt` from Tower-backed metadata.
+- Host macFUSE check on 2026-07-01 found `/Library/Filesystems/macfuse.fs`, package receipts, and `mount_macfuse` version `5.2.0` under `/Library/Filesystems/macfuse.fs/Contents/Resources/`.
 - Running `mount` without `--dry-run` fails closed with a macFUSE/FUSE guidance message instead of pretending a kernel mount exists.
 
 #### WP-04-02: Metadata Projection To Mount Tree
@@ -1337,7 +1338,7 @@ Milestone E: macOS Read-Only Drive
 
 Continue the read-only desktop mount path:
 
-1. Install/verify macFUSE on the current Mac host or use a Linux host with FUSE available.
+1. Keep macFUSE host validation in the test loop; the current Mac has macFUSE 5.2.0 installed.
 2. Implement the kernel FUSE/macFUSE adapter against the existing `DriveProjection`.
 3. Add file stat support for online-only files, using Tower byte-range metadata where needed so placeholders can report real size without full hydration.
 4. Wire file reads to the existing cache-first `cat`/hydration path.
