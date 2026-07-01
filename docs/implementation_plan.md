@@ -64,8 +64,35 @@ Current next package:
 
 Current working assumption:
 
-- Build Phase 2 in order: `WP-02-03`, then `WP-02-04`, then `WP-02-05`.
+- Build Phase 2 in order: `WP-02-03`, then `WP-02-04`, then `WP-02-05`, but treat the Tower gap cards below as gates for production behavior.
 - Do not start Flutter shell work until the headless core can authenticate, list Tower workspace/scope/channel/file metadata, persist it locally, and expose a basic sync/control surface.
+
+## Tower Gap Gates
+
+The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase 1 audit. These are already part of the plan as cross-repo Tower prerequisites, but they affect the order in which wm-app work should be treated as shippable.
+
+Clear first for the read-only Drive spine:
+
+- `WMAPP TOWER-GAP-01`: Drive tree and delta contract.
+- `WMAPP TOWER-GAP-02`: byte-range file content reads.
+
+These two gaps should be reviewed or completed before treating `WP-02-03`, `WP-02-04`, `WP-02-05`, or the read-only FUSE work in `WP-04-*` as more than a prototype. `WP-02-03` can still begin against the current contracts and existing routes, but the typed client should preserve explicit fallback paths for full-object reads and missing delta support.
+
+Clear before write support:
+
+- `WMAPP TOWER-GAP-03`: file version replacement with `base_version_id`.
+- `WMAPP TOWER-GAP-04`: file and folder tombstones.
+- `WMAPP TOWER-GAP-05`: file version listing.
+
+These block `WP-06-*` production write sync, conflict handling, and delete semantics. Do not promise offline writes, overwrite safety, or conflict resolution until these routes are implemented and covered by smoke tests.
+
+Clear before polished device and signer flows:
+
+- `WMAPP TOWER-GAP-06`: single-channel read or documented lookup alternative.
+- `WMAPP TOWER-GAP-07`: device-key lifecycle routes.
+- `WMAPP TOWER-GAP-08`: trusted WApp origin identity.
+
+`TOWER-GAP-06` is mostly a client ergonomics and reliability gap. `TOWER-GAP-07` gates production device onboarding/revocation beyond development keys. `TOWER-GAP-08` gates `WP-10-*` signer policy because the native app needs a stable Tower-backed origin identity before granting WApp signing permissions.
 
 ## Work Package Index
 
@@ -1245,8 +1272,9 @@ Milestone E: macOS Read-Only Drive
 
 Continue Phase 2 in dependency order:
 
-1. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`.
-2. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
-3. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
+1. Finish or review the read-only Tower spine gaps: `WMAPP TOWER-GAP-01` and `WMAPP TOWER-GAP-02`.
+2. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`, with explicit fallbacks where Tower gaps are still open.
+3. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
+4. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
 
-After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first.
+After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first. Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.
