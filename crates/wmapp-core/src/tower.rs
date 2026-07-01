@@ -659,6 +659,7 @@ pub struct FileMetadata {
     #[serde(default)]
     pub metadata: Value,
     pub row_version: u64,
+    pub current_version_id: Option<String>,
     pub created_by_actor_id: Option<String>,
     pub updated_by_actor_id: Option<String>,
     pub created_at: Option<String>,
