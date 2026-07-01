@@ -62,9 +62,13 @@ Key commits:
 - Tower `e58c874 Add Flight Deck PG Drive tree delta routes`.
 - Tower `9f38bb4 Add Flight Deck PG file byte ranges`.
 
-Current next package:
+Latest completed package:
 
 - `WP-02-03: Tower HTTP Client And Models`.
+
+Current next package:
+
+- `WP-02-04: SQLite Metadata Index`.
 
 Current working assumption:
 
@@ -303,7 +307,7 @@ Findings:
 
 Status:
 
-- Next active package. Start from `crates/wmapp-core`, the Phase 1 contracts, and the NIP-98 signer from commit `67ed27d`.
+- Complete. `crates/wmapp-core` now has typed Tower models, a NIP-98 signed blocking HTTP client, and headless CLI read commands.
 
 Scope:
 
@@ -317,6 +321,13 @@ Deliverable:
 Acceptance:
 
 - `wmapp-core status` and `wmapp-core list-files` work against a configured Tower.
+
+Findings:
+
+- `status` can validate Tower service, workspace discovery, descriptor, and `me` with `TOWER_URL`, `FLIGHTDECK_APP_NPUB`, and a NIP-98 signing key.
+- `list-files` targets the accepted `/api/v4/flightdeck-pg/workspaces/:workspaceId/drive/tree` route and prints Drive tree items with file/folder counts.
+- The client also models scopes, scope channel lists, Drive delta cursors, full file-object reads, and ranged file-object byte reads.
+- Production write sync remains unsupported until `WMAPP TOWER-GAP-03/04/05` are complete.
 
 #### WP-02-04: SQLite Index And Object Cache
 

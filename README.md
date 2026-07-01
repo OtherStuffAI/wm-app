@@ -12,9 +12,9 @@ Tower remains the source of truth for workspace identity, scopes, channels, grou
 
 ## Current Status
 
-Phase 1 contracts and the first Phase 2 core/auth packages are complete.
+Phase 1 contracts and the first Phase 2 core/auth/client packages are complete.
 
-Next package: `WP-02-03: Tower HTTP Client And Models`.
+Latest package: `WP-02-03: Tower HTTP Client And Models`.
 
 ## Native Core
 
@@ -27,6 +27,17 @@ cargo test
 cargo run --bin wmapp-core -- status
 cargo run --bin wmapp-core -- device generate --show-secret
 cargo run --bin wmapp-core -- sign-nip98 --secret <hex-or-nsec> --method POST --url https://tower.example/api --body '{"hello":"wingman"}'
+```
+
+Tower read commands use NIP-98 signing. They accept flags or environment:
+
+```bash
+export TOWER_URL="http://127.0.0.1:3100"
+export FLIGHTDECK_APP_NPUB="npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5"
+export WINGMAN_NSEC="<hex-or-nsec-device-or-agent-key>"
+
+cargo run --bin wmapp-core -- status --workspace-id <workspace-id>
+cargo run --bin wmapp-core -- list-files --workspace-id <workspace-id> --channel-id <channel-id>
 ```
 
 See:
