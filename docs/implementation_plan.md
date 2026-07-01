@@ -52,6 +52,9 @@ Completed:
 - Phase 1 Tower route inventory, Drive contract, device-key contract, and signed API smoke harness.
 - `WP-02-01`: Rust workspace and `wmapp-core` crate skeleton.
 - `WP-02-02`: development device-key generation/import and NIP-98 signer.
+- `WP-02-03`: Tower HTTP client and models.
+- `WP-02-04`: SQLite index and object cache.
+- `WP-02-05`: sync CLI and local control API.
 - `WMAPP TOWER-GAP-01`: Drive tree and delta routes reviewed and accepted.
 - `WMAPP TOWER-GAP-02`: byte-range file content reads reviewed and accepted.
 
@@ -61,6 +64,8 @@ Key commits:
 - `67ed27d Add wmapp core crate and NIP-98 signer`.
 - `3e015a6 Add wmapp Tower HTTP client`.
 - `0786732 Add wmapp SQLite index and object cache`.
+- `82a3bfb Add wmapp sync control CLI`.
+- `0dc9292 Add wmapp drive mount projection`.
 - Tower `e58c874 Add Flight Deck PG Drive tree delta routes`.
 - Tower `9f38bb4 Add Flight Deck PG file byte ranges`.
 
@@ -72,9 +77,14 @@ Current checkpoint:
 
 - Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available; kernel mounting still needs the FUSE/macFUSE adapter and host driver.
 
+Active package:
+
+- `WP-04-01: Linux FUSE Adapter Skeleton` is in progress on the Flight Deck board. The projection and dry-run surface are committed; the actual `ls ~/FlightDeck` mount acceptance is not complete until FUSE/macFUSE adapter wiring and host driver validation are done.
+
 Current working assumption:
 
 - Phase 2 is now complete enough for manual testing. The headless core can authenticate, list Tower workspace/scope/channel/file metadata, persist it locally, expose basic sync/control commands, and cache/pin/evict hydrated objects.
+- Phase 4 should proceed as a shared FUSE/macFUSE adapter path because the current development host is macOS, while Linux remains the simplest CI/runtime target for first kernel-mount validation.
 - Do not promise production write sync until the remaining Tower write/delete/version gap cards are clear.
 
 ## Tower Gap Gates
