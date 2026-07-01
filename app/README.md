@@ -9,15 +9,15 @@ It is intentionally thin:
 - Drive shows the expected workspace/scope/channel/file surface.
 - Browser reserves the future WApp/WebView signer area.
 
-The current development host does not have Flutter installed, so this app has
-not been compiled in this commit. After installing Flutter, generate platform
-folders once if they are not present, then run the app:
+Flutter platform folders have been generated for macOS, Linux, and web. To run
+the current shell locally:
 
 ```bash
 cd app
-flutter create --platforms=macos,linux .
 flutter pub get
 flutter test
+flutter build web
+flutter build macos --debug
 flutter run -d macos
 ```
 

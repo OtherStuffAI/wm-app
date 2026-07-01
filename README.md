@@ -54,13 +54,14 @@ The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status 
 
 The current desktop spike can generate/import a device key, register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a minimal `window.nostr` bridge into trusted WebView origins for `getPublicKey` and prompted NIP-98 signing.
 
-Flutter is not installed on the current development host. After installing Flutter:
+Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
 
 ```bash
 cd app
-flutter create --platforms=macos,linux .
 flutter pub get
 flutter test
+flutter build web
+flutter build macos --debug
 flutter run -d macos
 ```
 
