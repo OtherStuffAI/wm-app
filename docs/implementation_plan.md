@@ -85,6 +85,7 @@ Latest completed package:
 Current checkpoint:
 
 - Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available. macFUSE 5.2.0 is installed on the current Mac host, but kernel mounting still needs the Rust FUSE/macFUSE adapter wiring.
+- Flutter shell shape has also started under `app/`, but it is not compiled yet because Flutter/Dart are not installed on the current host.
 
 Active package:
 
@@ -107,7 +108,8 @@ This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as
 | `WP-04-01` | `in_progress` | Shared projection and macFUSE host validation are done; kernel mount adapter remains. |
 | `WP-01-05` to `WP-01-06` | `done` as `TOWER-GAP-01` to `TOWER-GAP-02` | Read-only Drive route prerequisites are clear. |
 | `WP-03-01` to `WP-03-02` | `ready` as `TOWER-GAP-06` to `TOWER-GAP-07` | App setup/device prerequisites, not required for the current mount spike. |
-| `WP-03-03` to `WP-03-06`, `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
+| `WP-03-03` to `WP-03-04` | `new` with partial committed work | Flutter shell and bridge shape exist under `app/`; Flutter SDK validation remains. |
+| `WP-03-05` to `WP-03-06`, `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
 | `WP-06-01` to `WP-06-03` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-05` | Write-sync Tower prerequisites. These must complete before production write sync. |
 | `WP-10-01` | `ready` as `TOWER-GAP-08` | WApp trusted origin prerequisite before signer policy work. |
 
@@ -545,6 +547,10 @@ Blocks:
 
 #### WP-03-03: Flutter App Shell And Account Setup
 
+Status:
+
+- Started. A dependency-light Flutter shell skeleton exists under `app/` with setup, Drive, browser, and status screens. It has not been compiled on the current host because Flutter/Dart are not installed.
+
 Scope:
 
 - Create the Flutter app shell.
@@ -558,7 +564,16 @@ Acceptance:
 
 - User can enter Tower URL and create/import a device key.
 
+Current validation:
+
+- Repo files were added manually because `flutter` and `dart` are not installed on the current Mac.
+- Next validation after installing Flutter: `cd app && flutter create --platforms=macos,linux . && flutter pub get && flutter test && flutter run -d macos`.
+
 #### WP-03-04: Native Bridge To Core Status And Config
+
+Status:
+
+- Started as an interface shape only. `NativeCoreBridge` returns fixture status and Drive data so the shell can be wired before choosing FFI, method channels, or a local control process.
 
 Scope:
 

@@ -48,6 +48,20 @@ cargo run --bin wmapp-core -- mount --dry-run --workspace-id <workspace-id> --mo
 
 The `mount --dry-run` command prints the read-only Drive tree that a FUSE/macFUSE mount will expose. Actual kernel mounting requires FUSE on Linux or macFUSE on macOS and is intentionally gated until the host driver and adapter are available.
 
+## Flutter Shell
+
+The first Flutter shell shape lives at `app/`. It defines setup, Drive, browser, and status screens plus a `NativeCoreBridge` abstraction for the existing Rust core.
+
+Flutter is not installed on the current development host. After installing Flutter:
+
+```bash
+cd app
+flutter create --platforms=macos,linux .
+flutter pub get
+flutter test
+flutter run -d macos
+```
+
 See:
 
 - [Architecture](docs/architecture.md)
