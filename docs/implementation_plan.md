@@ -49,7 +49,7 @@ Last reconciled from the Flight Deck board and local repo on 2026-07-01.
 Numbering model:
 
 - `WP-*` tasks are client/app implementation packages in this repo unless the package explicitly says otherwise.
-- Tower pickup tasks discovered by the Phase 1 API audit are now represented inline as `WP-01-05` through `WP-01-12`.
+- Tower pickup tasks discovered by the Phase 1 API audit are represented inline in the phase they gate.
 - `TOWER-GAP-*` labels remain aliases for the existing Flight Deck board tasks until those task titles are renamed or superseded.
 - Treat the `WP-*` ID as the canonical ordering key in this document. Preserve the `TOWER-GAP-*` alias in descriptions/comments until the board is fully migrated.
 
@@ -105,24 +105,26 @@ This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as
 | `WP-00-01` to `WP-02-02` | `review` | Repo-local work is complete enough to build from, but board review has not been closed. |
 | `WP-02-03` to `WP-02-05` | `done` | Native core read path, SQLite/cache, and headless control CLI are implemented and validated. |
 | `WP-04-01` | `in_progress` | Shared projection and macFUSE host validation are done; kernel mount adapter remains. |
-| `WP-03-*`, `WP-04-02` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
 | `WP-01-05` to `WP-01-06` | `done` as `TOWER-GAP-01` to `TOWER-GAP-02` | Read-only Drive route prerequisites are clear. |
-| `WP-01-07` to `WP-01-12` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-08` | Tower pickup queue. These are not started in the current wm-app repo state. |
+| `WP-03-01` to `WP-03-02` | `ready` as `TOWER-GAP-06` to `TOWER-GAP-07` | App setup/device prerequisites, not required for the current mount spike. |
+| `WP-03-03` to `WP-03-06`, `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
+| `WP-06-01` to `WP-06-03` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-05` | Write-sync Tower prerequisites. These must complete before production write sync. |
+| `WP-10-01` | `ready` as `TOWER-GAP-08` | WApp trusted origin prerequisite before signer policy work. |
 
 ## Inline Tower Pickup Gates
 
-The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase 1 audit. They are cross-repo Tower prerequisites, but they are now also represented inline as `WP-01-05` through `WP-01-12` so the implementation plan remains a single ordered sequence.
+The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase 1 audit. They are cross-repo Tower prerequisites, but they are represented inline in the phase they gate so the implementation plan remains a single ordered sequence without implying every gap blocks the current mount work.
 
 | WP ID | Alias | Board state | Blocks | Pickup guidance |
 | --- | --- | --- | --- | --- |
 | `WP-01-05` | `TOWER-GAP-01` | `done` | Previously blocked Drive tree/delta reads. | No further pickup needed unless route regressions appear. |
 | `WP-01-06` | `TOWER-GAP-02` | `done` | Previously blocked byte-range reads. | No further pickup needed unless range smoke tests fail. |
-| `WP-01-07` | `TOWER-GAP-03` | `ready` | `WP-06-*` write sync and conflict-safe overwrites. | Pick up before implementing production uploads or offline edits. |
-| `WP-01-08` | `TOWER-GAP-04` | `ready` | `WP-06-*` delete/tombstone behavior. | Pick up before exposing deletes or rename/move semantics. |
-| `WP-01-09` | `TOWER-GAP-05` | `ready` | `WP-06-*` version history and conflict UX. | Pick up before claiming version browsing or robust conflict resolution. |
-| `WP-01-10` | `TOWER-GAP-06` | `ready` | Polished channel lookup and some CLI ergonomics. | Useful before app-shell UX polish, but not a blocker for current read-only mount work. |
-| `WP-01-11` | `TOWER-GAP-07` | `ready` | Production device onboarding/revoke. | Pick up before replacing development keys with production device enrollment. |
-| `WP-01-12` | `TOWER-GAP-08` | `ready` | `WP-10-*` WApp signer policy. | Pick up before granting trusted WApp signing permissions. |
+| `WP-03-01` | `TOWER-GAP-06` | `ready` | Polished channel lookup and some CLI ergonomics. | Pick up before app setup UX polish; not a blocker for current read-only mount work. |
+| `WP-03-02` | `TOWER-GAP-07` | `ready` | Production device onboarding/revoke. | Pick up before replacing development keys with production device enrollment. |
+| `WP-06-01` | `TOWER-GAP-03` | `ready` | `WP-06-*` write sync and conflict-safe overwrites. | Pick up before implementing production uploads or offline edits. |
+| `WP-06-02` | `TOWER-GAP-04` | `ready` | `WP-06-*` delete/tombstone behavior. | Pick up before exposing deletes or rename/move semantics. |
+| `WP-06-03` | `TOWER-GAP-05` | `ready` | `WP-06-*` version history and conflict UX. | Pick up before claiming version browsing or robust conflict resolution. |
+| `WP-10-01` | `TOWER-GAP-08` | `ready` | `WP-10-*` WApp signer policy. | Pick up before granting trusted WApp signing permissions. |
 
 Cleared for the read-only Drive spine:
 
@@ -133,19 +135,19 @@ These two gaps are now clear enough for `WP-02-03`, `WP-02-04`, `WP-02-05`, and 
 
 Ready before write support:
 
-- `WP-01-07` / `WMAPP TOWER-GAP-03`: file version replacement with `base_version_id`. Status: ready.
-- `WP-01-08` / `WMAPP TOWER-GAP-04`: file and folder tombstones. Status: ready.
-- `WP-01-09` / `WMAPP TOWER-GAP-05`: file version listing. Status: ready.
+- `WP-06-01` / `WMAPP TOWER-GAP-03`: file version replacement with `base_version_id`. Status: ready.
+- `WP-06-02` / `WMAPP TOWER-GAP-04`: file and folder tombstones. Status: ready.
+- `WP-06-03` / `WMAPP TOWER-GAP-05`: file version listing. Status: ready.
 
 These block `WP-06-*` production write sync, conflict handling, and delete semantics. Do not promise offline writes, overwrite safety, or conflict resolution until these routes are implemented and covered by smoke tests.
 
 Ready before polished device and signer flows:
 
-- `WP-01-10` / `WMAPP TOWER-GAP-06`: single-channel read or documented lookup alternative. Status: ready.
-- `WP-01-11` / `WMAPP TOWER-GAP-07`: device-key lifecycle routes. Status: ready.
-- `WP-01-12` / `WMAPP TOWER-GAP-08`: trusted WApp origin identity. Status: ready.
+- `WP-03-01` / `WMAPP TOWER-GAP-06`: single-channel read or documented lookup alternative. Status: ready.
+- `WP-03-02` / `WMAPP TOWER-GAP-07`: device-key lifecycle routes. Status: ready.
+- `WP-10-01` / `WMAPP TOWER-GAP-08`: trusted WApp origin identity. Status: ready.
 
-`WP-01-10` / `TOWER-GAP-06` is mostly a client ergonomics and reliability gap. `WP-01-11` / `TOWER-GAP-07` gates production device onboarding/revocation beyond development keys. `WP-01-12` / `TOWER-GAP-08` gates `WP-10-*` signer policy because the native app needs a stable Tower-backed origin identity before granting WApp signing permissions.
+`WP-03-01` / `TOWER-GAP-06` is mostly a client ergonomics and reliability gap. `WP-03-02` / `TOWER-GAP-07` gates production device onboarding/revocation beyond development keys. `WP-10-01` / `TOWER-GAP-08` gates signer policy because the native app needs a stable Tower-backed origin identity before granting WApp signing permissions.
 
 ## Work Package Index
 
@@ -292,7 +294,7 @@ Acceptance:
 Findings:
 
 - The harness covers workspace discovery, descriptor, `me`, scopes, optional channels, optional file folders/files, events, and optional full file object hydration.
-- Tower gap work is captured inline as `WP-01-05` through `WP-01-12`, with `WMAPP TOWER-GAP-*` aliases preserved for existing board records.
+- Tower gap work is captured inline in the phase each gap gates, with `WMAPP TOWER-GAP-*` aliases preserved for existing board records.
 
 #### WP-01-05: Drive Tree And Delta Tower Routes
 
@@ -348,172 +350,6 @@ Acceptance:
 Findings:
 
 - This is clear enough for lazy desktop reads, although the first mounted adapter can still start with full-object hydration.
-
-#### WP-01-07: File Version Replacement With Base Version
-
-Alias:
-
-- `WMAPP TOWER-GAP-03`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Add Tower support for replacing file content with an optimistic `base_version_id`.
-- Return enough version metadata for the native client to detect stale writes.
-
-Deliverable:
-
-- Tower route and smoke coverage for versioned file replacement.
-
-Acceptance:
-
-- A client can upload a replacement only when its base version matches.
-- Stale replacements fail with a conflict response rather than silently overwriting.
-
-Blocks:
-
-- `WP-06-01`, `WP-06-02`, and any production write-sync or offline edit claim.
-
-#### WP-01-08: File And Folder Tombstones
-
-Alias:
-
-- `WMAPP TOWER-GAP-04`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Add Tower delete/tombstone semantics for files and folders.
-- Ensure tree and delta routes expose deletes without losing historical conflict context.
-
-Deliverable:
-
-- Tower routes and delta events for file/folder tombstones.
-
-Acceptance:
-
-- A deleted file/folder appears as a tombstone in delta reads.
-- Clients can distinguish deleted, missing, and unauthorized records.
-
-Blocks:
-
-- `WP-06-*` delete handling, move/rename semantics that imply deletes, and conflict-safe cleanup.
-
-#### WP-01-09: File Version Listing
-
-Alias:
-
-- `WMAPP TOWER-GAP-05`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Add Tower route for listing versions of a file.
-- Include version IDs, object refs, sizes, timestamps, authors, and conflict-relevant metadata.
-
-Deliverable:
-
-- Tower route and smoke coverage for file version history.
-
-Acceptance:
-
-- A client can list prior versions for a file and select the current version deterministically.
-
-Blocks:
-
-- Production conflict UX, version browsing, and robust recovery flows in `WP-06-*`.
-
-#### WP-01-10: Single Channel Read Or Contracted Alternative
-
-Alias:
-
-- `WMAPP TOWER-GAP-06`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Add a single-channel read route or document the contracted lookup alternative.
-- Reduce client need to list all channels before resolving a known channel ID.
-
-Deliverable:
-
-- Tower route or documented contract for resolving one channel by ID.
-
-Acceptance:
-
-- Native and Flutter clients can validate a configured channel without scanning every scope.
-
-Blocks:
-
-- Polished account/channel setup UX. Not a blocker for current read-only mount work.
-
-#### WP-01-11: Device Key Lifecycle Routes
-
-Alias:
-
-- `WMAPP TOWER-GAP-07`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Add first-class Tower routes for device key registration, labelling, last-seen tracking, policy, and revocation.
-- Preserve NIP-98 semantics: device keys are Nostr keys with explicit grants.
-
-Deliverable:
-
-- Tower device-key lifecycle contract and smoke tests.
-
-Acceptance:
-
-- A registered device key can authenticate according to its grants.
-- A revoked device key fails closed without rotating the user's main key.
-
-Blocks:
-
-- Production onboarding and revocation beyond development keys.
-
-#### WP-01-12: Trusted WApp Origin Identity
-
-Alias:
-
-- `WMAPP TOWER-GAP-08`.
-
-Status:
-
-- Ready. Not started in the current wm-app repo state.
-
-Scope:
-
-- Define Tower-backed trusted WApp origin identity for native signer policy.
-- Tie WApp launcher identity to runtime origin and signing permissions.
-
-Deliverable:
-
-- Tower contract that lets the native app decide whether a WebView origin may request signing.
-
-Acceptance:
-
-- A WApp origin can be verified against Tower-managed identity before signer permissions are granted.
-- Unknown or mismatched origins fail closed.
-
-Blocks:
-
-- `WP-10-*` signer policy, audit log, and permission management.
 
 ### Phase 2: Native Core Spike
 
@@ -593,7 +429,7 @@ Findings:
 - `status` can validate Tower service, workspace discovery, descriptor, and `me` with `TOWER_URL`, `FLIGHTDECK_APP_NPUB`, and a NIP-98 signing key.
 - `list-files` targets the accepted `/api/v4/flightdeck-pg/workspaces/:workspaceId/drive/tree` route and prints Drive tree items with file/folder counts.
 - The client also models scopes, scope channel lists, Drive delta cursors, full file-object reads, and ranged file-object byte reads.
-- Production write sync remains unsupported until `WP-01-07`, `WP-01-08`, and `WP-01-09` are complete.
+- Production write sync remains unsupported until `WP-06-01`, `WP-06-02`, and `WP-06-03` are complete.
 
 #### WP-02-04: SQLite Index And Object Cache
 
@@ -652,7 +488,62 @@ Findings:
 
 ### Phase 3: Flutter Shell Spike
 
-#### WP-03-01: Flutter App Shell And Account Setup
+#### WP-03-01: Single Channel Read Or Contracted Alternative
+
+Alias:
+
+- `WMAPP TOWER-GAP-06`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
+Scope:
+
+- Add a single-channel read route or document the contracted lookup alternative.
+- Reduce client need to list all channels before resolving a known channel ID.
+
+Deliverable:
+
+- Tower route or documented contract for resolving one channel by ID.
+
+Acceptance:
+
+- Native and Flutter clients can validate a configured channel without scanning every scope.
+
+Blocks:
+
+- Polished account/channel setup UX. Not a blocker for current read-only mount work.
+
+#### WP-03-02: Device Key Lifecycle Routes
+
+Alias:
+
+- `WMAPP TOWER-GAP-07`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
+Scope:
+
+- Add first-class Tower routes for device key registration, labelling, last-seen tracking, policy, and revocation.
+- Preserve NIP-98 semantics: device keys are Nostr keys with explicit grants.
+
+Deliverable:
+
+- Tower device-key lifecycle contract and smoke tests.
+
+Acceptance:
+
+- A registered device key can authenticate according to its grants.
+- A revoked device key fails closed without rotating the user's main key.
+
+Blocks:
+
+- Production onboarding and revocation beyond development keys. Early prototypes may continue using development keys.
+
+#### WP-03-03: Flutter App Shell And Account Setup
 
 Scope:
 
@@ -667,7 +558,7 @@ Acceptance:
 
 - User can enter Tower URL and create/import a device key.
 
-#### WP-03-02: Native Bridge To Core Status And Config
+#### WP-03-04: Native Bridge To Core Status And Config
 
 Scope:
 
@@ -682,7 +573,7 @@ Acceptance:
 
 - UI shows device npub, Tower URL, and latest sync result from the native core.
 
-#### WP-03-03: Embedded WebView With `window.nostr` Injection
+#### WP-03-05: Embedded WebView With `window.nostr` Injection
 
 Scope:
 
@@ -698,7 +589,7 @@ Acceptance:
 - Unknown origins do not get the bridge.
 - Approved origin receives only the supported methods.
 
-#### WP-03-04: NIP-98 Permission Prompt Prototype
+#### WP-03-06: NIP-98 Permission Prompt Prototype
 
 Scope:
 
@@ -840,7 +731,90 @@ Acceptance:
 
 ### Phase 6: Desktop Write Support
 
-#### WP-06-01: Local Write Detection And Upload Queue
+#### WP-06-01: File Version Replacement With Base Version
+
+Alias:
+
+- `WMAPP TOWER-GAP-03`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
+Scope:
+
+- Add Tower support for replacing file content with an optimistic `base_version_id`.
+- Return enough version metadata for the native client to detect stale writes.
+
+Deliverable:
+
+- Tower route and smoke coverage for versioned file replacement.
+
+Acceptance:
+
+- A client can upload a replacement only when its base version matches.
+- Stale replacements fail with a conflict response rather than silently overwriting.
+
+Blocks:
+
+- Production uploads, offline edits, and conflict-safe overwrites.
+
+#### WP-06-02: File And Folder Tombstones
+
+Alias:
+
+- `WMAPP TOWER-GAP-04`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
+Scope:
+
+- Add Tower delete/tombstone semantics for files and folders.
+- Ensure tree and delta routes expose deletes without losing historical conflict context.
+
+Deliverable:
+
+- Tower routes and delta events for file/folder tombstones.
+
+Acceptance:
+
+- A deleted file/folder appears as a tombstone in delta reads.
+- Clients can distinguish deleted, missing, and unauthorized records.
+
+Blocks:
+
+- Delete handling, move/rename semantics that imply deletes, and conflict-safe cleanup.
+
+#### WP-06-03: File Version Listing
+
+Alias:
+
+- `WMAPP TOWER-GAP-05`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
+Scope:
+
+- Add Tower route for listing versions of a file.
+- Include version IDs, object refs, sizes, timestamps, authors, and conflict-relevant metadata.
+
+Deliverable:
+
+- Tower route and smoke coverage for file version history.
+
+Acceptance:
+
+- A client can list prior versions for a file and select the current version deterministically.
+
+Blocks:
+
+- Production conflict UX, version browsing, and robust recovery flows.
+
+#### WP-06-04: Local Write Detection And Upload Queue
 
 Scope:
 
@@ -855,7 +829,7 @@ Acceptance:
 
 - A new local file appears as a pending upload.
 
-#### WP-06-02: Versioned Uploads And Conflict Handling
+#### WP-06-05: Versioned Uploads And Conflict Handling
 
 Scope:
 
@@ -870,7 +844,7 @@ Acceptance:
 
 - Remote edit races produce a conflict file rather than overwriting remote data.
 
-#### WP-06-03: Desktop Transfer UI And Retries
+#### WP-06-06: Desktop Transfer UI And Retries
 
 Scope:
 
@@ -1023,6 +997,14 @@ Acceptance:
 
 #### WP-10-01: WApp Trusted Identity And Origin Contract
 
+Alias:
+
+- `WMAPP TOWER-GAP-08`.
+
+Status:
+
+- Ready. Not started in the current wm-app repo state.
+
 Scope:
 
 - Define how Wingman App knows a WApp origin is trusted.
@@ -1035,6 +1017,12 @@ Deliverable:
 Acceptance:
 
 - Origin alone is not enough to receive signing access.
+- A WApp origin can be verified against Tower-managed identity before signer permissions are granted.
+- Unknown or mismatched origins fail closed.
+
+Blocks:
+
+- `WP-10-02`, `WP-10-03`, and any production WApp signer permission grant.
 
 #### WP-10-02: Signer Policy Engine And Audit Log
 
@@ -1145,12 +1133,6 @@ Work packages:
 - WP-01-04: API Gap Harness And Tickets.
 - WP-01-05: Drive Tree And Delta Tower Routes (`TOWER-GAP-01`).
 - WP-01-06: Byte Range File Content Reads (`TOWER-GAP-02`).
-- WP-01-07: File Version Replacement With Base Version (`TOWER-GAP-03`).
-- WP-01-08: File And Folder Tombstones (`TOWER-GAP-04`).
-- WP-01-09: File Version Listing (`TOWER-GAP-05`).
-- WP-01-10: Single Channel Read Or Contracted Alternative (`TOWER-GAP-06`).
-- WP-01-11: Device Key Lifecycle Routes (`TOWER-GAP-07`).
-- WP-01-12: Trusted WApp Origin Identity (`TOWER-GAP-08`).
 
 Purpose:
 
@@ -1258,10 +1240,12 @@ Validation:
 
 Work packages:
 
-- WP-03-01: Flutter App Shell And Account Setup.
-- WP-03-02: Native Bridge To Core Status And Config.
-- WP-03-03: Embedded WebView With `window.nostr` Injection.
-- WP-03-04: NIP-98 Permission Prompt Prototype.
+- WP-03-01: Single Channel Read Or Contracted Alternative (`TOWER-GAP-06`).
+- WP-03-02: Device Key Lifecycle Routes (`TOWER-GAP-07`).
+- WP-03-03: Flutter App Shell And Account Setup.
+- WP-03-04: Native Bridge To Core Status And Config.
+- WP-03-05: Embedded WebView With `window.nostr` Injection.
+- WP-03-06: NIP-98 Permission Prompt Prototype.
 
 Purpose:
 
@@ -1359,9 +1343,12 @@ Decision Gate:
 
 Work packages:
 
-- WP-06-01: Local Write Detection And Upload Queue.
-- WP-06-02: Versioned Uploads And Conflict Handling.
-- WP-06-03: Desktop Transfer UI And Retries.
+- WP-06-01: File Version Replacement With Base Version (`TOWER-GAP-03`).
+- WP-06-02: File And Folder Tombstones (`TOWER-GAP-04`).
+- WP-06-03: File Version Listing (`TOWER-GAP-05`).
+- WP-06-04: Local Write Detection And Upload Queue.
+- WP-06-05: Versioned Uploads And Conflict Handling.
+- WP-06-06: Desktop Transfer UI And Retries.
 
 Purpose:
 
@@ -1469,7 +1456,7 @@ Validation:
 
 Work packages:
 
-- WP-10-01: WApp Trusted Identity And Origin Contract.
+- WP-10-01: WApp Trusted Identity And Origin Contract (`TOWER-GAP-08`).
 - WP-10-02: Signer Policy Engine And Audit Log.
 - WP-10-03: Permission Management UI.
 
@@ -1606,4 +1593,4 @@ Continue the read-only desktop mount path:
 3. Add file stat support for online-only files, using Tower byte-range metadata where needed so placeholders can report real size without full hydration.
 4. Wire file reads to the existing cache-first `cat`/hydration path.
 
-Keep production write sync behind `WP-01-07`, `WP-01-08`, and `WP-01-09`; keep production WApp signer policy behind `WP-01-12`.
+Keep production write sync behind `WP-06-01`, `WP-06-02`, and `WP-06-03`; keep production WApp signer policy behind `WP-10-01`.
