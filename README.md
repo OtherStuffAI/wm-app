@@ -10,6 +10,12 @@ The initial product combines:
 
 Tower remains the source of truth for workspace identity, scopes, channels, groups, file metadata, and object storage.
 
+## Current Status
+
+Phase 1 contracts and the first Phase 2 core/auth packages are complete.
+
+Next package: `WP-02-03: Tower HTTP Client And Models`.
+
 ## Native Core
 
 The first Rust core crate lives at `crates/wmapp-core`.

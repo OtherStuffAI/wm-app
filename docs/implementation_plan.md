@@ -42,6 +42,31 @@ Initial capabilities:
 - `docs/device_key_contract.md`: Phase 1 device key and NIP-98 grant contract.
 - `docs/api_gap_harness.md`: Phase 1 signed smoke harness and Tower gap tickets.
 
+## Current State
+
+Last reconciled from live Wingman session `57858e8e-7500-4382-9270-b706d9432325` on 2026-07-01.
+
+Completed:
+
+- Phase 0 planning baseline and decision backlog.
+- Phase 1 Tower route inventory, Drive contract, device-key contract, and signed API smoke harness.
+- `WP-02-01`: Rust workspace and `wmapp-core` crate skeleton.
+- `WP-02-02`: development device-key generation/import and NIP-98 signer.
+
+Key commits:
+
+- `bbd7958 Complete wm-app phase 1 contracts`.
+- `67ed27d Add wmapp core crate and NIP-98 signer`.
+
+Current next package:
+
+- `WP-02-03: Tower HTTP Client And Models`.
+
+Current working assumption:
+
+- Build Phase 2 in order: `WP-02-03`, then `WP-02-04`, then `WP-02-05`.
+- Do not start Flutter shell work until the headless core can authenticate, list Tower workspace/scope/channel/file metadata, persist it locally, and expose a basic sync/control surface.
+
 ## Work Package Index
 
 Each phase is split into numbered work packages. Flight Deck tasks should use the same IDs in their titles so planning, task board state, and repo-local docs can be reconciled without guessing.
@@ -244,6 +269,10 @@ Findings:
 - Unit tests verify Schnorr signatures and assert the `payload` tag is present for non-empty bodies.
 
 #### WP-02-03: Tower HTTP Client And Models
+
+Status:
+
+- Next active package. Start from `crates/wmapp-core`, the Phase 1 contracts, and the NIP-98 signer from commit `67ed27d`.
 
 Scope:
 
@@ -1177,12 +1206,14 @@ Milestone A: Tower Contract Audit
 - Workdir: `~/code/wingmanbefree/wingman-tower`.
 - Deliverable: `wm-app` API gap document or Tower issue/task.
 - No client code required.
+- Status: Complete in `bbd7958`.
 
 Milestone B: Core CLI Prototype
 
 - Workdir: `~/code/wingmanbefree/wm-app`.
 - Deliverable: Rust CLI can sign NIP-98 and list Tower files.
 - No Flutter required.
+- Status: Partially complete. Device-key and NIP-98 signing landed in `67ed27d`; Tower listing belongs to `WP-02-03`.
 
 Milestone C: Flutter Signer Browser Prototype
 
@@ -1212,9 +1243,10 @@ Milestone E: macOS Read-Only Drive
 
 ## Recommended Next Step
 
-Start with two parallel spikes:
+Continue Phase 2 in dependency order:
 
-1. Tower storage API audit.
-2. Flutter signer browser prototype.
+1. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`.
+2. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
+3. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
 
-Then build the Linux FUSE read-only drive once the Tower file contract is clear.
+After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first.
