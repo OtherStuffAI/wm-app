@@ -17,6 +17,7 @@ pub use sqlite::{
 };
 pub use sync::{SyncEngine, SyncSummary, VisibleMetadata};
 pub use tower::{
-    ByteRange, DriveDeltaOptions, DriveDeltaResponse, DriveItemType, DriveTreeOptions,
-    DriveTreeResponse, TowerClient, TowerClientConfig, TowerClientError,
+    ByteRange, DeviceSeenRequest, DevicesResponse, DriveDeltaOptions, DriveDeltaResponse,
+    DriveItemType, DriveTreeOptions, DriveTreeResponse, RegisterDeviceRequest, TowerClient,
+    TowerClientConfig, TowerClientError,
 };

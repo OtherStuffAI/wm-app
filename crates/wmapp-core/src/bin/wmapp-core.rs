@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
-    DeviceKey, DriveDeltaOptions, DriveItemType, DriveProjection, DriveTreeOptions, Nip98Request,
-    Nip98Signer, ObjectCache, ObjectCacheConfig, ObjectCacheError, SqliteIndex, SqliteIndexConfig,
-    SyncEngine, TowerClient, TowerClientConfig, VisibleMetadata,
+    DeviceKey, DeviceSeenRequest, DriveDeltaOptions, DriveItemType, DriveProjection,
+    DriveTreeOptions, Nip98Request, Nip98Signer, ObjectCache, ObjectCacheConfig, ObjectCacheError,
+    RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig, SyncEngine, TowerClient,
+    TowerClientConfig, VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -34,6 +35,8 @@ enum Command {
     Evict(EvictArgs),
     /// Inspect or start the read-only Drive mount projection.
     Mount(MountArgs),
+    /// Validate a configured channel without scanning all scopes.
+    Channel(ChannelArgs),
     /// List visible Drive file/folder items from Tower without persisting them.
     ListFiles(ListFilesArgs),
     /// Generate or inspect development device keys.
@@ -171,6 +174,18 @@ struct MountArgs {
 }
 
 #[derive(Parser, Debug, Clone)]
+struct ChannelArgs {
+    #[command(flatten)]
+    tower: TowerReadArgs,
+    /// Workspace id that owns the channel.
+    #[arg(long)]
+    workspace_id: String,
+    /// Channel id to resolve.
+    #[arg(long)]
+    channel_id: String,
+}
+
+#[derive(Parser, Debug, Clone)]
 struct ListFilesArgs {
     #[command(flatten)]
     tower: TowerReadArgs,
@@ -207,6 +222,40 @@ enum DeviceCommand {
         #[arg(long)]
         secret: String,
     },
+    /// Register a device npub with Tower using the authenticated user signer.
+    Register {
+        #[command(flatten)]
+        tower: TowerReadArgs,
+        #[arg(long)]
+        workspace_service_npub: String,
+        #[arg(long)]
+        device_npub: String,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        platform: Option<String>,
+    },
+    /// List registered devices for the authenticated user signer.
+    List {
+        #[command(flatten)]
+        tower: TowerReadArgs,
+    },
+    /// Touch a registered device's last-seen timestamp.
+    Seen {
+        #[command(flatten)]
+        tower: TowerReadArgs,
+        #[arg(long)]
+        workspace_service_npub: String,
+        #[arg(long)]
+        device_npub: String,
+    },
+    /// Revoke a registered device npub.
+    Revoke {
+        #[command(flatten)]
+        tower: TowerReadArgs,
+        #[arg(long)]
+        device_npub: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -234,6 +283,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Pin(args) => pin_file(args)?,
         Command::Evict(args) => evict_file(args)?,
         Command::Mount(args) => mount_drive(args)?,
+        Command::Channel(args) => validate_channel(args)?,
         Command::ListFiles(args) => list_files(args)?,
         Command::Device { command } => match command {
             DeviceCommand::Generate { show_secret } => {
@@ -244,6 +294,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let key = DeviceKey::import(&secret)?;
                 print_device(&key, false)?;
             }
+            DeviceCommand::Register {
+                tower,
+                workspace_service_npub,
+                device_npub,
+                label,
+                platform,
+            } => register_device(tower, workspace_service_npub, device_npub, label, platform)?,
+            DeviceCommand::List { tower } => list_devices(tower)?,
+            DeviceCommand::Seen {
+                tower,
+                workspace_service_npub,
+                device_npub,
+            } => touch_device_seen(tower, workspace_service_npub, device_npub)?,
+            DeviceCommand::Revoke { tower, device_npub } => revoke_device(tower, device_npub)?,
         },
         Command::SignNip98 {
             secret,
@@ -553,6 +617,19 @@ fn mount_drive(args: MountArgs) -> Result<(), Box<dyn std::error::Error>> {
     .into())
 }
 
+fn validate_channel(args: ChannelArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let client = tower_client_from_args(&args.tower, true)?
+        .ok_or("Tower config is required for channel validation")?;
+    let response = client.get_channel(&args.workspace_id, &args.channel_id)?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "workspace_id": args.workspace_id,
+        "channel_id": args.channel_id,
+        "channel": response.channel,
+    }))?;
+    Ok(())
+}
+
 fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let client = tower_client_from_args(&args.tower, true)?
         .ok_or("Tower config is required for list-files")?;
@@ -586,6 +663,78 @@ fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
         "folder_count": folder_count,
         "items": tree.items,
         "next_cursor": tree.next_cursor
+    }))?;
+    Ok(())
+}
+
+fn register_device(
+    tower: TowerReadArgs,
+    workspace_service_npub: String,
+    device_npub: String,
+    label: Option<String>,
+    platform: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = tower_client_from_args(&tower, true)?
+        .ok_or("Tower config is required for device register")?;
+    let response = client.register_device(&RegisterDeviceRequest {
+        workspace_service_npub,
+        device_npub,
+        label,
+        platform,
+        policy: serde_json::json!({
+            "tower_nip98": true,
+            "wapp_nip98": true,
+            "requires_prompt_for": ["signEvent", "nip04.decrypt", "nip44.decrypt"]
+        }),
+    })?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "device": response.device,
+    }))?;
+    Ok(())
+}
+
+fn list_devices(tower: TowerReadArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let client =
+        tower_client_from_args(&tower, true)?.ok_or("Tower config is required for device list")?;
+    let response = client.list_devices()?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "devices": response.devices,
+    }))?;
+    Ok(())
+}
+
+fn touch_device_seen(
+    tower: TowerReadArgs,
+    workspace_service_npub: String,
+    device_npub: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client =
+        tower_client_from_args(&tower, true)?.ok_or("Tower config is required for device seen")?;
+    let response = client.touch_device_seen(
+        &device_npub,
+        &DeviceSeenRequest {
+            workspace_service_npub,
+        },
+    )?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "device": response.device,
+    }))?;
+    Ok(())
+}
+
+fn revoke_device(
+    tower: TowerReadArgs,
+    device_npub: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = tower_client_from_args(&tower, true)?
+        .ok_or("Tower config is required for device revoke")?;
+    let response = client.revoke_device(&device_npub)?;
+    print_json(&serde_json::json!({
+        "ok": true,
+        "device": response.device,
     }))?;
     Ok(())
 }

@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
+import '../../core/native_core_bridge.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     required this.config,
+    required this.bridge,
     required this.onConfigChanged,
     super.key,
   });
 
   final AppConfig config;
+  final NativeCoreBridge bridge;
   final ValueChanged<AppConfig> onConfigChanged;
 
   @override
@@ -18,25 +21,50 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   late final TextEditingController _towerController;
+  late final TextEditingController _appNpubController;
+  late final TextEditingController _flightDeckController;
   late final TextEditingController _workspaceController;
+  late final TextEditingController _workspaceServiceController;
   late final TextEditingController _channelController;
   late final TextEditingController _secretController;
+  late final TextEditingController _registrationSecretController;
+  late final TextEditingController _deviceNpubController;
+  late final TextEditingController _trustedOriginsController;
+  String? _message;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     _towerController = TextEditingController(text: widget.config.towerUrl);
+    _appNpubController = TextEditingController(text: widget.config.appNpub);
+    _flightDeckController =
+        TextEditingController(text: widget.config.flightDeckUrl);
     _workspaceController = TextEditingController(text: widget.config.workspaceId);
+    _workspaceServiceController =
+        TextEditingController(text: widget.config.workspaceServiceNpub);
     _channelController = TextEditingController(text: widget.config.channelId);
     _secretController = TextEditingController(text: widget.config.deviceSecret);
+    _registrationSecretController =
+        TextEditingController(text: widget.config.registrationSecret);
+    _deviceNpubController = TextEditingController(text: widget.config.deviceNpub);
+    _trustedOriginsController = TextEditingController(
+      text: widget.config.trustedOrigins.join('\n'),
+    );
   }
 
   @override
   void dispose() {
     _towerController.dispose();
+    _appNpubController.dispose();
+    _flightDeckController.dispose();
     _workspaceController.dispose();
+    _workspaceServiceController.dispose();
     _channelController.dispose();
     _secretController.dispose();
+    _registrationSecretController.dispose();
+    _deviceNpubController.dispose();
+    _trustedOriginsController.dispose();
     super.dispose();
   }
 
@@ -53,9 +81,24 @@ class _SetupScreenState extends State<SetupScreen> {
           icon: Icons.dns_outlined,
         ),
         _field(
+          controller: _appNpubController,
+          label: 'Flight Deck App npub',
+          icon: Icons.apps,
+        ),
+        _field(
+          controller: _flightDeckController,
+          label: 'Flight Deck URL',
+          icon: Icons.public,
+        ),
+        _field(
           controller: _workspaceController,
           label: 'Workspace ID',
           icon: Icons.workspaces_outline,
+        ),
+        _field(
+          controller: _workspaceServiceController,
+          label: 'Workspace service npub',
+          icon: Icons.badge_outlined,
         ),
         _field(
           controller: _channelController,
@@ -63,20 +106,59 @@ class _SetupScreenState extends State<SetupScreen> {
           icon: Icons.tag,
         ),
         _field(
+          controller: _deviceNpubController,
+          label: 'Device npub',
+          icon: Icons.fingerprint,
+        ),
+        _field(
           controller: _secretController,
           label: 'Device key',
           icon: Icons.key,
           obscureText: true,
         ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            onPressed: _save,
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Save'),
-          ),
+        _field(
+          controller: _registrationSecretController,
+          label: 'Registration signer key',
+          icon: Icons.admin_panel_settings_outlined,
+          obscureText: true,
         ),
+        _field(
+          controller: _trustedOriginsController,
+          label: 'Trusted origins',
+          icon: Icons.verified_user_outlined,
+          maxLines: 3,
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            FilledButton.icon(
+              onPressed: _busy ? null : _save,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _generateDevice,
+              icon: const Icon(Icons.add_circle_outline),
+              label: const Text('Generate key'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _registerDevice,
+              icon: const Icon(Icons.how_to_reg_outlined),
+              label: const Text('Register device'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _validateChannel,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Validate channel'),
+            ),
+          ],
+        ),
+        if (_message != null) ...[
+          const SizedBox(height: 16),
+          Text(_message!),
+        ],
       ],
     );
   }
@@ -86,12 +168,14 @@ class _SetupScreenState extends State<SetupScreen> {
     required String label,
     required IconData icon,
     bool obscureText = false,
+    int maxLines = 1,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: TextField(
         controller: controller,
         obscureText: obscureText,
+        maxLines: obscureText ? 1 : maxLines,
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
           prefixIcon: Icon(icon),
@@ -102,13 +186,91 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _save() {
-    widget.onConfigChanged(
-      widget.config.copyWith(
-        towerUrl: _towerController.text.trim(),
-        workspaceId: _workspaceController.text.trim(),
-        channelId: _channelController.text.trim(),
-        deviceSecret: _secretController.text.trim(),
-      ),
+    final origins = _trustedOriginsController.text
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    widget.onConfigChanged(_currentConfig().copyWith(trustedOrigins: origins));
+    setState(() {
+      _message = 'Configuration saved.';
+    });
+  }
+
+  AppConfig _currentConfig() {
+    return widget.config.copyWith(
+      towerUrl: _towerController.text.trim(),
+      appNpub: _appNpubController.text.trim(),
+      flightDeckUrl: _flightDeckController.text.trim(),
+      workspaceId: _workspaceController.text.trim(),
+      workspaceServiceNpub: _workspaceServiceController.text.trim(),
+      channelId: _channelController.text.trim(),
+      deviceNpub: _deviceNpubController.text.trim(),
+      deviceSecret: _secretController.text.trim(),
+      registrationSecret: _registrationSecretController.text.trim(),
     );
+  }
+
+  Future<void> _generateDevice() async {
+    await _run('Generating device key...', () async {
+      final identity = await widget.bridge.generateDeviceKey();
+      _deviceNpubController.text = identity.npub;
+      if (identity.nsec != null) {
+        _secretController.text = identity.nsec!;
+      }
+      widget.onConfigChanged(
+        _currentConfig().copyWith(
+          deviceNpub: identity.npub,
+          deviceSecret: identity.nsec,
+        ),
+      );
+      return 'Generated device key ${identity.npub}.';
+    });
+  }
+
+  Future<void> _registerDevice() async {
+    _save();
+    await _run('Registering device...', () async {
+      final result = await widget.bridge.registerDevice(_currentConfig());
+      if (!result.ok) return 'Device registration failed: ${result.error}';
+      return 'Device registered with Tower.';
+    });
+  }
+
+  Future<void> _validateChannel() async {
+    _save();
+    await _run('Validating channel...', () async {
+      final result = await widget.bridge.validateChannel(_currentConfig());
+      if (!result.ok) return 'Channel validation failed: ${result.error}';
+      return 'Channel validated.';
+    });
+  }
+
+  Future<void> _run(
+    String progress,
+    Future<String> Function() action,
+  ) async {
+    setState(() {
+      _busy = true;
+      _message = progress;
+    });
+    try {
+      final message = await action();
+      if (!mounted) return;
+      setState(() {
+        _message = message;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _message = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
   }
 }

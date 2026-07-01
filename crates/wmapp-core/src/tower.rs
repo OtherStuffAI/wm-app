@@ -171,6 +171,57 @@ impl TowerClient {
         )
     }
 
+    pub fn get_channel(
+        &self,
+        workspace_id: &str,
+        channel_id: &str,
+    ) -> Result<ChannelResponse, TowerClientError> {
+        self.get_json(
+            path(&[
+                "api",
+                "v4",
+                "flightdeck-pg",
+                "workspaces",
+                workspace_id,
+                "channels",
+                channel_id,
+            ])?,
+            &[],
+            None,
+        )
+    }
+
+    pub fn register_device(
+        &self,
+        input: &RegisterDeviceRequest,
+    ) -> Result<DeviceResponse, TowerClientError> {
+        self.post_json(path(&["api", "v4", "user", "devices"])?, &[], input)
+    }
+
+    pub fn list_devices(&self) -> Result<DevicesResponse, TowerClientError> {
+        self.get_json(path(&["api", "v4", "user", "devices"])?, &[], None)
+    }
+
+    pub fn touch_device_seen(
+        &self,
+        device_npub: &str,
+        input: &DeviceSeenRequest,
+    ) -> Result<DeviceResponse, TowerClientError> {
+        self.post_json(
+            path(&["api", "v4", "user", "devices", device_npub, "seen"])?,
+            &[],
+            input,
+        )
+    }
+
+    pub fn revoke_device(&self, device_npub: &str) -> Result<DeviceResponse, TowerClientError> {
+        self.post_json(
+            path(&["api", "v4", "user", "devices", device_npub, "revoke"])?,
+            &[],
+            &serde_json::json!({}),
+        )
+    }
+
     pub fn drive_tree(
         &self,
         workspace_id: &str,
@@ -377,6 +428,50 @@ impl TowerClient {
             .send()?)
     }
 
+    fn post_json<T: Serialize, R: DeserializeOwned>(
+        &self,
+        path: String,
+        query: &[(&str, &str)],
+        body: &T,
+    ) -> Result<R, TowerClientError> {
+        let bytes = serde_json::to_vec(body)
+            .map_err(|error| TowerClientError::Decode(error.to_string()))?;
+        let response = self.signed_json_request(Method::POST, self.url(path, query), bytes)?;
+        let text = read_success_text(response)?;
+        serde_json::from_str(&text).map_err(|error| TowerClientError::Decode(error.to_string()))
+    }
+
+    fn signed_json_request(
+        &self,
+        method: Method,
+        url: Url,
+        body: Vec<u8>,
+    ) -> Result<Response, TowerClientError> {
+        let auth = self
+            .signer
+            .sign(Nip98Request::new(method.as_str(), url.as_str())?.with_body(body.clone()))?
+            .authorization_header()?;
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth)
+                .map_err(|error| TowerClientError::Header(error.to_string()))?,
+        );
+        headers.insert(
+            APP_NPUB_HEADER,
+            HeaderValue::from_str(&self.config.app_npub)
+                .map_err(|error| TowerClientError::Header(error.to_string()))?,
+        );
+        Ok(self
+            .http
+            .request(method, url)
+            .headers(headers)
+            .body(body)
+            .send()?)
+    }
+
     fn url(&self, path: String, query: &[(&str, &str)]) -> Url {
         let mut url = self.config.tower_url.clone();
         url.set_path(&path);
@@ -557,6 +652,12 @@ pub struct ChannelsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelResponse {
+    pub identity: FlightDeckPgIdentity,
+    pub channel: Channel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
     pub id: String,
     pub workspace_id: String,
@@ -570,6 +671,50 @@ pub struct Channel {
     pub row_version: u64,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterDeviceRequest {
+    pub workspace_service_npub: String,
+    pub device_npub: String,
+    pub label: Option<String>,
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub policy: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceSeenRequest {
+    pub workspace_service_npub: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceResponse {
+    pub device: DeviceRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevicesResponse {
+    #[serde(default)]
+    pub devices: Vec<DeviceRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceRecord {
+    pub id: String,
+    pub device_npub: String,
+    pub user_npub: String,
+    pub workspace_owner_npub: String,
+    pub workspace_service_npub: String,
+    pub label: Option<String>,
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub policy: Value,
+    pub status: String,
+    pub active: bool,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub registered_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -834,6 +979,88 @@ mod tests {
         assert!(request.contains("get /api/v4/flightdeck-pg/workspaces/workspace-1/drive/tree?channel_id=channel-1&limit=2 http/1.1"));
         assert!(request.contains("authorization: nostr "));
         assert!(request.contains("x-flightdeck-pg-app-npub: npub-app"));
+    }
+
+    #[test]
+    fn reads_single_channel_without_scope_scan() {
+        let response = r#"{
+          "identity": {
+            "tower_service_npub": null,
+            "workspace_service_npub": null,
+            "workspace_owner_npub": null,
+            "workspace_id": "workspace-1",
+            "app_npub": "npub-app"
+          },
+          "channel": {
+            "id": "channel-1",
+            "workspace_id": "workspace-1",
+            "scope_id": "scope-1",
+            "name": "General",
+            "description": null,
+            "metadata": {},
+            "kind": "channel",
+            "participant_npubs": null,
+            "row_version": 7,
+            "created_at": "2026-07-01T00:00:00.000Z",
+            "updated_at": "2026-07-01T00:00:00.000Z"
+          }
+        }"#;
+        let (base_url, handle) = spawn_one_response(response);
+        let client = TowerClient::new(
+            TowerClientConfig::new(base_url, "npub-app").unwrap(),
+            test_key(),
+        );
+
+        let channel = client.get_channel("workspace-1", "channel-1").unwrap();
+        assert_eq!(channel.channel.name, "General");
+
+        let request = handle.join().unwrap();
+        assert!(request.contains(
+            "get /api/v4/flightdeck-pg/workspaces/workspace-1/channels/channel-1 http/1.1"
+        ));
+    }
+
+    #[test]
+    fn registers_device_with_signed_json_body() {
+        let response = r#"{
+          "device": {
+            "id": "npub-device",
+            "device_npub": "npub-device",
+            "user_npub": "npub-user",
+            "workspace_owner_npub": "npub-workspace",
+            "workspace_service_npub": "npub-workspace",
+            "label": "MacBook",
+            "platform": "macos",
+            "policy": {"tower_nip98": true},
+            "status": "active",
+            "active": true,
+            "last_seen_at": "2026-07-01T00:00:00.000Z",
+            "revoked_at": null,
+            "registered_at": "2026-07-01T00:00:00.000Z"
+          }
+        }"#;
+        let (base_url, handle) = spawn_one_response(response);
+        let client = TowerClient::new(
+            TowerClientConfig::new(base_url, "npub-app").unwrap(),
+            test_key(),
+        );
+
+        let registered = client
+            .register_device(&RegisterDeviceRequest {
+                workspace_service_npub: "npub-workspace".to_string(),
+                device_npub: "npub-device".to_string(),
+                label: Some("MacBook".to_string()),
+                platform: Some("macos".to_string()),
+                policy: serde_json::json!({ "tower_nip98": true }),
+            })
+            .unwrap();
+        assert_eq!(registered.device.device_npub, "npub-device");
+
+        let request = handle.join().unwrap();
+        assert!(request.contains("post /api/v4/user/devices http/1.1"));
+        assert!(request.contains("content-type: application/json"));
+        assert!(request.contains("\"device_npub\":\"npub-device\""));
+        assert!(request.contains("authorization: nostr "));
     }
 
     #[test]

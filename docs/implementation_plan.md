@@ -80,12 +80,12 @@ Key commits:
 
 Latest completed package:
 
-- `WP-02-05: Sync CLI And Local Control API`.
+- `WP-03-06: NIP-98 Permission Prompt Prototype`.
 
 Current checkpoint:
 
 - Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available. macFUSE 5.2.0 is installed on the current Mac host, but kernel mounting still needs the Rust FUSE/macFUSE adapter wiring.
-- Flutter shell shape has also started under `app/`, but it is not compiled yet because Flutter/Dart are not installed on the current host.
+- Phase 3 is implemented as a desktop spike across Tower and wm-app: single-channel read, device lifecycle routes, Flutter setup shell, process-backed native bridge, embedded WebView signer injection, and NIP-98 prompt flow are in place. Flutter/Dart are still not installed on the current Mac, so Flutter compile/runtime validation remains pending.
 
 Active package:
 
@@ -107,9 +107,8 @@ This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as
 | `WP-02-03` to `WP-02-05` | `done` | Native core read path, SQLite/cache, and headless control CLI are implemented and validated. |
 | `WP-04-01` | `in_progress` | Shared projection and macFUSE host validation are done; kernel mount adapter remains. |
 | `WP-01-05` to `WP-01-06` | `done` as `TOWER-GAP-01` to `TOWER-GAP-02` | Read-only Drive route prerequisites are clear. |
-| `WP-03-01` to `WP-03-02` | `ready` as `TOWER-GAP-06` to `TOWER-GAP-07` | App setup/device prerequisites, not required for the current mount spike. |
-| `WP-03-03` to `WP-03-04` | `new` with partial committed work | Flutter shell and bridge shape exist under `app/`; Flutter SDK validation remains. |
-| `WP-03-05` to `WP-03-06`, `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
+| `WP-03-01` to `WP-03-06` | `review` | Phase 3 spike code is in place across Tower and wm-app. Flutter SDK validation remains because Flutter/Dart are not installed on this Mac. |
+| `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
 | `WP-06-01` to `WP-06-03` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-05` | Write-sync Tower prerequisites. These must complete before production write sync. |
 | `WP-10-01` | `ready` as `TOWER-GAP-08` | WApp trusted origin prerequisite before signer policy work. |
 
@@ -121,8 +120,8 @@ The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase
 | --- | --- | --- | --- | --- |
 | `WP-01-05` | `TOWER-GAP-01` | `done` | Previously blocked Drive tree/delta reads. | No further pickup needed unless route regressions appear. |
 | `WP-01-06` | `TOWER-GAP-02` | `done` | Previously blocked byte-range reads. | No further pickup needed unless range smoke tests fail. |
-| `WP-03-01` | `TOWER-GAP-06` | `ready` | Polished channel lookup and some CLI ergonomics. | Pick up before app setup UX polish; not a blocker for current read-only mount work. |
-| `WP-03-02` | `TOWER-GAP-07` | `ready` | Production device onboarding/revoke. | Pick up before replacing development keys with production device enrollment. |
+| `WP-03-01` | `TOWER-GAP-06` | `implemented` | Polished channel lookup and some CLI ergonomics. | Tower now exposes a single-channel read route and wmapp-core has a `channel` validation command. |
+| `WP-03-02` | `TOWER-GAP-07` | `implemented` | Production device onboarding/revoke. | Tower now exposes `/api/v4/user/devices` lifecycle routes backed by NIP-98 workspace-user-key grants. |
 | `WP-06-01` | `TOWER-GAP-03` | `ready` | `WP-06-*` write sync and conflict-safe overwrites. | Pick up before implementing production uploads or offline edits. |
 | `WP-06-02` | `TOWER-GAP-04` | `ready` | `WP-06-*` delete/tombstone behavior. | Pick up before exposing deletes or rename/move semantics. |
 | `WP-06-03` | `TOWER-GAP-05` | `ready` | `WP-06-*` version history and conflict UX. | Pick up before claiming version browsing or robust conflict resolution. |
@@ -498,7 +497,7 @@ Alias:
 
 Status:
 
-- Ready. Not started in the current wm-app repo state.
+- Implemented. Tower exposes `GET /api/v4/flightdeck-pg/workspaces/:workspaceId/channels/:channelId`, and `wmapp-core channel --workspace-id ... --channel-id ...` validates a configured channel without scanning every scope.
 
 Scope:
 
@@ -525,7 +524,7 @@ Alias:
 
 Status:
 
-- Ready. Not started in the current wm-app repo state.
+- Implemented. Tower exposes `/api/v4/user/devices` register/list/seen/revoke routes as a device-oriented facade over NIP-98 workspace-user-key grants, and `wmapp-core device register/list/seen/revoke` can call them.
 
 Scope:
 
@@ -549,7 +548,7 @@ Blocks:
 
 Status:
 
-- Started. A dependency-light Flutter shell skeleton exists under `app/` with setup, Drive, browser, and status screens. It has not been compiled on the current host because Flutter/Dart are not installed.
+- Implemented as a desktop spike. The Flutter shell under `app/` has setup, Drive, browser, and status screens, Tower/App/workspace/channel fields, device key generation/import through `wmapp-core`, registration signer separation, device registration, and channel validation. It has not been compiled on the current host because Flutter/Dart are not installed.
 
 Scope:
 
@@ -573,7 +572,7 @@ Current validation:
 
 Status:
 
-- Started as an interface shape only. `NativeCoreBridge` returns fixture status and Drive data so the shell can be wired before choosing FFI, method channels, or a local control process.
+- Implemented as a local-process bridge. `NativeCoreBridge` calls `wmapp-core` for status, local Drive listing, one-shot sync, channel validation, device lifecycle commands, and NIP-98 signing. FFI/platform-channel hardening remains a later production choice.
 
 Scope:
 
@@ -590,6 +589,10 @@ Acceptance:
 
 #### WP-03-05: Embedded WebView With `window.nostr` Injection
 
+Status:
+
+- Implemented as a Flutter desktop WebView prototype using `webview_flutter`. Trusted origins receive a minimal `window.nostr` bridge with `getPublicKey` and `signNip98`; unknown origins do not receive the bridge.
+
 Scope:
 
 - Add WebView for Flight Deck and WApps.
@@ -605,6 +608,10 @@ Acceptance:
 - Approved origin receives only the supported methods.
 
 #### WP-03-06: NIP-98 Permission Prompt Prototype
+
+Status:
+
+- Implemented as a native Flutter prompt. The prompt displays origin, URL, HTTP method, event kind `27235`, and device npub before calling `wmapp-core sign-nip98`.
 
 Scope:
 

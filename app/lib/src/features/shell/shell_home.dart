@@ -87,13 +87,17 @@ class _ShellHomeState extends State<ShellHome> {
     return switch (_selectedIndex) {
       0 => SetupScreen(
           config: widget.config,
+          bridge: widget.bridge,
           onConfigChanged: widget.onConfigChanged,
         ),
       1 => DriveScreen(
           config: widget.config,
           bridge: widget.bridge,
         ),
-      2 => BrowserScreen(config: widget.config),
+      2 => BrowserScreen(
+          config: widget.config,
+          bridge: widget.bridge,
+        ),
       _ => StatusScreen(
           config: widget.config,
           bridge: widget.bridge,

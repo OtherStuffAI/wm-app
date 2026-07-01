@@ -50,7 +50,9 @@ The `mount --dry-run` command prints the read-only Drive tree that a FUSE/macFUS
 
 ## Flutter Shell
 
-The first Flutter shell shape lives at `app/`. It defines setup, Drive, browser, and status screens plus a `NativeCoreBridge` abstraction for the existing Rust core.
+The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status screens plus a `NativeCoreBridge` local-process bridge to the existing Rust core.
+
+The current desktop spike can generate/import a device key, register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a minimal `window.nostr` bridge into trusted WebView origins for `getPublicKey` and prompted NIP-98 signing.
 
 Flutter is not installed on the current development host. After installing Flutter:
 

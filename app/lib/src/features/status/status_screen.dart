@@ -25,14 +25,17 @@ class StatusScreen extends StatelessWidget {
             Text('Status', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 20),
             _row('Tower', status?.towerUrl ?? config.towerUrl),
+            _row('App npub', status?.appNpub ?? config.appNpub),
             _row('Workspace', status?.workspaceId ?? config.workspaceId),
             _row('Channel', status?.channelId ?? config.channelId),
+            _row('Device npub', status?.deviceNpub ?? config.deviceNpub),
             _row(
               'Device',
               (status?.deviceConfigured ?? config.hasDeviceSecret)
                   ? 'configured'
                   : 'missing',
             ),
+            _row('Sync', status?.latestSync ?? 'not checked'),
             const SizedBox(height: 20),
             Text(status?.message ?? 'Loading native core status...'),
           ],
