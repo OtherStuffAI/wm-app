@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
-    DeviceKey, DriveDeltaOptions, DriveItemType, DriveTreeOptions, Nip98Request, Nip98Signer,
-    ObjectCache, ObjectCacheConfig, ObjectCacheError, SqliteIndex, SqliteIndexConfig, SyncEngine,
-    TowerClient, TowerClientConfig, VisibleMetadata,
+    DeviceKey, DriveDeltaOptions, DriveItemType, DriveProjection, DriveTreeOptions, Nip98Request,
+    Nip98Signer, ObjectCache, ObjectCacheConfig, ObjectCacheError, SqliteIndex, SqliteIndexConfig,
+    SyncEngine, TowerClient, TowerClientConfig, VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -32,6 +32,8 @@ enum Command {
     Pin(CacheFileArgs),
     /// Remove a cached file from local storage.
     Evict(EvictArgs),
+    /// Inspect or start the read-only Drive mount projection.
+    Mount(MountArgs),
     /// List visible Drive file/folder items from Tower without persisting them.
     ListFiles(ListFilesArgs),
     /// Generate or inspect development device keys.
@@ -154,6 +156,21 @@ struct EvictArgs {
 }
 
 #[derive(Parser, Debug, Clone)]
+struct MountArgs {
+    #[command(flatten)]
+    local: LocalDataArgs,
+    /// Workspace id to project into a mounted tree.
+    #[arg(long)]
+    workspace_id: String,
+    /// Mount point for the future FUSE/macFUSE mount.
+    #[arg(long, default_value = "~/FlightDeck")]
+    mountpoint: String,
+    /// Print the projected tree without attempting a kernel mount.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Parser, Debug, Clone)]
 struct ListFilesArgs {
     #[command(flatten)]
     tower: TowerReadArgs,
@@ -216,6 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Cat(args) => cat_file(args)?,
         Command::Pin(args) => pin_file(args)?,
         Command::Evict(args) => evict_file(args)?,
+        Command::Mount(args) => mount_drive(args)?,
         Command::ListFiles(args) => list_files(args)?,
         Command::Device { command } => match command {
             DeviceCommand::Generate { show_secret } => {
@@ -506,6 +524,35 @@ fn evict_file(args: EvictArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn mount_drive(args: MountArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let local = local_paths(&args.local)?;
+    let index = open_index(&local)?;
+    let projection = DriveProjection::from_index(&index, &args.workspace_id)?;
+    let mountpoint = expand_home(&args.mountpoint);
+
+    if args.dry_run {
+        print_json(&serde_json::json!({
+            "ok": true,
+            "mode": "dry_run",
+            "platform": std::env::consts::OS,
+            "mountpoint": mountpoint,
+            "workspace_id": args.workspace_id,
+            "data_dir": local.data_dir,
+            "entry_count": projection.entries.len(),
+            "entries": projection.entries,
+            "warnings": projection.warnings,
+        }))?;
+        return Ok(());
+    }
+
+    Err(format!(
+        "kernel mounting is not wired in this build yet. On macOS install macFUSE before the adapter is enabled. For now use: wmapp-core mount --dry-run --workspace-id {} --mountpoint {}",
+        args.workspace_id,
+        mountpoint.display()
+    )
+    .into())
+}
+
 fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let client = tower_client_from_args(&args.tower, true)?
         .ok_or("Tower config is required for list-files")?;
@@ -583,6 +630,15 @@ fn local_paths(args: &LocalDataArgs) -> Result<LocalPaths, Box<dyn std::error::E
         cache_root: data_dir.join("cache"),
         data_dir,
     })
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
 }
 
 fn tower_client_from_args(

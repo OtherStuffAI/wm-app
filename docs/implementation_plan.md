@@ -70,7 +70,7 @@ Latest completed package:
 
 Current checkpoint:
 
-- Manual headless CLI testing against real Drive data, then choose the next spike: signer-browser (`WP-03-*`) or read-only filesystem mount (`WP-04-*`).
+- Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available; kernel mounting still needs the FUSE/macFUSE adapter and host driver.
 
 Current working assumption:
 
@@ -453,6 +453,10 @@ Acceptance:
 
 #### WP-04-01: Linux FUSE Adapter Skeleton
 
+Status:
+
+- Started on macOS as a shared projection skeleton. `wmapp-core mount --dry-run` now renders the read-only Drive tree from local SQLite metadata. Actual kernel mounting is still blocked on FUSE/macFUSE adapter work and macFUSE is not installed on the current Mac host.
+
 Scope:
 
 - Add Linux FUSE adapter.
@@ -467,7 +471,17 @@ Acceptance:
 - `ls ~/FlightDeck` returns without errors.
 - Mount and unmount are controlled by CLI or local API.
 
+Current validation:
+
+- `cargo test` passes with projection coverage.
+- Live dry-run on macOS after `sync --once` projected `/Wingman Suite/Wingman App/wmapp-cli-test.txt` from Tower-backed metadata.
+- Running `mount` without `--dry-run` fails closed with a macFUSE/FUSE guidance message instead of pretending a kernel mount exists.
+
 #### WP-04-02: Metadata Projection To Mount Tree
+
+Status:
+
+- Partially complete through the shared projection module. The dry-run tree already maps workspace-local scopes, channels, folders, and files into user-facing paths.
 
 Scope:
 
@@ -1013,9 +1027,9 @@ Prove the virtual filesystem model with the simplest desktop target.
 
 Tasks:
 
-- Add Linux FUSE adapter.
-- Mount `~/FlightDeck`.
-- Project workspace/scope/channel/folder/file metadata into paths.
+- Add Linux FUSE/macFUSE adapter.
+- Mount `~/FlightDeck` when FUSE/macFUSE is available.
+- Project workspace/scope/channel/folder/file metadata into paths. Initial shared projection is complete and test-covered.
 - Implement directory listing.
 - Implement file stat with known size and timestamps.
 - Implement lazy read and range fetch.
@@ -1024,6 +1038,7 @@ Tasks:
 Validation:
 
 ```bash
+wmapp-core mount --dry-run --workspace-id <workspace-id> --mountpoint ~/FlightDeck
 ls ~/FlightDeck
 find ~/FlightDeck -maxdepth 4 -type f
 open-or-cat ~/FlightDeck/<workspace>/<scope>/<channel>/<file>
@@ -1310,10 +1325,11 @@ Milestone E: macOS Read-Only Drive
 
 ## Recommended Next Step
 
-Phase 2 is complete enough for the first manual checkpoint:
+Continue the read-only desktop mount path:
 
-1. Add at least one real Drive file to the test channel or choose a channel with existing files.
-2. Run `wmapp-core sync --once`, `list-items`, `cat --output`, `pin`, and `evict` against that data.
-3. Decide whether the next implementation branch should validate WApp signing/browser identity first (`WP-03-*`) or filesystem projection first (`WP-04-*`).
+1. Install/verify macFUSE on the current Mac host or use a Linux host with FUSE available.
+2. Implement the kernel FUSE/macFUSE adapter against the existing `DriveProjection`.
+3. Add file stat support for online-only files, using Tower byte-range metadata where needed so placeholders can report real size without full hydration.
+4. Wire file reads to the existing cache-first `cat`/hydration path.
 
-After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first. Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.
+Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.

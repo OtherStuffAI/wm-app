@@ -696,6 +696,43 @@ impl SqliteIndex {
             .map_err(SqliteIndexError::from)
     }
 
+    pub fn list_scopes(&self, workspace_id: &str) -> Result<Vec<LocalScope>, SqliteIndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, workspace_id, name
+             FROM scopes
+             WHERE workspace_id = :workspace_id
+             ORDER BY name, id",
+        )?;
+        let rows = stmt.query_map(named_params! { ":workspace_id": workspace_id }, |row| {
+            Ok(LocalScope {
+                id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                name: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(SqliteIndexError::from)
+    }
+
+    pub fn list_channels(&self, workspace_id: &str) -> Result<Vec<LocalChannel>, SqliteIndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, workspace_id, scope_id, name
+             FROM channels
+             WHERE workspace_id = :workspace_id
+             ORDER BY scope_id, name, id",
+        )?;
+        let rows = stmt.query_map(named_params! { ":workspace_id": workspace_id }, |row| {
+            Ok(LocalChannel {
+                id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                scope_id: row.get(2)?,
+                name: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(SqliteIndexError::from)
+    }
+
     fn migrate(&self) -> Result<(), SqliteIndexError> {
         self.conn.execute_batch(
             "
@@ -932,6 +969,21 @@ pub struct LocalItem {
     pub local_state: String,
     pub updated_at: Option<String>,
     pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalScope {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalChannel {
+    pub id: String,
+    pub workspace_id: String,
+    pub scope_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -43,7 +43,10 @@ cargo run --bin wmapp-core -- list-items --workspace-id <workspace-id>
 cargo run --bin wmapp-core -- cat --workspace-id <workspace-id> <file-id> --output /tmp/file.out
 cargo run --bin wmapp-core -- pin <file-id>
 cargo run --bin wmapp-core -- evict <file-id> --force
+cargo run --bin wmapp-core -- mount --dry-run --workspace-id <workspace-id> --mountpoint ~/FlightDeck
 ```
+
+The `mount --dry-run` command prints the read-only Drive tree that a FUSE/macFUSE mount will expose. Actual kernel mounting requires FUSE on Linux or macFUSE on macOS and is intentionally gated until the host driver and adapter are available.
 
 See:
 
