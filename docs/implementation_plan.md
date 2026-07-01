@@ -1287,8 +1287,7 @@ Milestone E: macOS Read-Only Drive
 
 Continue Phase 2 in dependency order:
 
-1. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`, using the accepted Drive tree/delta and byte-range contracts.
-2. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
-3. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
+1. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
+2. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
 
 After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first. Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.
