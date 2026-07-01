@@ -52,11 +52,15 @@ Completed:
 - Phase 1 Tower route inventory, Drive contract, device-key contract, and signed API smoke harness.
 - `WP-02-01`: Rust workspace and `wmapp-core` crate skeleton.
 - `WP-02-02`: development device-key generation/import and NIP-98 signer.
+- `WMAPP TOWER-GAP-01`: Drive tree and delta routes reviewed and accepted.
+- `WMAPP TOWER-GAP-02`: byte-range file content reads reviewed and accepted.
 
 Key commits:
 
 - `bbd7958 Complete wm-app phase 1 contracts`.
 - `67ed27d Add wmapp core crate and NIP-98 signer`.
+- Tower `e58c874 Add Flight Deck PG Drive tree delta routes`.
+- Tower `9f38bb4 Add Flight Deck PG file byte ranges`.
 
 Current next package:
 
@@ -71,12 +75,12 @@ Current working assumption:
 
 The catch-up trigger correctly surfaced `WMAPP TOWER-GAP-*` cards from the Phase 1 audit. These are already part of the plan as cross-repo Tower prerequisites, but they affect the order in which wm-app work should be treated as shippable.
 
-Clear first for the read-only Drive spine:
+Cleared for the read-only Drive spine:
 
-- `WMAPP TOWER-GAP-01`: Drive tree and delta contract.
-- `WMAPP TOWER-GAP-02`: byte-range file content reads.
+- `WMAPP TOWER-GAP-01`: Drive tree and delta contract. Status: done.
+- `WMAPP TOWER-GAP-02`: byte-range file content reads. Status: done.
 
-These two gaps should be reviewed or completed before treating `WP-02-03`, `WP-02-04`, `WP-02-05`, or the read-only FUSE work in `WP-04-*` as more than a prototype. `WP-02-03` can still begin against the current contracts and existing routes, but the typed client should preserve explicit fallback paths for full-object reads and missing delta support.
+These two gaps are now clear enough for `WP-02-03`, `WP-02-04`, `WP-02-05`, and the read-only FUSE work in `WP-04-*` to target the Tower read path directly. `WP-02-03` should model `/drive/tree`, `/drive/delta`, and ranged `/files/:fileId/object` reads as the primary read contracts.
 
 Clear before write support:
 
@@ -1272,9 +1276,8 @@ Milestone E: macOS Read-Only Drive
 
 Continue Phase 2 in dependency order:
 
-1. Finish or review the read-only Tower spine gaps: `WMAPP TOWER-GAP-01` and `WMAPP TOWER-GAP-02`.
-2. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`, with explicit fallbacks where Tower gaps are still open.
-3. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
-4. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
+1. `WP-02-03`: implement typed Tower HTTP client and models in `crates/wmapp-core`, using the accepted Drive tree/delta and byte-range contracts.
+2. `WP-02-04`: add SQLite index and object cache backed by the Tower models.
+3. `WP-02-05`: expose headless sync/control commands for status, sync once, list items, cat file, pin, and evict.
 
 After `WP-02-05`, choose between the Flutter signer-browser spike (`WP-03-*`) and the Linux read-only FUSE mount (`WP-04-*`) based on whether Pete wants identity/browser validation or Drive filesystem validation first. Keep production write sync behind `WMAPP TOWER-GAP-03`, `WMAPP TOWER-GAP-04`, and `WMAPP TOWER-GAP-05`; keep production WApp signer policy behind `WMAPP TOWER-GAP-08`.
