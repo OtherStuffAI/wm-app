@@ -30,6 +30,8 @@ pub struct ProjectedEntry {
     pub local_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_object_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -47,7 +49,20 @@ impl DriveProjection {
         let scopes = index.list_scopes(workspace_id)?;
         let channels = index.list_channels(workspace_id)?;
         let items = index.list_items(workspace_id)?;
-        Ok(Self::from_parts(workspace_id, scopes, channels, items))
+        let mut projection = Self::from_parts(workspace_id, scopes, channels, items);
+        for entry in projection
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.kind == ProjectedEntryKind::File)
+        {
+            let Some(file_id) = entry.file_id.as_deref() else {
+                continue;
+            };
+            if let Some(cache_entry) = index.cache_entry_for_file(file_id)? {
+                entry.size_bytes = Some(cache_entry.size_bytes);
+            }
+        }
+        Ok(projection)
     }
 
     pub fn from_parts(
@@ -182,6 +197,7 @@ fn add_children(
                 file_id: Some(item.id),
                 local_state: Some(item.local_state),
                 storage_object_id: item.storage_object_id,
+                size_bytes: None,
             });
         }
     }
@@ -195,6 +211,7 @@ fn directory(path: &str, item_id: Option<String>) -> ProjectedEntry {
         file_id: None,
         local_state: None,
         storage_object_id: None,
+        size_bytes: None,
     }
 }
 

@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
@@ -16,6 +18,7 @@ use crate::{DriveProjection, ProjectedEntryKind};
 
 const ROOT_INO: u64 = 1;
 const TTL: Duration = Duration::from_secs(1);
+const UNKNOWN_ONLINE_FILE_SIZE: u64 = 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum FuseMountError {
@@ -42,13 +45,34 @@ pub struct FuseMountConfig {
     pub fs_name: String,
 }
 
+pub trait ProjectionFileReader: Send + Sync {
+    fn read_file(&self, file_id: &str) -> io::Result<Vec<u8>>;
+}
+
+#[derive(Debug)]
+struct EmptyFileReader;
+
+impl ProjectionFileReader for EmptyFileReader {
+    fn read_file(&self, _file_id: &str) -> io::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+}
+
 pub fn mount_read_only_projection(
     projection: DriveProjection,
     config: FuseMountConfig,
 ) -> Result<(), FuseMountError> {
+    mount_read_only_projection_with_reader(projection, config, Arc::new(EmptyFileReader))
+}
+
+pub fn mount_read_only_projection_with_reader(
+    projection: DriveProjection,
+    config: FuseMountConfig,
+    file_reader: Arc<dyn ProjectionFileReader>,
+) -> Result<(), FuseMountError> {
     ensure_mountpoint(&config.mountpoint)?;
     preflight_mount_host()?;
-    let fs = ProjectionFileSystem::new(projection);
+    let fs = ProjectionFileSystem::new(projection, file_reader);
     let mut mount_config = Config::default();
     mount_config.mount_options.extend([
         MountOption::RO,
@@ -135,15 +159,16 @@ fn ensure_mountpoint(path: &Path) -> Result<(), FuseMountError> {
     })
 }
 
-#[derive(Debug)]
 struct ProjectionFileSystem {
     tree: ProjectionTree,
+    file_reader: Arc<dyn ProjectionFileReader>,
 }
 
 impl ProjectionFileSystem {
-    fn new(projection: DriveProjection) -> Self {
+    fn new(projection: DriveProjection, file_reader: Arc<dyn ProjectionFileReader>) -> Self {
         Self {
             tree: ProjectionTree::from_projection(projection),
+            file_reader,
         }
     }
 }
@@ -236,7 +261,17 @@ impl Filesystem for ProjectionFileSystem {
             reply.error(Errno::EISDIR);
             return;
         }
-        let content = node.content.as_slice();
+        let Some(file_id) = node.file_id.as_deref() else {
+            reply.error(Errno::EIO);
+            return;
+        };
+        let content = match self.file_reader.read_file(file_id) {
+            Ok(content) => content,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
         let start = offset.min(content.len() as u64) as usize;
         let end = (start + size as usize).min(content.len());
         reply.data(&content[start..end]);
@@ -318,7 +353,17 @@ impl ProjectionTree {
                 } else {
                     NodeKind::Directory
                 };
-                parent = tree.ensure_child(parent, component, kind);
+                let child = tree.ensure_child(parent, component, kind);
+                if is_leaf && kind == NodeKind::File {
+                    tree.set_file_metadata(
+                        child,
+                        entry.file_id.clone(),
+                        entry.storage_object_id.clone(),
+                        entry.local_state.clone(),
+                        entry.size_bytes,
+                    );
+                }
+                parent = child;
             }
         }
         tree
@@ -366,8 +411,14 @@ impl ProjectionTree {
     fn attr(&self, node: &Node) -> FileAttr {
         FileAttr {
             ino: INodeNo(node.ino),
-            size: node.content.len() as u64,
-            blocks: if node.content.is_empty() { 0 } else { 1 },
+            size: node.size_bytes.unwrap_or_else(|| {
+                if node.kind == NodeKind::File {
+                    UNKNOWN_ONLINE_FILE_SIZE
+                } else {
+                    0
+                }
+            }),
+            blocks: node.size_bytes.map(|size| size.div_ceil(512)).unwrap_or(0),
             atime: UNIX_EPOCH,
             mtime: node.mtime,
             ctime: node.mtime,
@@ -407,7 +458,10 @@ impl ProjectionTree {
             name: name.to_string(),
             kind,
             children: BTreeMap::new(),
-            content: Vec::new(),
+            file_id: None,
+            storage_object_id: None,
+            local_state: None,
+            size_bytes: None,
             mtime: SystemTime::now(),
         };
         self.nodes.push(node);
@@ -418,6 +472,24 @@ impl ProjectionTree {
                 .insert(name.to_string(), ino);
         }
         ino
+    }
+
+    fn set_file_metadata(
+        &mut self,
+        ino: u64,
+        file_id: Option<String>,
+        storage_object_id: Option<String>,
+        local_state: Option<String>,
+        size_bytes: Option<u64>,
+    ) {
+        let Some(index) = self.by_ino.get(&ino).copied() else {
+            return;
+        };
+        let node = &mut self.nodes[index];
+        node.file_id = file_id;
+        node.storage_object_id = storage_object_id;
+        node.local_state = local_state;
+        node.size_bytes = size_bytes;
     }
 }
 
@@ -436,7 +508,10 @@ struct Node {
     name: String,
     kind: NodeKind,
     children: BTreeMap<String, u64>,
-    content: Vec<u8>,
+    file_id: Option<String>,
+    storage_object_id: Option<String>,
+    local_state: Option<String>,
+    size_bytes: Option<u64>,
     mtime: SystemTime,
 }
 
@@ -448,7 +523,10 @@ impl Node {
             name: String::new(),
             kind: NodeKind::Directory,
             children: BTreeMap::new(),
-            content: Vec::new(),
+            file_id: None,
+            storage_object_id: None,
+            local_state: None,
+            size_bytes: None,
             mtime: UNIX_EPOCH,
         }
     }
@@ -500,6 +578,7 @@ fn current_gid() -> u32 {
 mod tests {
     use super::*;
     use crate::{ProjectedEntry, ProjectedEntryKind};
+    use std::collections::HashMap;
 
     #[test]
     fn tree_indexes_projection_for_lookup_and_readdir() {
@@ -522,7 +601,9 @@ mod tests {
 
         assert_eq!(scope.kind, NodeKind::Directory);
         assert_eq!(file.kind, NodeKind::File);
+        assert_eq!(file.file_id.as_deref(), Some("file-1"));
         assert_eq!(tree.attr(file).perm, 0o444);
+        assert_eq!(tree.attr(file).size, 14);
 
         let names = tree
             .directory_entries(reports.ino)
@@ -551,6 +632,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn filesystem_reads_file_content_from_provider() {
+        let projection = DriveProjection {
+            workspace_id: "workspace-1".to_string(),
+            entries: vec![file("/Scope/Channel/readme.txt")],
+            warnings: vec![],
+        };
+        let fs = ProjectionFileSystem::new(
+            projection,
+            Arc::new(StaticFileReader::new([(
+                "file-1",
+                b"hello mounted drive".to_vec(),
+            )])),
+        );
+        let scope = fs.tree.lookup(ROOT_INO, "Scope").unwrap();
+        let channel = fs.tree.lookup(scope.ino, "Channel").unwrap();
+        let file = fs.tree.lookup(channel.ino, "readme.txt").unwrap();
+        let content = fs
+            .file_reader
+            .read_file(file.file_id.as_deref().unwrap())
+            .unwrap();
+
+        assert_eq!(content, b"hello mounted drive");
+    }
+
     fn directory(path: &str) -> ProjectedEntry {
         ProjectedEntry {
             path: path.to_string(),
@@ -559,6 +665,7 @@ mod tests {
             file_id: None,
             local_state: None,
             storage_object_id: None,
+            size_bytes: None,
         }
     }
 
@@ -567,9 +674,34 @@ mod tests {
             path: path.to_string(),
             kind: ProjectedEntryKind::File,
             item_id: None,
-            file_id: Some(path.to_string()),
+            file_id: Some("file-1".to_string()),
             local_state: Some("online_only".to_string()),
             storage_object_id: None,
+            size_bytes: Some(14),
+        }
+    }
+
+    #[derive(Debug)]
+    struct StaticFileReader {
+        files: HashMap<String, Vec<u8>>,
+    }
+
+    impl StaticFileReader {
+        fn new<const N: usize>(files: [(&str, Vec<u8>); N]) -> Self {
+            Self {
+                files: files
+                    .into_iter()
+                    .map(|(id, content)| (id.to_string(), content))
+                    .collect(),
+            }
+        }
+    }
+
+    impl ProjectionFileReader for StaticFileReader {
+        fn read_file(&self, file_id: &str) -> io::Result<Vec<u8>> {
+            self.files.get(file_id).cloned().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, format!("missing {file_id}"))
+            })
         }
     }
 }

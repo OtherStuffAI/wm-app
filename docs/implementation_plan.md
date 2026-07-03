@@ -84,12 +84,12 @@ Latest completed package:
 
 Current checkpoint:
 
-- Read-only filesystem mount spike has started on macOS. The shared Drive projection and `mount --dry-run` CLI are available. macFUSE 5.2.0 is installed on the current Mac host, but kernel mounting still needs the Rust FUSE/macFUSE adapter wiring.
+- Read-only filesystem mount spike has started on macOS. The shared Drive projection, `mount --dry-run` CLI, foreground FUSE/macFUSE mount adapter, and cache-first/Tower-hydrating read path are available. macFUSE 5.2.0 is installed on the current Mac host, but the kernel device still cannot load until host security approval/loading is fixed.
 - Phase 3 is implemented and locally validated as a desktop spike across Tower and wm-app: single-channel read, device lifecycle routes, Flutter setup shell, process-backed native bridge, embedded WebView signer injection, and NIP-98 prompt flow are in place. Flutter 3.44.4 is installed on the current Mac, `flutter test`, `flutter build web`, `flutter build macos --debug`, and a brief `flutter run -d macos` all pass.
 
 Active package:
 
-- `WP-04-01: Linux FUSE Adapter Skeleton` is in progress on the Flight Deck board. The projection and dry-run surface are committed; the actual `ls ~/FlightDeck` mount acceptance is not complete until FUSE/macFUSE adapter wiring is done and validated against the installed macFUSE host driver.
+- `WP-04-01: Linux FUSE Adapter Skeleton` is implemented in code but still needs live kernel acceptance. The projection, dry-run surface, foreground adapter, and lazy read hook are committed; the actual `ls ~/FlightDeck` mount acceptance is not complete until the installed macFUSE host driver can load.
 
 Current working assumption:
 
@@ -105,10 +105,11 @@ This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as
 | --- | --- | --- |
 | `WP-00-01` to `WP-02-02` | `review` | Repo-local work is complete enough to build from, but board review has not been closed. |
 | `WP-02-03` to `WP-02-05` | `done` | Native core read path, SQLite/cache, and headless control CLI are implemented and validated. |
-| `WP-04-01` | `in_progress` | Shared projection and macFUSE host validation are done; kernel mount adapter remains. |
+| `WP-04-01` | `in_progress` | Adapter code is implemented; live kernel mount acceptance remains blocked by macFUSE host loading. |
 | `WP-01-05` to `WP-01-06` | `done` as `TOWER-GAP-01` to `TOWER-GAP-02` | Read-only Drive route prerequisites are clear. |
 | `WP-03-01` to `WP-03-06` | `review` | Phase 3 spike code is in place across Tower and wm-app. Flutter SDK validation now passes on macOS and web build targets. |
-| `WP-04-02` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
+| `WP-04-02` to `WP-04-03` | `in_progress` | Projection and lazy read code are implemented and validated through dry-run/cache tests; live mounted `find`/open acceptance waits on macFUSE. |
+| `WP-04-04` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
 | `WP-06-01` to `WP-06-03` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-05` | Write-sync Tower prerequisites. These must complete before production write sync. |
 | `WP-10-01` | `ready` as `TOWER-GAP-08` | WApp trusted origin prerequisite before signer policy work. |
 
@@ -634,7 +635,7 @@ Acceptance:
 
 Status:
 
-- Adapter skeleton implemented in `wmapp-core`. `mount --dry-run` renders the read-only Drive tree from local SQLite metadata, and non-dry-run `mount` now enters the FUSE/macFUSE foreground mount path after host preflight. On the current Mac host, macFUSE 5.2.0 is installed but the kernel device cannot be loaded yet, so live `ls` acceptance remains blocked by host macFUSE approval/loading rather than missing adapter code.
+- Adapter skeleton implemented in `wmapp-core`. `mount --dry-run` renders the read-only Drive tree from local SQLite metadata, and non-dry-run `mount` now enters the FUSE/macFUSE foreground mount path after host preflight. Mounted file reads use the cache first and hydrate from Tower on cache miss when Tower auth is configured. On the current Mac host, macFUSE 5.2.0 is installed but the kernel device cannot be loaded yet, so live `ls` acceptance remains blocked by host macFUSE approval/loading rather than missing adapter code.
 
 Scope:
 
@@ -652,17 +653,18 @@ Acceptance:
 
 Current validation:
 
-- `cargo test` passes with projection and mount-tree coverage.
-- Live dry-run on macOS after `sync --once` projected `/Wingman Suite/Wingman App/wmapp-cli-test.txt` from Tower-backed metadata.
+- `cargo test` passes with projection, mount-tree, and provider-backed file read coverage.
+- Live dry-run on macOS after `sync --once` projected `/Wingman Suite/Wingman App/wmapp-readonly-open-me.txt` from Tower-backed metadata with `local_state: cached` and `size_bytes: 271`.
+- `wmapp-core cat` hydrated the same file from Tower into the local cache and wrote an openable read-only preview file at `~/FlightDeck-readonly-preview/Wingman Suite/Wingman App/wmapp-readonly-open-me.txt`.
 - Host macFUSE check on 2026-07-01 found `/Library/Filesystems/macfuse.fs`, package receipts, and `mount_macfuse` version `5.2.0` under `/Library/Filesystems/macfuse.fs/Contents/Resources/`.
-- Running `mount` without `--dry-run` on 2026-07-02 fails closed at macOS preflight: `/Library/Filesystems/macfuse.fs/Contents/Resources/load_macfuse` exits `1`, and no `/dev/macfuse*`, `/dev/osxfuse*`, or `/dev/fuse*` device is present. Real `ls` acceptance is not passed on this host until macFUSE can load.
+- Running `mount` without `--dry-run` on 2026-07-03 fails closed at macOS preflight: `/Library/Filesystems/macfuse.fs/Contents/Resources/load_macfuse` exits `1`, and no `/dev/macfuse*`, `/dev/osxfuse*`, or `/dev/fuse*` device is present. Real `ls` acceptance is not passed on this host until macFUSE can load.
 
 #### WP-04-02: Metadata Projection To Mount Tree
 
 Status:
 
-- Partially complete through the shared projection module. The dry-run tree already maps workspace-local scopes, channels, folders, and files into user-facing paths.
-- Board state remains `new`; the committed projection work landed under the active `WP-04-01` slice because it was needed before the kernel adapter could be wired.
+- Implemented through the shared projection module. The dry-run tree maps workspace-local scopes, channels, folders, and files into user-facing paths and includes cached file size metadata where available.
+- Board state may still read `new`; the committed projection work landed under the active `WP-04-01`/`WP-04-03` slices because it was needed before live kernel acceptance could be completed.
 
 Scope:
 
@@ -690,6 +692,12 @@ Acceptance:
 
 - Files are visible before content is downloaded.
 - Reopening hydrated content uses cache.
+
+Current validation:
+
+- Implemented as cache-first full-object hydration in the FUSE read provider. Byte-range-specific hydration remains a later optimization.
+- `cargo test` includes provider-backed read coverage.
+- Live `wmapp-core cat` hydrated `wmapp-readonly-open-me.txt` from Tower, then `mount --dry-run` projected it as cached with a 271-byte size.
 
 #### WP-04-04: Doc URL Entries And Read-Only Validation
 

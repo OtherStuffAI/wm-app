@@ -1,14 +1,15 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
     DeviceKey, DeviceSeenRequest, DriveDeltaOptions, DriveItemType, DriveProjection,
     DriveTreeOptions, FuseMountConfig, Nip98Request, Nip98Signer, ObjectCache, ObjectCacheConfig,
-    ObjectCacheError, RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig, SyncEngine,
-    TowerClient, TowerClientConfig, VisibleMetadata,
+    ObjectCacheError, ProjectionFileReader, RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig,
+    SyncEngine, TowerClient, TowerClientConfig, VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -161,6 +162,8 @@ struct EvictArgs {
 #[derive(Parser, Debug, Clone)]
 struct MountArgs {
     #[command(flatten)]
+    tower: TowerReadArgs,
+    #[command(flatten)]
     local: LocalDataArgs,
     /// Workspace id to project into a mounted tree.
     #[arg(long)]
@@ -266,7 +269,7 @@ struct DeviceOutput {
     nsec: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct LocalPaths {
     data_dir: PathBuf,
     db_path: PathBuf,
@@ -613,14 +616,63 @@ fn mount_drive(args: MountArgs) -> Result<(), Box<dyn std::error::Error>> {
         "mounting read-only Wingman Drive projection at {}. Keep this process running; unmount from another shell when finished.",
         mountpoint.display()
     );
-    wmapp_core::mount_read_only_projection(
+    let client = tower_client_from_args(&args.tower, false)?;
+    let file_reader = std::sync::Arc::new(MountFileReader {
+        local: local.clone(),
+        workspace_id: args.workspace_id.clone(),
+        client: client.map(Mutex::new),
+    });
+
+    wmapp_core::mount_read_only_projection_with_reader(
         projection,
         FuseMountConfig {
             mountpoint,
             fs_name: format!("wmapp-{}", args.workspace_id),
         },
+        file_reader,
     )?;
     Ok(())
+}
+
+struct MountFileReader {
+    local: LocalPaths,
+    workspace_id: String,
+    client: Option<Mutex<TowerClient>>,
+}
+
+impl ProjectionFileReader for MountFileReader {
+    fn read_file(&self, file_id: &str) -> io::Result<Vec<u8>> {
+        let index = SqliteIndex::open(SqliteIndexConfig {
+            path: self.local.db_path.clone(),
+        })
+        .map_err(io::Error::other)?;
+        let cache = ObjectCache::open(ObjectCacheConfig {
+            root: self.local.cache_root.clone(),
+        })
+        .map_err(io::Error::other)?;
+
+        match cache.read_file(&index, file_id) {
+            Ok(bytes) => return Ok(bytes),
+            Err(ObjectCacheError::MissingEntry(_)) => {}
+            Err(error) => return Err(io::Error::other(error)),
+        }
+
+        let Some(client) = &self.client else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("file {file_id} is not cached and Tower config is unavailable"),
+            ));
+        };
+        let object = client
+            .lock()
+            .map_err(|_| io::Error::other("Tower client lock poisoned"))?
+            .get_file_object(&self.workspace_id, file_id)
+            .map_err(io::Error::other)?;
+        cache
+            .put_file_object(&index, &object)
+            .map_err(io::Error::other)?;
+        cache.read_file(&index, file_id).map_err(io::Error::other)
+    }
 }
 
 fn validate_channel(args: ChannelArgs) -> Result<(), Box<dyn std::error::Error>> {

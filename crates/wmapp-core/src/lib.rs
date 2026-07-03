@@ -11,7 +11,10 @@ pub use auth::{
     DevelopmentKeyStore, DeviceKey, DeviceKeyStore, Nip98Request, Nip98Signer, SignedNip98Event,
 };
 pub use cache::{ObjectCache, ObjectCacheConfig, ObjectCacheError};
-pub use mount::{mount_read_only_projection, FuseMountConfig, FuseMountError};
+pub use mount::{
+    mount_read_only_projection, mount_read_only_projection_with_reader, FuseMountConfig,
+    FuseMountError, ProjectionFileReader,
+};
 pub use projection::{DriveProjection, DriveProjectionError, ProjectedEntry, ProjectedEntryKind};
 pub use sqlite::{
     CacheEntry, CacheEntryInput, LocalChannel, LocalItem, LocalScope, SqliteIndex,
