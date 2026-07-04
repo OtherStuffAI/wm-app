@@ -55,7 +55,7 @@ The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status 
 
 The current desktop spike can generate/import a device key, register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a minimal `window.nostr` bridge into trusted WebView origins for `getPublicKey` and prompted NIP-98 signing.
 
-The browser prototype now has a conservative local signer policy: both the loaded WebView origin and the requested NIP-98 target origin must be trusted before the native approval prompt appears. A static signer test page is served from the Flutter web build at `/signer-test.html` for native WebView/manual bridge checks.
+The browser prototype now has a conservative local signer policy: both the loaded WebView origin and the requested NIP-98 target origin must be trusted before the native approval prompt appears. Remembered NIP-98 approvals and signer audit entries are persisted locally, and the Signer tab can revoke approvals or clear the audit log. A static signer test page is served from the Flutter web build at `/signer-test.html` for native WebView/manual bridge checks.
 
 Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
 

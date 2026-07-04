@@ -1,6 +1,6 @@
 # WApp Signer Trust Contract
 
-Status: draft for `WP-10-01`
+Status: implemented for `WP-10-01`
 Date: 2026-07-04
 
 ## Goal
@@ -48,9 +48,9 @@ The likely read path is:
 GET /api/v4/flightdeck-pg/workspaces/:workspaceId/personal-wapps
 ```
 
-The missing production contract is an explicit signer trust profile, either as first-class fields or as a documented `metadata.signer` shape.
+Tower now accepts an explicit signer trust profile as `metadata.signer` on personal WApp records and serializes the normalized result as `signer_profile`.
 
-## Proposed `metadata.signer` Shape
+## `metadata.signer` Shape
 
 ```json
 {
@@ -98,6 +98,10 @@ For the current prototype, `AppConfig.trustedOrigins` supplies the trusted origi
 - Unknown, disabled, or mismatched origins fail closed.
 - `WP-10-02` can implement local policy without guessing the future Tower contract.
 
-## Follow-Up Tower Gap
+## Tower Implementation
 
-`WP-10-01` remains aliased to `TOWER-GAP-08` until Tower exposes or documents the explicit trusted-origin signer profile through the personal WApp read route.
+`WP-10-01` remains aliased to `TOWER-GAP-08` on the board until review is accepted. The code path is implemented in Tower:
+
+- `normalizeFlightDeckPgPersonalWappSignerMetadata` validates and normalizes `metadata.signer`.
+- Personal WApp create/update routes reject malformed enabled signer profiles.
+- `serializeFlightDeckPgPersonalWapp` returns `signer_profile` for app clients.

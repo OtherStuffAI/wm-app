@@ -6,16 +6,19 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
 import 'signer_policy.dart';
+import 'signer_store.dart';
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
     required this.config,
     required this.bridge,
+    required this.signerStore,
     super.key,
   });
 
   final AppConfig config;
   final NativeCoreBridge bridge;
+  final SignerStore signerStore;
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -159,13 +162,48 @@ class _BrowserScreenState extends State<BrowserScreen> {
         setState(() {
           _message = 'Signer denied: ${decision.reason}';
         });
+        await _recordSignerAudit(
+          decision: decision,
+          targetUrl: requestUrl,
+          method: requestMethod,
+          allowed: false,
+          outcome: 'policy_denied',
+          reason: decision.reason,
+        );
         await _resolveSignerRequest(id, {'error': decision.reason});
         return;
       }
-      final approved = await _confirmNip98(request, decision);
-      if (!approved) {
+      final remembered = widget.config.rememberNip98Approvals &&
+          await widget.signerStore.hasApproval(
+            pageOrigin: decision.pageOrigin,
+            targetOrigin: decision.targetOrigin,
+            deviceNpub: widget.config.deviceNpub,
+          );
+      final approval = remembered
+          ? const SignerPromptResult(approved: true, remember: false)
+          : await _confirmNip98(request, decision);
+      if (!approval.approved) {
+        await _recordSignerAudit(
+          decision: decision,
+          targetUrl: requestUrl,
+          method: decision.method,
+          allowed: false,
+          outcome: 'user_denied',
+          reason: 'denied by user',
+        );
         await _resolveSignerRequest(id, {'error': 'denied'});
         return;
+      }
+      if (approval.remember && widget.config.rememberNip98Approvals) {
+        await widget.signerStore.rememberApproval(
+          SignerApproval(
+            pageOrigin: decision.pageOrigin,
+            targetOrigin: decision.targetOrigin,
+            deviceNpub: widget.config.deviceNpub,
+            createdAt: DateTime.now().toUtc(),
+            label: 'NIP-98 ${decision.pageOrigin}',
+          ),
+        );
       }
       final result = await widget.bridge.signNip98(
         config: widget.config,
@@ -174,9 +212,26 @@ class _BrowserScreenState extends State<BrowserScreen> {
         body: requestBody,
       );
       if (!result.ok) {
+        await _recordSignerAudit(
+          decision: decision,
+          targetUrl: requestUrl,
+          method: decision.method,
+          allowed: false,
+          outcome: 'signer_error',
+          reason: result.error ?? 'native signer failed',
+          rememberedApproval: remembered,
+        );
         await _resolveSignerRequest(id, {'error': result.error});
         return;
       }
+      await _recordSignerAudit(
+        decision: decision,
+        targetUrl: requestUrl,
+        method: decision.method,
+        allowed: true,
+        outcome: remembered ? 'signed_with_remembered_approval' : 'signed',
+        rememberedApproval: remembered || approval.remember,
+      );
       await _resolveSignerRequest(id, {
         'result': result.json['authorization'],
         'event': result.json['event'],
@@ -193,42 +248,92 @@ class _BrowserScreenState extends State<BrowserScreen> {
     }
   }
 
-  Future<bool> _confirmNip98(
+  Future<SignerPromptResult> _confirmNip98(
     Map<String, dynamic> request,
     SignerPolicyDecision decision,
   ) async {
     final url = request['url']?.toString() ?? '';
-    return await showDialog<bool>(
+    bool remember = widget.config.rememberNip98Approvals;
+    return await showDialog<SignerPromptResult>(
           context: context,
           builder: (context) {
-            return AlertDialog(
-              title: const Text('Approve NIP-98 signature'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('WebView origin: ${decision.pageOrigin}'),
-                  Text('Target origin: ${decision.targetOrigin}'),
-                  Text('Method: ${decision.method}'),
-                  Text('URL: $url'),
-                  const Text('Event kind: 27235'),
-                  Text('Device: ${widget.config.deviceNpub}'),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Deny'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Approve'),
-                ),
-              ],
+            return StatefulBuilder(
+              builder: (context, setDialogState) {
+                return AlertDialog(
+                  title: const Text('Approve NIP-98 signature'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('WebView origin: ${decision.pageOrigin}'),
+                      Text('Target origin: ${decision.targetOrigin}'),
+                      Text('Method: ${decision.method}'),
+                      Text('URL: $url'),
+                      const Text('Event kind: 27235'),
+                      Text('Device: ${widget.config.deviceNpub}'),
+                      if (widget.config.rememberNip98Approvals)
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: remember,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              remember = value ?? false;
+                            });
+                          },
+                          title: const Text('Remember for this origin pair'),
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        const SignerPromptResult(
+                          approved: false,
+                          remember: false,
+                        ),
+                      ),
+                      child: const Text('Deny'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        SignerPromptResult(
+                          approved: true,
+                          remember: remember,
+                        ),
+                      ),
+                      child: const Text('Approve'),
+                    ),
+                  ],
+                );
+              },
             );
           },
         ) ??
-        false;
+        const SignerPromptResult(approved: false, remember: false);
+  }
+
+  Future<void> _recordSignerAudit({
+    required SignerPolicyDecision decision,
+    required String targetUrl,
+    required String method,
+    required bool allowed,
+    required String outcome,
+    String reason = '',
+    bool rememberedApproval = false,
+  }) async {
+    await widget.signerStore.appendAudit(
+      SignerAuditEntry.create(
+        pageOrigin: decision.pageOrigin,
+        targetOrigin: decision.targetOrigin,
+        targetUrl: targetUrl,
+        method: method,
+        deviceNpub: widget.config.deviceNpub,
+        allowed: allowed,
+        outcome: outcome,
+        reason: reason,
+        rememberedApproval: rememberedApproval,
+      ),
+    );
   }
 
   Future<void> _resolveSignerRequest(
@@ -274,4 +379,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
 })();
 ''';
   }
+}
+
+class SignerPromptResult {
+  const SignerPromptResult({
+    required this.approved,
+    required this.remember,
+  });
+
+  final bool approved;
+  final bool remember;
 }

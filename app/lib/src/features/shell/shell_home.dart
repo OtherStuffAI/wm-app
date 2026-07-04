@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
 import '../browser/browser_screen.dart';
+import '../browser/signer_store.dart';
 import '../drive/drive_screen.dart';
+import '../signer/signer_screen.dart';
 import '../setup/setup_screen.dart';
 import '../status/status_screen.dart';
 
@@ -11,12 +13,14 @@ class ShellHome extends StatefulWidget {
   const ShellHome({
     required this.config,
     required this.bridge,
+    required this.signerStore,
     required this.onConfigChanged,
     super.key,
   });
 
   final AppConfig config;
   final NativeCoreBridge bridge;
+  final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
 
   @override
@@ -43,6 +47,11 @@ class _ShellHomeState extends State<ShellHome> {
         icon: Icon(Icons.public),
         selectedIcon: Icon(Icons.public),
         label: 'Browser',
+      ),
+      NavigationDestination(
+        icon: Icon(Icons.shield_outlined),
+        selectedIcon: Icon(Icons.shield),
+        label: 'Signer',
       ),
       NavigationDestination(
         icon: Icon(Icons.monitor_heart_outlined),
@@ -97,6 +106,11 @@ class _ShellHomeState extends State<ShellHome> {
       2 => BrowserScreen(
           config: widget.config,
           bridge: widget.bridge,
+          signerStore: widget.signerStore,
+        ),
+      3 => SignerScreen(
+          config: widget.config,
+          signerStore: widget.signerStore,
         ),
       _ => StatusScreen(
           config: widget.config,

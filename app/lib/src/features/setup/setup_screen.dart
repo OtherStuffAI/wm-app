@@ -30,6 +30,7 @@ class _SetupScreenState extends State<SetupScreen> {
   late final TextEditingController _registrationSecretController;
   late final TextEditingController _deviceNpubController;
   late final TextEditingController _trustedOriginsController;
+  late bool _rememberNip98Approvals;
   String? _message;
   bool _busy = false;
 
@@ -53,6 +54,7 @@ class _SetupScreenState extends State<SetupScreen> {
     _trustedOriginsController = TextEditingController(
       text: widget.config.trustedOrigins.join('\n'),
     );
+    _rememberNip98Approvals = widget.config.rememberNip98Approvals;
   }
 
   @override
@@ -129,6 +131,17 @@ class _SetupScreenState extends State<SetupScreen> {
           label: 'Trusted origins',
           icon: Icons.verified_user_outlined,
           maxLines: 3,
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _rememberNip98Approvals,
+          onChanged: (value) {
+            setState(() {
+              _rememberNip98Approvals = value;
+            });
+          },
+          title: const Text('Remember NIP-98 approvals'),
+          secondary: const Icon(Icons.verified_outlined),
         ),
         const SizedBox(height: 16),
         Wrap(
@@ -210,6 +223,7 @@ class _SetupScreenState extends State<SetupScreen> {
       deviceNpub: _deviceNpubController.text.trim(),
       deviceSecret: _secretController.text.trim(),
       registrationSecret: _registrationSecretController.text.trim(),
+      rememberNip98Approvals: _rememberNip98Approvals,
     );
   }
 

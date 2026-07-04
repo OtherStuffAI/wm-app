@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'core/app_config.dart';
 import 'core/native_core_bridge.dart';
+import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 
 class WingmanApp extends StatefulWidget {
@@ -14,6 +15,7 @@ class WingmanApp extends StatefulWidget {
 class _WingmanAppState extends State<WingmanApp> {
   AppConfig _config = AppConfig.defaults();
   late final NativeCoreBridge _bridge = NativeCoreBridge();
+  late final SignerStore _signerStore = SignerStore();
 
   void _updateConfig(AppConfig config) {
     setState(() {
@@ -37,6 +39,7 @@ class _WingmanAppState extends State<WingmanApp> {
       home: ShellHome(
         config: _config,
         bridge: _bridge,
+        signerStore: _signerStore,
         onConfigChanged: _updateConfig,
       ),
     );
