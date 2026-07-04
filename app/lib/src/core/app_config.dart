@@ -51,7 +51,8 @@ class AppConfig {
 
   bool get canSync =>
       hasTower && hasAppNpub && hasWorkspace && hasChannel && hasDeviceSecret;
-  bool get canRegisterDevice => hasTower && hasWorkspaceService && hasDeviceNpub;
+  bool get canRegisterDevice =>
+      hasTower && hasWorkspaceService && hasDeviceNpub;
 
   AppConfig copyWith({
     String? towerUrl,

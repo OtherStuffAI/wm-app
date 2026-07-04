@@ -48,7 +48,8 @@ class _DriveScreenState extends State<DriveScreen> {
               spacing: 12,
               children: [
                 FilledButton.icon(
-                  onPressed: widget.config.canSync && !_syncing ? _syncOnce : null,
+                  onPressed:
+                      widget.config.canSync && !_syncing ? _syncOnce : null,
                   icon: const Icon(Icons.sync),
                   label: const Text('Sync'),
                 ),
@@ -97,7 +98,8 @@ class _DriveScreenState extends State<DriveScreen> {
     if (!mounted) return;
     setState(() {
       _syncing = false;
-      _syncMessage = result.ok ? 'Sync complete.' : 'Sync failed: ${result.error}';
+      _syncMessage =
+          result.ok ? 'Sync complete.' : 'Sync failed: ${result.error}';
       _listing = widget.bridge.listDrive(widget.config);
     });
   }

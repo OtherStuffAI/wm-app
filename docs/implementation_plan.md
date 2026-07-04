@@ -41,6 +41,7 @@ Initial capabilities:
 - `docs/tower_drive_contract.md`: Phase 1 file, folder, version, tombstone, and delta contract.
 - `docs/device_key_contract.md`: Phase 1 device key and NIP-98 grant contract.
 - `docs/api_gap_harness.md`: Phase 1 signed smoke harness and Tower gap tickets.
+- `docs/wapp_signer_contract.md`: Phase 10 trusted WApp identity and signer policy contract.
 
 ## Current State
 
@@ -86,6 +87,7 @@ Current checkpoint:
 
 - Read-only filesystem mount spike has started on macOS. The shared Drive projection, `mount --dry-run` CLI, foreground FUSE/macFUSE mount adapter, and cache-first/Tower-hydrating read path are available. macFUSE 5.2.0 is installed on the current Mac host, but the kernel device still cannot load until host security approval/loading is fixed.
 - Phase 3 is implemented and locally validated as a desktop spike across Tower and wm-app: single-channel read, device lifecycle routes, Flutter setup shell, process-backed native bridge, embedded WebView signer injection, and NIP-98 prompt flow are in place. Flutter 3.44.4 is installed on the current Mac, `flutter test`, `flutter build web`, `flutter build macos --debug`, and a brief `flutter run -d macos` all pass.
+- Pre-reboot browser work can continue independently of macFUSE. The current branch now has a draft WApp signer trust contract, a local signer policy layer that validates both page origin and NIP-98 target origin, focused policy tests, and a static `/signer-test.html` page for native WebView/manual bridge testing.
 
 Active package:
 
@@ -111,7 +113,8 @@ This snapshot mirrors the Flight Deck board as of 2026-07-01. Treat the board as
 | `WP-04-02` to `WP-04-03` | `in_progress` | Projection and lazy read code are implemented and validated through dry-run/cache tests; live mounted `find`/open acceptance waits on macFUSE. |
 | `WP-04-04` to `WP-05-*`, `WP-07-*` to `WP-11-*` | `new` | Planned packages, not started except where noted by committed partial work. |
 | `WP-06-01` to `WP-06-03` | `ready` as `TOWER-GAP-03` to `TOWER-GAP-05` | Write-sync Tower prerequisites. These must complete before production write sync. |
-| `WP-10-01` | `ready` as `TOWER-GAP-08` | WApp trusted origin prerequisite before signer policy work. |
+| `WP-10-01` | `in_progress` as `TOWER-GAP-08` | Draft WApp signer trust contract exists in `docs/wapp_signer_contract.md`; Tower still needs to expose/document the signer profile on WApp records. |
+| `WP-10-02` | `in_progress` | Local conservative signer policy is implemented for the Flutter browser prototype; production grant behavior remains gated by `WP-10-01`. |
 
 ## Inline Tower Pickup Gates
 
@@ -1035,7 +1038,7 @@ Alias:
 
 Status:
 
-- Ready. Not started in the current wm-app repo state.
+- In progress. Draft contract is recorded in `docs/wapp_signer_contract.md`. The app now has a local developer allowlist policy, but production signer trust remains blocked until Tower exposes or documents the WApp signer profile on personal WApp records.
 
 Scope:
 
@@ -1058,6 +1061,10 @@ Blocks:
 
 #### WP-10-02: Signer Policy Engine And Audit Log
 
+Status:
+
+- In progress. A local `SignerPolicy` now validates trusted WebView origins, trusted NIP-98 target origins, HTTP/HTTPS schemes, supported methods, and bounded request bodies before the native approval prompt. Audit persistence is not implemented yet.
+
 Scope:
 
 - Implement local signer policy for origins, event kinds, NIP-98 targets, and NIP-44 operations.
@@ -1070,6 +1077,7 @@ Deliverable:
 Acceptance:
 
 - Unknown origins are denied.
+- NIP-98 target origins outside the trusted set are denied before prompting.
 - Arbitrary signing and decrypt requests require explicit approval.
 
 #### WP-10-03: Permission Management UI

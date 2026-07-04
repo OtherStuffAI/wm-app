@@ -40,14 +40,16 @@ class _SetupScreenState extends State<SetupScreen> {
     _appNpubController = TextEditingController(text: widget.config.appNpub);
     _flightDeckController =
         TextEditingController(text: widget.config.flightDeckUrl);
-    _workspaceController = TextEditingController(text: widget.config.workspaceId);
+    _workspaceController =
+        TextEditingController(text: widget.config.workspaceId);
     _workspaceServiceController =
         TextEditingController(text: widget.config.workspaceServiceNpub);
     _channelController = TextEditingController(text: widget.config.channelId);
     _secretController = TextEditingController(text: widget.config.deviceSecret);
     _registrationSecretController =
         TextEditingController(text: widget.config.registrationSecret);
-    _deviceNpubController = TextEditingController(text: widget.config.deviceNpub);
+    _deviceNpubController =
+        TextEditingController(text: widget.config.deviceNpub);
     _trustedOriginsController = TextEditingController(
       text: widget.config.trustedOrigins.join('\n'),
     );

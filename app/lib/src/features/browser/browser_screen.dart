@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
+import 'signer_policy.dart';
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
@@ -52,7 +53,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final trusted = widget.config.effectiveTrustedOrigins();
+    final policy = SignerPolicy.fromConfig(widget.config);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -90,7 +91,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 10, 24, 16),
-          child: Text('Trusted origins: ${trusted.join(', ')}'),
+          child: Text('Trusted origins: ${policy.trustedOrigins.join(', ')}'),
         ),
       ],
     );
@@ -115,9 +116,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   Future<void> _injectIfTrusted() async {
     final url = _currentUrl ?? widget.config.flightDeckUrl;
-    final origin = _originLabel(url);
-    final allowed = widget.config.effectiveTrustedOrigins().contains(origin);
-    if (!allowed) {
+    final origin = SignerPolicy.normalizeOrigin(url);
+    final policy = SignerPolicy.fromConfig(widget.config);
+    if (!policy.canInject(url)) {
       setState(() {
         _message = 'Signer withheld for untrusted origin: $origin';
       });
@@ -145,16 +146,32 @@ class _BrowserScreenState extends State<BrowserScreen> {
       final request = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
           : <String, dynamic>{};
-      final approved = await _confirmNip98(request);
+      final requestMethod = request['httpMethod']?.toString() ?? 'GET';
+      final requestUrl = request['url']?.toString() ?? '';
+      final requestBody = request['body']?.toString();
+      final decision = SignerPolicy.fromConfig(widget.config).validateNip98(
+        pageUrl: _currentUrl ?? widget.config.flightDeckUrl,
+        targetUrl: requestUrl,
+        method: requestMethod,
+        body: requestBody,
+      );
+      if (!decision.allowed) {
+        setState(() {
+          _message = 'Signer denied: ${decision.reason}';
+        });
+        await _resolveSignerRequest(id, {'error': decision.reason});
+        return;
+      }
+      final approved = await _confirmNip98(request, decision);
       if (!approved) {
         await _resolveSignerRequest(id, {'error': 'denied'});
         return;
       }
       final result = await widget.bridge.signNip98(
         config: widget.config,
-        method: request['httpMethod']?.toString() ?? 'GET',
-        url: request['url']?.toString() ?? '',
-        body: request['body']?.toString(),
+        method: decision.method,
+        url: requestUrl,
+        body: requestBody,
       );
       if (!result.ok) {
         await _resolveSignerRequest(id, {'error': result.error});
@@ -176,10 +193,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
     }
   }
 
-  Future<bool> _confirmNip98(Map<String, dynamic> request) async {
+  Future<bool> _confirmNip98(
+    Map<String, dynamic> request,
+    SignerPolicyDecision decision,
+  ) async {
     final url = request['url']?.toString() ?? '';
-    final method = request['httpMethod']?.toString() ?? 'GET';
-    final origin = _originLabel(url);
     return await showDialog<bool>(
           context: context,
           builder: (context) {
@@ -189,10 +207,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Origin: $origin'),
-                  Text('Method: $method'),
+                  Text('WebView origin: ${decision.pageOrigin}'),
+                  Text('Target origin: ${decision.targetOrigin}'),
+                  Text('Method: ${decision.method}'),
                   Text('URL: $url'),
-                  Text('Event kind: 27235'),
+                  const Text('Event kind: 27235'),
                   Text('Device: ${widget.config.deviceNpub}'),
                 ],
               ),
@@ -222,19 +241,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
   }
 
-  String _originLabel(String value) {
-    final uri = Uri.tryParse(value);
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      return value;
-    }
-    if (uri.hasPort) {
-      return '${uri.scheme}://${uri.host}:${uri.port}';
-    }
-    return '${uri.scheme}://${uri.host}';
-  }
-
   String _bridgeScript(String deviceNpub) {
-    final escapedNpub = deviceNpub.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    final escapedNpub =
+        deviceNpub.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
     return '''
 (() => {
   if (window.nostr && window.nostr.__wingman) return;

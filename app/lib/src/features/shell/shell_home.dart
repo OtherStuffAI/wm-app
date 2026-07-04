@@ -28,7 +28,7 @@ class _ShellHomeState extends State<ShellHome> {
 
   @override
   Widget build(BuildContext context) {
-    final destinations = const [
+    const destinations = [
       NavigationDestination(
         icon: Icon(Icons.tune),
         selectedIcon: Icon(Icons.tune),
