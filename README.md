@@ -65,6 +65,8 @@ Fresh dev builds default to Pete's Wingman App channel and the hosted signer tes
 
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
+When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wingmanbefree/wm-app`, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
+
 Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
 
 ```bash

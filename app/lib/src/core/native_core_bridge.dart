@@ -4,6 +4,8 @@ import 'dart:io';
 import 'app_config.dart';
 
 class NativeCoreBridge {
+  String debugResolveRepoRoot() => _repoRoot();
+
   Future<CoreStatus> status(AppConfig config) async {
     final result = await _runCore([
       'status',
@@ -166,7 +168,7 @@ class NativeCoreBridge {
         ? await Process.run(
             'cargo',
             ['run', '--quiet', '--bin', 'wmapp-core', '--', ...args],
-            workingDirectory: '..',
+            workingDirectory: _repoRoot(),
             environment: environment,
           )
         : await Process.run(
@@ -208,6 +210,32 @@ class NativeCoreBridge {
     if (value == null) return null;
     final text = value.toString().trim();
     return text.isEmpty ? null : text;
+  }
+
+  String _repoRoot() {
+    final explicit = Platform.environment['WMAPP_REPO_DIR'];
+    if (explicit != null && explicit.trim().isNotEmpty) {
+      return explicit.trim();
+    }
+
+    final candidates = <String>[
+      Directory.current.path,
+      '${Directory.current.path}/..',
+      '${Directory.current.path}/../..',
+      '${Platform.environment['HOME'] ?? ''}/code/wingmanbefree/wm-app',
+      '${Platform.environment['HOME'] ?? ''}/wm-app',
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate.trim().isEmpty) continue;
+      final directory = Directory(candidate).absolute;
+      if (File('${directory.path}/Cargo.toml').existsSync() &&
+          Directory('${directory.path}/crates/wmapp-core').existsSync()) {
+        return directory.path;
+      }
+    }
+
+    return Directory.current.path;
   }
 }
 
