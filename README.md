@@ -57,6 +57,12 @@ The current desktop spike can generate/import a device key, register a device th
 
 The browser prototype now has a conservative local signer policy: both the loaded WebView origin and the requested NIP-98 target origin must be trusted before the native approval prompt appears. Remembered NIP-98 approvals and signer audit entries are persisted locally, and the Signer tab can revoke approvals or clear the audit log. A static signer test page is served from the Flutter web build at `/signer-test.html` for native WebView/manual bridge checks.
 
+Fresh dev builds default to Pete's Wingman App channel and the hosted signer test:
+
+- Tower URL: `http://127.0.0.1:3100`
+- Browser URL: `https://kind-net-duck.rick.runwingman.com/signer-test.html`
+- Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, and `near-tea-crab.rick.runwingman.com`
+
 Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
 
 ```bash

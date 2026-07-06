@@ -16,15 +16,23 @@ class AppConfig {
   factory AppConfig.defaults() {
     return const AppConfig(
       towerUrl: 'http://127.0.0.1:3100',
-      appNpub: '',
-      flightDeckUrl: 'http://127.0.0.1:8093',
-      workspaceId: '',
-      workspaceServiceNpub: '',
-      channelId: '',
+      appNpub:
+          'npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5',
+      flightDeckUrl:
+          'https://kind-net-duck.rick.runwingman.com/signer-test.html',
+      workspaceId: '2e5caefd-dd65-45d2-b747-ee874e8e5fc9',
+      workspaceServiceNpub:
+          'npub1995l838tl29llpxwvpdv6hc66cttrt6hrr8xyeq7kmdqevkeyk0qwvfxlc',
+      channelId: 'd8d00881-ac84-41eb-ab0d-2c2afb77ddf3',
       deviceSecret: '',
       registrationSecret: '',
       deviceNpub: '',
-      trustedOrigins: ['http://127.0.0.1:3100', 'http://127.0.0.1:8093'],
+      trustedOrigins: [
+        'http://127.0.0.1:3100',
+        'http://127.0.0.1:8093',
+        'https://kind-net-duck.rick.runwingman.com',
+        'https://near-tea-crab.rick.runwingman.com',
+      ],
       rememberNip98Approvals: true,
     );
   }
