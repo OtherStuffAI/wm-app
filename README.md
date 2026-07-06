@@ -63,6 +63,8 @@ Fresh dev builds default to Pete's Wingman App channel and the hosted signer tes
 - Browser URL: `https://kind-net-duck.rick.runwingman.com/signer-test.html`
 - Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, and `near-tea-crab.rick.runwingman.com`
 
+The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
+
 Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
 
 ```bash
