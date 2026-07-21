@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -36,8 +37,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
   final List<BrowserTab> _tabs = [];
   int _activeTabId = 0;
   int _nextTabId = 1;
-  bool _addressBarVisible = true;
+  Timer? _addressBarHideTimer;
+  bool _addressBarVisible = false;
   static const _nip44PolicyTarget = '*';
+  static const _newTabAddressReveal = Duration(seconds: 5);
+  static const _tabClickAddressReveal = Duration(seconds: 3);
 
   @override
   void initState() {
@@ -55,6 +59,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
+    _addressBarHideTimer?.cancel();
     for (final tab in _tabs) {
       tab.dispose();
     }
@@ -175,6 +180,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
             Expanded(
               child: TextField(
                 controller: tab.addressController,
+                focusNode: tab.addressFocusNode,
                 onSubmitted: _loadAddress,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
@@ -234,29 +240,31 @@ class _BrowserScreenState extends State<BrowserScreen> {
       id: id,
       controller: controller,
       addressController: TextEditingController(text: url),
+      addressFocusNode: FocusNode(),
       title: 'New tab',
     );
+    tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
     setState(() {
       _tabs.add(tab);
       if (activate) {
         _activeTabId = id;
-        _addressBarVisible = true;
       }
     });
+    if (activate) {
+      _revealAddressBar(_newTabAddressReveal);
+    }
     _loadAddressForTab(tab, url);
   }
 
   void _activateTab(int id) {
     if (_activeTabId == id) {
-      setState(() {
-        _addressBarVisible = true;
-      });
+      _revealAddressBar(_tabClickAddressReveal);
       return;
     }
     setState(() {
       _activeTabId = id;
-      _addressBarVisible = true;
     });
+    _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
   }
 
@@ -271,8 +279,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _tabs.removeAt(index);
       _activeTabId = nextActiveId;
-      _addressBarVisible = true;
     });
+    _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
   }
 
@@ -327,10 +335,53 @@ class _BrowserScreenState extends State<BrowserScreen> {
       tab.title = _titleForUrl(tab.currentUrl!);
       tab.message = null;
       if (hideAddressBarAfterLoad) {
+        _addressBarHideTimer?.cancel();
         _addressBarVisible = false;
+        tab.addressFocusNode.unfocus();
       }
     });
     tab.controller.loadRequest(uri);
+  }
+
+  void _onAddressFocusChanged(int tabId) {
+    final tab = _tabById(tabId);
+    if (tab == null || tab.id != _activeTabId) return;
+    if (tab.addressFocusNode.hasFocus) {
+      _addressBarHideTimer?.cancel();
+      if (!_addressBarVisible && mounted) {
+        setState(() {
+          _addressBarVisible = true;
+        });
+      }
+      return;
+    }
+    if (_addressBarVisible) {
+      _scheduleAddressBarHide(Duration.zero);
+    }
+  }
+
+  void _revealAddressBar(Duration duration) {
+    _addressBarHideTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _addressBarVisible = true;
+      });
+    } else {
+      _addressBarVisible = true;
+    }
+    _scheduleAddressBarHide(duration);
+  }
+
+  void _scheduleAddressBarHide(Duration duration) {
+    _addressBarHideTimer?.cancel();
+    _addressBarHideTimer = Timer(duration, () {
+      if (!mounted) return;
+      final tab = _activeTab;
+      if (tab.addressFocusNode.hasFocus) return;
+      setState(() {
+        _addressBarVisible = false;
+      });
+    });
   }
 
   String _normalizeAddress(String value) {
@@ -1398,12 +1449,14 @@ class BrowserTab {
     required this.id,
     required this.controller,
     required this.addressController,
+    required this.addressFocusNode,
     required this.title,
   });
 
   final int id;
   final WebViewController controller;
   final TextEditingController addressController;
+  final FocusNode addressFocusNode;
   String title;
   String? currentUrl;
   String? message;
@@ -1420,6 +1473,7 @@ class BrowserTab {
 
   void dispose() {
     addressController.dispose();
+    addressFocusNode.dispose();
   }
 }
 
