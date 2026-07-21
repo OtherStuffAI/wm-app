@@ -25,29 +25,15 @@ class BrowserScreen extends StatefulWidget {
 }
 
 class _BrowserScreenState extends State<BrowserScreen> {
-  late final TextEditingController _addressController = TextEditingController(
-    text: widget.config.flightDeckUrl,
-  );
-  late final WebViewController _controller = WebViewController()
-    ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..addJavaScriptChannel(
-      'WingmanSigner',
-      onMessageReceived: _onSignerMessage,
-    )
-    ..setNavigationDelegate(
-      NavigationDelegate(
-        onPageFinished: _onPageFinished,
-      ),
-    );
-
-  String? _currentUrl;
-  String? _message;
+  final List<BrowserTab> _tabs = [];
+  int _activeTabId = 0;
+  int _nextTabId = 1;
   static const _nip44PolicyTarget = '*';
 
   @override
   void initState() {
     super.initState();
-    _loadConfiguredUrl();
+    _createTab(widget.config.flightDeckUrl, activate: true);
   }
 
   @override
@@ -60,67 +46,199 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
-    _addressController.dispose();
+    for (final tab in _tabs) {
+      tab.dispose();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final policy = SignerPolicy.fromConfig(widget.config);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _addressController,
-                  onSubmitted: _loadAddress,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.public),
-                    labelText: 'Website',
-                    isDense: true,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: () => _loadAddress(_addressController.text),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Go'),
-              ),
-              IconButton(
-                tooltip: 'Reload',
-                onPressed: _reload,
-                icon: const Icon(Icons.refresh),
-              ),
-              IconButton(
-                tooltip: 'Inject signer',
-                onPressed: _injectIfTrusted,
-                icon: const Icon(Icons.key),
-              ),
-            ],
-          ),
-        ),
-        if (_message != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-            child: Text(_message!),
-          ),
+        _buildTabBar(context),
+        _buildAddressBar(context),
         Expanded(
-          child: WebViewWidget(controller: _controller),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 10, 24, 16),
-          child: Text(
-            'NIP-07 signer is available on http/https pages. NIP-98 targets remain restricted to trusted origins: ${policy.trustedOrigins.join(', ')}',
+          child: IndexedStack(
+            index: _activeTabIndex,
+            children: [
+              for (final tab in _tabs)
+                WebViewWidget(
+                  key: ValueKey(tab.id),
+                  controller: tab.controller,
+                ),
+            ],
           ),
         ),
       ],
     );
+  }
+
+  Widget _buildTabBar(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: SizedBox(
+        height: 40,
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.only(left: 8),
+                scrollDirection: Axis.horizontal,
+                itemCount: _tabs.length,
+                separatorBuilder: (context, index) => const SizedBox(width: 4),
+                itemBuilder: (context, index) {
+                  final tab = _tabs[index];
+                  final active = tab.id == _activeTabId;
+                  return _BrowserTabButton(
+                    title: tab.label,
+                    active: active,
+                    closeable: _tabs.length > 1,
+                    onPressed: () => _activateTab(tab.id),
+                    onClose: () => _closeTab(tab.id),
+                  );
+                },
+              ),
+            ),
+            IconButton(
+              tooltip: 'New tab',
+              onPressed: () => _createTab(widget.config.flightDeckUrl),
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressBar(BuildContext context) {
+    final tab = _activeTab;
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Back',
+              onPressed: tab.canGoBack ? _goBack : null,
+              icon: const Icon(Icons.arrow_back),
+            ),
+            IconButton(
+              tooltip: 'Forward',
+              onPressed: tab.canGoForward ? _goForward : null,
+              icon: const Icon(Icons.arrow_forward),
+            ),
+            IconButton(
+              tooltip: 'Reload',
+              onPressed: _reload,
+              icon: const Icon(Icons.refresh),
+            ),
+            Expanded(
+              child: TextField(
+                controller: tab.addressController,
+                onSubmitted: _loadAddress,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.public),
+                  hintText: 'Search or enter URL',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            IconButton.filled(
+              tooltip: 'Go',
+              onPressed: () => _loadAddress(tab.addressController.text),
+              icon: const Icon(Icons.arrow_forward),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  BrowserTab get _activeTab {
+    return _tabs.firstWhere((tab) => tab.id == _activeTabId);
+  }
+
+  int get _activeTabIndex {
+    final index = _tabs.indexWhere((tab) => tab.id == _activeTabId);
+    return index < 0 ? 0 : index;
+  }
+
+  BrowserTab? _tabById(int id) {
+    for (final tab in _tabs) {
+      if (tab.id == id) return tab;
+    }
+    return null;
+  }
+
+  void _createTab(String url, {bool activate = true}) {
+    final id = _nextTabId++;
+    late final BrowserTab tab;
+    final controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'WingmanSigner',
+        onMessageReceived: (message) => _onSignerMessage(id, message),
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (url) => _onPageFinished(id, url),
+        ),
+      );
+    tab = BrowserTab(
+      id: id,
+      controller: controller,
+      addressController: TextEditingController(text: url),
+      title: 'New tab',
+    );
+    setState(() {
+      _tabs.add(tab);
+      if (activate) _activeTabId = id;
+    });
+    _loadAddressForTab(tab, url);
+  }
+
+  void _activateTab(int id) {
+    if (_activeTabId == id) return;
+    setState(() {
+      _activeTabId = id;
+    });
+    _refreshNavigationState(_activeTab);
+  }
+
+  void _closeTab(int id) {
+    if (_tabs.length == 1) return;
+    final index = _tabs.indexWhere((tab) => tab.id == id);
+    if (index < 0) return;
+    final removed = _tabs[index];
+    final nextActiveId = id == _activeTabId
+        ? _tabs[index == 0 ? 1 : index - 1].id
+        : _activeTabId;
+    setState(() {
+      _tabs.removeAt(index);
+      _activeTabId = nextActiveId;
+    });
+    removed.dispose();
   }
 
   void _loadConfiguredUrl() {
@@ -128,26 +246,49 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _reload() {
-    final uri = Uri.tryParse(_currentUrl ?? _addressController.text);
+    final tab = _activeTab;
+    final uri = Uri.tryParse(tab.currentUrl ?? tab.addressController.text);
     if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
-      _controller.reload();
+      tab.controller.reload();
     } else {
-      _loadAddress(_addressController.text);
+      _loadAddress(tab.addressController.text);
     }
   }
 
+  Future<void> _goBack() async {
+    final tab = _activeTab;
+    if (!await tab.controller.canGoBack()) return;
+    await tab.controller.goBack();
+    await _refreshNavigationState(tab);
+  }
+
+  Future<void> _goForward() async {
+    final tab = _activeTab;
+    if (!await tab.controller.canGoForward()) return;
+    await tab.controller.goForward();
+    await _refreshNavigationState(tab);
+  }
+
   void _loadAddress(String value) {
+    _loadAddressForTab(_activeTab, value);
+  }
+
+  void _loadAddressForTab(BrowserTab tab, String value) {
     final normalized = _normalizeAddress(value);
     final uri = Uri.tryParse(normalized);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       setState(() {
-        _message = 'Enter a valid website URL.';
+        tab.message = 'Enter a valid website URL.';
       });
       return;
     }
-    _currentUrl = uri.toString();
-    _addressController.text = _currentUrl!;
-    _controller.loadRequest(uri);
+    setState(() {
+      tab.currentUrl = uri.toString();
+      tab.addressController.text = tab.currentUrl!;
+      tab.title = _titleForUrl(tab.currentUrl!);
+      tab.message = null;
+    });
+    tab.controller.loadRequest(uri);
   }
 
   String _normalizeAddress(String value) {
@@ -161,40 +302,67 @@ class _BrowserScreenState extends State<BrowserScreen> {
     return Uri.https('njump.me', '/', {'q': trimmed}).toString();
   }
 
-  Future<void> _onPageFinished(String url) async {
-    _currentUrl = url;
-    _addressController.text = url;
-    await _injectIfTrusted();
+  String _titleForUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) return 'New tab';
+    return uri.host;
   }
 
-  Future<void> _injectIfTrusted() async {
-    final url = _currentUrl ?? widget.config.flightDeckUrl;
+  Future<void> _refreshNavigationState(BrowserTab tab) async {
+    final canGoBack = await tab.controller.canGoBack();
+    final canGoForward = await tab.controller.canGoForward();
+    if (!mounted || _tabById(tab.id) == null) return;
+    setState(() {
+      tab.canGoBack = canGoBack;
+      tab.canGoForward = canGoForward;
+    });
+  }
+
+  Future<void> _onPageFinished(int tabId, String url) async {
+    final tab = _tabById(tabId);
+    if (tab == null) return;
+    final title = await tab.controller.getTitle();
+    setState(() {
+      tab.currentUrl = url;
+      tab.addressController.text = url;
+      tab.title =
+          title?.trim().isNotEmpty == true ? title!.trim() : _titleForUrl(url);
+    });
+    await _refreshNavigationState(tab);
+    await _injectIfTrusted(tab);
+  }
+
+  Future<void> _injectIfTrusted(BrowserTab tab) async {
+    final url = tab.currentUrl ?? widget.config.flightDeckUrl;
     final origin = SignerPolicy.normalizeOrigin(url);
     final policy = SignerPolicy.fromConfig(widget.config);
     if (!policy.canInject(url)) {
       setState(() {
-        _message = 'Signer withheld for unsupported page: $url';
+        tab.message = 'Signer withheld for unsupported page: $url';
       });
       return;
     }
-    await _controller.runJavaScript(
+    await tab.controller.runJavaScript(
       _bridgeScript(widget.config.devicePublicKeyHex),
     );
     setState(() {
-      _message = 'window.nostr injected for $origin';
+      tab.message = 'window.nostr injected for $origin';
     });
   }
 
-  Future<void> _onSignerMessage(JavaScriptMessage message) async {
+  Future<void> _onSignerMessage(int tabId, JavaScriptMessage message) async {
+    final tab = _tabById(tabId);
+    if (tab == null) return;
     final payload = _decodeMessage(message.message);
     if (payload == null) return;
-    final id = payload['id']?.toString() ?? '';
+    final requestId = payload['id']?.toString() ?? '';
     final method = payload['method']?.toString() ?? '';
-    if (id.isEmpty || method.isEmpty) return;
+    if (requestId.isEmpty || method.isEmpty) return;
 
     if (method == 'getPublicKey') {
       await _resolveSignerRequest(
-        id,
+        tab,
+        requestId,
         {'result': widget.config.devicePublicKeyHex},
       );
       return;
@@ -204,14 +372,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
       final event = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
           : <String, dynamic>{};
-      final pageUrl = _currentUrl ?? widget.config.flightDeckUrl;
+      final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
       final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
       if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
         final reason = 'unsupported NIP-07 page origin: $pageOrigin';
         setState(() {
-          _message = 'Signer denied: $reason';
+          tab.message = 'Signer denied: $reason';
         });
-        await _resolveSignerRequest(id, {'error': reason});
+        await _resolveSignerRequest(tab, requestId, {'error': reason});
         return;
       }
       const operation = 'signEvent';
@@ -225,13 +393,18 @@ class _BrowserScreenState extends State<BrowserScreen> {
       if (policyRule != null && !policyRule.allows) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
+          targetUrl: pageUrl,
           event: event,
           allowed: false,
           outcome: 'policy_denied',
           reason: 'denied by signer policy',
           rememberedApproval: true,
         );
-        await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+        await _resolveSignerRequest(
+          tab,
+          requestId,
+          {'error': 'denied by signer policy'},
+        );
         return;
       }
       final remembered = policyRule != null && policyRule.allows;
@@ -250,6 +423,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         }
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
+          targetUrl: pageUrl,
           event: event,
           allowed: false,
           outcome: approval.denyAlways ? 'policy_saved_deny' : 'user_denied',
@@ -257,7 +431,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
               ? 'denied by user and saved as policy'
               : 'denied by user',
         );
-        await _resolveSignerRequest(id, {'error': 'denied'});
+        await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
         return;
       }
       if (approval.remember) {
@@ -276,22 +450,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
       if (!result.ok) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
+          targetUrl: pageUrl,
           event: event,
           allowed: false,
           outcome: 'signer_error',
           reason: result.error ?? 'native signer failed',
         );
-        await _resolveSignerRequest(id, {'error': result.error});
+        await _resolveSignerRequest(tab, requestId, {'error': result.error});
         return;
       }
       await _recordNip07Audit(
         pageOrigin: pageOrigin,
+        targetUrl: pageUrl,
         event: event,
         allowed: true,
         outcome: remembered ? 'signed_with_policy' : 'signed',
         rememberedApproval: remembered || approval.remember,
       );
-      await _resolveSignerRequest(id, {
+      await _resolveSignerRequest(tab, requestId, {
         'result': result.json,
       });
       return;
@@ -299,7 +475,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
     if (method == 'nip44.encrypt' || method == 'nip44.decrypt') {
       await _handleNip44Request(
-        id: id,
+        tab: tab,
+        requestId: requestId,
         method: method,
         params: payload['params'] is Map<String, dynamic>
             ? payload['params'] as Map<String, dynamic>
@@ -316,14 +493,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
       final requestUrl = request['url']?.toString() ?? '';
       final requestBody = request['body']?.toString();
       final decision = SignerPolicy.fromConfig(widget.config).validateNip98(
-        pageUrl: _currentUrl ?? widget.config.flightDeckUrl,
+        pageUrl: tab.currentUrl ?? widget.config.flightDeckUrl,
         targetUrl: requestUrl,
         method: requestMethod,
         body: requestBody,
       );
       if (!decision.allowed) {
         setState(() {
-          _message = 'Signer denied: ${decision.reason}';
+          tab.message = 'Signer denied: ${decision.reason}';
         });
         await _recordSignerAudit(
           decision: decision,
@@ -333,7 +510,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
           outcome: 'policy_denied',
           reason: decision.reason,
         );
-        await _resolveSignerRequest(id, {'error': decision.reason});
+        await _resolveSignerRequest(tab, requestId, {'error': decision.reason});
         return;
       }
       const policyOperation = 'nip98';
@@ -353,7 +530,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
           reason: 'denied by signer policy',
           rememberedApproval: true,
         );
-        await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+        await _resolveSignerRequest(
+          tab,
+          requestId,
+          {'error': 'denied by signer policy'},
+        );
         return;
       }
       final rememberedPolicy = policyRule != null && policyRule.allows;
@@ -387,7 +568,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
               ? 'denied by user and saved as policy'
               : 'denied by user',
         );
-        await _resolveSignerRequest(id, {'error': 'denied'});
+        await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
         return;
       }
       if (approval.remember) {
@@ -426,7 +607,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
           reason: result.error ?? 'native signer failed',
           rememberedApproval: remembered,
         );
-        await _resolveSignerRequest(id, {'error': result.error});
+        await _resolveSignerRequest(tab, requestId, {'error': result.error});
         return;
       }
       await _recordSignerAudit(
@@ -437,7 +618,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         outcome: remembered ? 'signed_with_remembered_approval' : 'signed',
         rememberedApproval: remembered || approval.remember,
       );
-      await _resolveSignerRequest(id, {
+      await _resolveSignerRequest(tab, requestId, {
         'result': result.json['authorization'],
         'event': result.json['event'],
       });
@@ -610,18 +791,19 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _handleNip44Request({
-    required String id,
+    required BrowserTab tab,
+    required String requestId,
     required String method,
     required Map<String, dynamic> params,
   }) async {
-    final pageUrl = _currentUrl ?? widget.config.flightDeckUrl;
+    final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
     final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
     if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
       final reason = 'unsupported NIP-44 page origin: $pageOrigin';
       setState(() {
-        _message = 'Signer denied: $reason';
+        tab.message = 'Signer denied: $reason';
       });
-      await _resolveSignerRequest(id, {'error': reason});
+      await _resolveSignerRequest(tab, requestId, {'error': reason});
       return;
     }
 
@@ -644,7 +826,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
         reason: 'denied by signer policy',
         rememberedApproval: true,
       );
-      await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+      await _resolveSignerRequest(
+        tab,
+        requestId,
+        {'error': 'denied by signer policy'},
+      );
       return;
     }
     final remembered = policyRule != null && policyRule.allows;
@@ -676,7 +862,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
             ? 'denied by user and saved as policy'
             : 'denied by user',
       );
-      await _resolveSignerRequest(id, {'error': 'denied'});
+      await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
       return;
     }
     if (approval.remember) {
@@ -710,7 +896,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         reason: result.error ?? 'native NIP-44 failed',
         rememberedApproval: remembered,
       );
-      await _resolveSignerRequest(id, {'error': result.error});
+      await _resolveSignerRequest(tab, requestId, {'error': result.error});
       return;
     }
 
@@ -722,7 +908,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       outcome: remembered ? '${operation}_with_policy' : operation,
       rememberedApproval: remembered || approval.remember,
     );
-    await _resolveSignerRequest(id, {
+    await _resolveSignerRequest(tab, requestId, {
       'result': operation == 'encrypt'
           ? result.json['ciphertext']
           : result.json['plaintext'],
@@ -830,6 +1016,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   Future<void> _recordNip07Audit({
     required String pageOrigin,
+    required String targetUrl,
     required Map<String, dynamic> event,
     required bool allowed,
     required String outcome,
@@ -840,7 +1027,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       SignerAuditEntry.create(
         pageOrigin: pageOrigin,
         targetOrigin: pageOrigin,
-        targetUrl: _currentUrl ?? widget.config.flightDeckUrl,
+        targetUrl: targetUrl,
         method: 'signEvent kind ${event['kind'] ?? 'unknown'}',
         deviceNpub: widget.config.deviceNpub,
         allowed: allowed,
@@ -876,11 +1063,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _resolveSignerRequest(
+    BrowserTab tab,
     String id,
     Map<String, dynamic> payload,
   ) async {
     final encoded = jsonEncode(payload);
-    await _controller.runJavaScript(
+    await tab.controller.runJavaScript(
       'window.__wingmanResolve && window.__wingmanResolve(${jsonEncode(id)}, $encoded);',
     );
   }
@@ -926,6 +1114,115 @@ class _BrowserScreenState extends State<BrowserScreen> {
   };
 })();
 ''';
+  }
+}
+
+class _BrowserTabButton extends StatelessWidget {
+  const _BrowserTabButton({
+    required this.title,
+    required this.active,
+    required this.closeable,
+    required this.onPressed,
+    required this.onClose,
+  });
+
+  final String title;
+  final bool active;
+  final bool closeable;
+  final VoidCallback onPressed;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: active ? colors.surface : Colors.transparent,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+        child: InkWell(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+          onTap: onPressed,
+          child: Container(
+            width: 190,
+            height: 34,
+            padding: const EdgeInsets.only(left: 12, right: 4),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(6),
+              ),
+              border: active
+                  ? Border.all(color: colors.outlineVariant)
+                  : Border.all(color: Colors.transparent),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.public,
+                  size: 16,
+                  color: active ? colors.onSurface : colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color:
+                          active ? colors.onSurface : colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (closeable)
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: IconButton(
+                      tooltip: 'Close tab',
+                      padding: EdgeInsets.zero,
+                      iconSize: 16,
+                      onPressed: onClose,
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class BrowserTab {
+  BrowserTab({
+    required this.id,
+    required this.controller,
+    required this.addressController,
+    required this.title,
+  });
+
+  final int id;
+  final WebViewController controller;
+  final TextEditingController addressController;
+  String title;
+  String? currentUrl;
+  String? message;
+  bool canGoBack = false;
+  bool canGoForward = false;
+
+  String get label {
+    final trimmed = title.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+    final uri = Uri.tryParse(currentUrl ?? '');
+    if (uri != null && uri.host.isNotEmpty) return uri.host;
+    return 'New tab';
+  }
+
+  void dispose() {
+    addressController.dispose();
   }
 }
 
