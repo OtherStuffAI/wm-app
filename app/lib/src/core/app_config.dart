@@ -9,6 +9,7 @@ class AppConfig {
     required this.deviceSecret,
     required this.registrationSecret,
     required this.deviceNpub,
+    required this.devicePublicKeyHex,
     required this.trustedOrigins,
     required this.rememberNip98Approvals,
   });
@@ -27,6 +28,7 @@ class AppConfig {
       deviceSecret: '',
       registrationSecret: '',
       deviceNpub: '',
+      devicePublicKeyHex: '',
       trustedOrigins: [
         'http://127.0.0.1:3100',
         'http://127.0.0.1:8093',
@@ -46,6 +48,7 @@ class AppConfig {
   final String deviceSecret;
   final String registrationSecret;
   final String deviceNpub;
+  final String devicePublicKeyHex;
   final List<String> trustedOrigins;
   final bool rememberNip98Approvals;
 
@@ -56,6 +59,7 @@ class AppConfig {
   bool get hasChannel => channelId.trim().isNotEmpty;
   bool get hasDeviceSecret => deviceSecret.trim().isNotEmpty;
   bool get hasDeviceNpub => deviceNpub.trim().isNotEmpty;
+  bool get hasDevicePublicKeyHex => devicePublicKeyHex.trim().isNotEmpty;
 
   bool get canSync =>
       hasTower && hasAppNpub && hasWorkspace && hasChannel && hasDeviceSecret;
@@ -72,6 +76,7 @@ class AppConfig {
     String? deviceSecret,
     String? registrationSecret,
     String? deviceNpub,
+    String? devicePublicKeyHex,
     List<String>? trustedOrigins,
     bool? rememberNip98Approvals,
   }) {
@@ -85,6 +90,7 @@ class AppConfig {
       deviceSecret: deviceSecret ?? this.deviceSecret,
       registrationSecret: registrationSecret ?? this.registrationSecret,
       deviceNpub: deviceNpub ?? this.deviceNpub,
+      devicePublicKeyHex: devicePublicKeyHex ?? this.devicePublicKeyHex,
       trustedOrigins: trustedOrigins ?? this.trustedOrigins,
       rememberNip98Approvals:
           rememberNip98Approvals ?? this.rememberNip98Approvals,

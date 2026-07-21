@@ -29,6 +29,7 @@ class _SetupScreenState extends State<SetupScreen> {
   late final TextEditingController _secretController;
   late final TextEditingController _registrationSecretController;
   late final TextEditingController _deviceNpubController;
+  late final TextEditingController _devicePublicKeyHexController;
   late final TextEditingController _trustedOriginsController;
   late bool _rememberNip98Approvals;
   String? _message;
@@ -51,6 +52,8 @@ class _SetupScreenState extends State<SetupScreen> {
         TextEditingController(text: widget.config.registrationSecret);
     _deviceNpubController =
         TextEditingController(text: widget.config.deviceNpub);
+    _devicePublicKeyHexController =
+        TextEditingController(text: widget.config.devicePublicKeyHex);
     _trustedOriginsController = TextEditingController(
       text: widget.config.trustedOrigins.join('\n'),
     );
@@ -68,6 +71,7 @@ class _SetupScreenState extends State<SetupScreen> {
     _secretController.dispose();
     _registrationSecretController.dispose();
     _deviceNpubController.dispose();
+    _devicePublicKeyHexController.dispose();
     _trustedOriginsController.dispose();
     super.dispose();
   }
@@ -115,6 +119,11 @@ class _SetupScreenState extends State<SetupScreen> {
           icon: Icons.fingerprint,
         ),
         _field(
+          controller: _devicePublicKeyHexController,
+          label: 'Device public key hex',
+          icon: Icons.tag,
+        ),
+        _field(
           controller: _secretController,
           label: 'Device key',
           icon: Icons.key,
@@ -157,6 +166,11 @@ class _SetupScreenState extends State<SetupScreen> {
               onPressed: _busy ? null : _generateDevice,
               icon: const Icon(Icons.add_circle_outline),
               label: const Text('Generate key'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _importDevice,
+              icon: const Icon(Icons.input),
+              label: const Text('Import key'),
             ),
             OutlinedButton.icon(
               onPressed: _busy ? null : _registerDevice,
@@ -224,6 +238,7 @@ class _SetupScreenState extends State<SetupScreen> {
       deviceSecret: _secretController.text.trim(),
       registrationSecret: _registrationSecretController.text.trim(),
       rememberNip98Approvals: _rememberNip98Approvals,
+      devicePublicKeyHex: _devicePublicKeyHexController.text.trim(),
     );
   }
 
@@ -231,6 +246,7 @@ class _SetupScreenState extends State<SetupScreen> {
     await _run('Generating device key...', () async {
       final identity = await widget.bridge.generateDeviceKey();
       _deviceNpubController.text = identity.npub;
+      _devicePublicKeyHexController.text = identity.publicKeyHex;
       if (identity.nsec != null) {
         _secretController.text = identity.nsec!;
       }
@@ -238,9 +254,27 @@ class _SetupScreenState extends State<SetupScreen> {
         _currentConfig().copyWith(
           deviceNpub: identity.npub,
           deviceSecret: identity.nsec,
+          devicePublicKeyHex: identity.publicKeyHex,
         ),
       );
       return 'Generated device key ${identity.npub}.';
+    });
+  }
+
+  Future<void> _importDevice() async {
+    await _run('Importing device key...', () async {
+      final secret = _secretController.text.trim();
+      if (secret.isEmpty) return 'Paste a device key first.';
+      final identity = await widget.bridge.importDeviceKey(secret);
+      _deviceNpubController.text = identity.npub;
+      _devicePublicKeyHexController.text = identity.publicKeyHex;
+      widget.onConfigChanged(
+        _currentConfig().copyWith(
+          deviceNpub: identity.npub,
+          devicePublicKeyHex: identity.publicKeyHex,
+        ),
+      );
+      return 'Imported device key ${identity.npub}.';
     });
   }
 

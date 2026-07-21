@@ -25,6 +25,9 @@ class BrowserScreen extends StatefulWidget {
 }
 
 class _BrowserScreenState extends State<BrowserScreen> {
+  late final TextEditingController _addressController = TextEditingController(
+    text: widget.config.flightDeckUrl,
+  );
   late final WebViewController _controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..addJavaScriptChannel(
@@ -55,6 +58,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   @override
+  void dispose() {
+    _addressController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final policy = SignerPolicy.fromConfig(widget.config);
     return Column(
@@ -65,15 +74,26 @@ class _BrowserScreenState extends State<BrowserScreen> {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  _currentUrl ?? widget.config.flightDeckUrl,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: TextField(
+                  controller: _addressController,
+                  onSubmitted: _loadAddress,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.public),
+                    labelText: 'Website',
+                    isDense: true,
+                  ),
                 ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: () => _loadAddress(_addressController.text),
+                icon: const Icon(Icons.arrow_forward),
+                label: const Text('Go'),
               ),
               IconButton(
                 tooltip: 'Reload',
-                onPressed: _loadConfiguredUrl,
+                onPressed: _reload,
                 icon: const Icon(Icons.refresh),
               ),
               IconButton(
@@ -94,26 +114,55 @@ class _BrowserScreenState extends State<BrowserScreen> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 10, 24, 16),
-          child: Text('Trusted origins: ${policy.trustedOrigins.join(', ')}'),
+          child: Text(
+            'NIP-07 signer is available on http/https pages. NIP-98 targets remain restricted to trusted origins: ${policy.trustedOrigins.join(', ')}',
+          ),
         ),
       ],
     );
   }
 
   void _loadConfiguredUrl() {
-    final uri = Uri.tryParse(widget.config.flightDeckUrl);
+    _loadAddress(widget.config.flightDeckUrl);
+  }
+
+  void _reload() {
+    final uri = Uri.tryParse(_currentUrl ?? _addressController.text);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      _controller.reload();
+    } else {
+      _loadAddress(_addressController.text);
+    }
+  }
+
+  void _loadAddress(String value) {
+    final normalized = _normalizeAddress(value);
+    final uri = Uri.tryParse(normalized);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
       setState(() {
-        _message = 'Configure a valid Flight Deck URL first.';
+        _message = 'Enter a valid website URL.';
       });
       return;
     }
     _currentUrl = uri.toString();
+    _addressController.text = _currentUrl!;
     _controller.loadRequest(uri);
+  }
+
+  String _normalizeAddress(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null && uri.hasScheme) return trimmed;
+    if (trimmed.contains('.') && !trimmed.contains(' ')) {
+      return 'https://$trimmed';
+    }
+    return Uri.https('njump.me', '/', {'q': trimmed}).toString();
   }
 
   Future<void> _onPageFinished(String url) async {
     _currentUrl = url;
+    _addressController.text = url;
     await _injectIfTrusted();
   }
 
@@ -123,11 +172,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final policy = SignerPolicy.fromConfig(widget.config);
     if (!policy.canInject(url)) {
       setState(() {
-        _message = 'Signer withheld for untrusted origin: $origin';
+        _message = 'Signer withheld for unsupported page: $url';
       });
       return;
     }
-    await _controller.runJavaScript(_bridgeScript(widget.config.deviceNpub));
+    await _controller.runJavaScript(
+      _bridgeScript(widget.config.devicePublicKeyHex),
+    );
     setState(() {
       _message = 'window.nostr injected for $origin';
     });
@@ -141,7 +192,63 @@ class _BrowserScreenState extends State<BrowserScreen> {
     if (id.isEmpty || method.isEmpty) return;
 
     if (method == 'getPublicKey') {
-      await _resolveSignerRequest(id, {'result': widget.config.deviceNpub});
+      await _resolveSignerRequest(
+        id,
+        {'result': widget.config.devicePublicKeyHex},
+      );
+      return;
+    }
+
+    if (method == 'signEvent') {
+      final event = payload['params'] is Map<String, dynamic>
+          ? payload['params'] as Map<String, dynamic>
+          : <String, dynamic>{};
+      final pageUrl = _currentUrl ?? widget.config.flightDeckUrl;
+      final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
+      if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
+        final reason = 'unsupported NIP-07 page origin: $pageOrigin';
+        setState(() {
+          _message = 'Signer denied: $reason';
+        });
+        await _resolveSignerRequest(id, {'error': reason});
+        return;
+      }
+      final approval = await _confirmSignEvent(event, pageOrigin);
+      if (!approval.approved) {
+        await _recordNip07Audit(
+          pageOrigin: pageOrigin,
+          event: event,
+          allowed: false,
+          outcome: 'user_denied',
+          reason: 'denied by user',
+        );
+        await _resolveSignerRequest(id, {'error': 'denied'});
+        return;
+      }
+      final result = await widget.bridge.signEvent(
+        config: widget.config,
+        event: event,
+      );
+      if (!result.ok) {
+        await _recordNip07Audit(
+          pageOrigin: pageOrigin,
+          event: event,
+          allowed: false,
+          outcome: 'signer_error',
+          reason: result.error ?? 'native signer failed',
+        );
+        await _resolveSignerRequest(id, {'error': result.error});
+        return;
+      }
+      await _recordNip07Audit(
+        pageOrigin: pageOrigin,
+        event: event,
+        allowed: true,
+        outcome: 'signed',
+      );
+      await _resolveSignerRequest(id, {
+        'result': result.json,
+      });
       return;
     }
 
@@ -312,6 +419,66 @@ class _BrowserScreenState extends State<BrowserScreen> {
         const SignerPromptResult(approved: false, remember: false);
   }
 
+  Future<SignerPromptResult> _confirmSignEvent(
+    Map<String, dynamic> event,
+    String pageOrigin,
+  ) async {
+    final kind = event['kind']?.toString() ?? 'unknown';
+    final content = event['content']?.toString() ?? '';
+    final tags = event['tags'] is List ? event['tags'] as List<dynamic> : [];
+    return await showDialog<SignerPromptResult>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Approve Nostr event signature'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Website: $pageOrigin'),
+                    Text('Kind: $kind'),
+                    Text('Tags: ${tags.length}'),
+                    Text('Device: ${widget.config.deviceNpub}'),
+                    if (content.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      const Text('Content preview:'),
+                      SelectableText(
+                        content.length > 500
+                            ? '${content.substring(0, 500)}...'
+                            : content,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: false,
+                      remember: false,
+                    ),
+                  ),
+                  child: const Text('Deny'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: true,
+                      remember: false,
+                    ),
+                  ),
+                  child: const Text('Sign'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        const SignerPromptResult(approved: false, remember: false);
+  }
+
   Future<void> _recordSignerAudit({
     required SignerPolicyDecision decision,
     required String targetUrl,
@@ -336,6 +503,27 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
   }
 
+  Future<void> _recordNip07Audit({
+    required String pageOrigin,
+    required Map<String, dynamic> event,
+    required bool allowed,
+    required String outcome,
+    String reason = '',
+  }) async {
+    await widget.signerStore.appendAudit(
+      SignerAuditEntry.create(
+        pageOrigin: pageOrigin,
+        targetOrigin: pageOrigin,
+        targetUrl: _currentUrl ?? widget.config.flightDeckUrl,
+        method: 'signEvent kind ${event['kind'] ?? 'unknown'}',
+        deviceNpub: widget.config.deviceNpub,
+        allowed: allowed,
+        outcome: outcome,
+        reason: reason,
+      ),
+    );
+  }
+
   Future<void> _resolveSignerRequest(
     String id,
     Map<String, dynamic> payload,
@@ -346,9 +534,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
   }
 
-  String _bridgeScript(String deviceNpub) {
-    final escapedNpub =
-        deviceNpub.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+  String _bridgeScript(String devicePublicKeyHex) {
+    final escapedPublicKey =
+        devicePublicKeyHex.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
     return '''
 (() => {
   if (window.nostr && window.nostr.__wingman) return;
@@ -372,9 +560,18 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
   window.nostr = {
     __wingman: true,
-    getPublicKey: () => callNative('getPublicKey').then((value) => value || "$escapedNpub"),
+    getPublicKey: () => callNative('getPublicKey').then((value) => value || "$escapedPublicKey"),
     signNip98: (request) => callNative('signNip98', request),
-    signEvent: () => Promise.reject(new Error('signEvent requires a later approval policy')),
+    signEvent: (event) => callNative('signEvent', event),
+    getRelays: () => Promise.resolve({}),
+    nip04: {
+      encrypt: () => Promise.reject(new Error('nip04 encryption is not enabled in Wingman App yet')),
+      decrypt: () => Promise.reject(new Error('nip04 decryption is not enabled in Wingman App yet')),
+    },
+    nip44: {
+      encrypt: () => Promise.reject(new Error('nip44 encryption is not enabled in Wingman App yet')),
+      decrypt: () => Promise.reject(new Error('nip44 decryption is not enabled in Wingman App yet')),
+    },
   };
 })();
 ''';

@@ -148,6 +148,19 @@ class NativeCoreBridge {
     ], config: config);
   }
 
+  Future<CoreCommandResult> signEvent({
+    required AppConfig config,
+    required Map<String, dynamic> event,
+  }) {
+    return _runCore([
+      'sign-event',
+      '--secret',
+      config.deviceSecret,
+      '--event',
+      jsonEncode(event),
+    ], config: config);
+  }
+
   Future<CoreCommandResult> _runCore(
     List<String> args, {
     AppConfig? config,

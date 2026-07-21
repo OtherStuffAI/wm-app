@@ -7,9 +7,10 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
     DeviceKey, DeviceSeenRequest, DriveDeltaOptions, DriveItemType, DriveProjection,
-    DriveTreeOptions, FuseMountConfig, Nip98Request, Nip98Signer, ObjectCache, ObjectCacheConfig,
-    ObjectCacheError, ProjectionFileReader, RegisterDeviceRequest, SqliteIndex, SqliteIndexConfig,
-    SyncEngine, TowerClient, TowerClientConfig, VisibleMetadata,
+    DriveTreeOptions, FuseMountConfig, Nip98Request, Nip98Signer, NostrEventSigner, ObjectCache,
+    ObjectCacheConfig, ObjectCacheError, ProjectionFileReader, RegisterDeviceRequest, SqliteIndex,
+    SqliteIndexConfig, SyncEngine, TowerClient, TowerClientConfig, UnsignedNostrEvent,
+    VisibleMetadata,
 };
 
 #[derive(Parser)]
@@ -55,6 +56,14 @@ enum Command {
         url: String,
         #[arg(long)]
         body: Option<String>,
+    },
+    /// Sign a NIP-07 style Nostr event template.
+    SignEvent {
+        #[arg(long)]
+        secret: String,
+        /// Unsigned event JSON. pubkey/id/sig are ignored and recomputed.
+        #[arg(long)]
+        event: String,
     },
 }
 
@@ -328,6 +337,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "authorization": event.authorization_header()?,
                 "event": event
             }))?;
+        }
+        Command::SignEvent { secret, event } => {
+            let key = DeviceKey::import(&secret)?;
+            let unsigned: UnsignedNostrEvent = serde_json::from_str(&event)?;
+            let signed = NostrEventSigner::new(key).sign(unsigned)?;
+            print_json(&signed)?;
         }
     }
     Ok(())

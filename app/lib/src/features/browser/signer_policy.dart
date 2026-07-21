@@ -20,7 +20,11 @@ class SignerPolicy {
 
   bool canInject(String pageUrl) {
     final origin = normalizeOrigin(pageUrl);
-    return origin.isNotEmpty && _trustedOrigins.contains(origin);
+    return origin.isNotEmpty && isWebUrl(pageUrl);
+  }
+
+  bool canSignNip07(String pageUrl) {
+    return canInject(pageUrl);
   }
 
   SignerPolicyDecision validateNip98({
@@ -104,6 +108,12 @@ class SignerPolicy {
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) return '';
     if (uri.hasPort) return '${uri.scheme}://${uri.host}:${uri.port}';
     return '${uri.scheme}://${uri.host}';
+  }
+
+  static bool isWebUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
+    return uri.scheme == 'http' || uri.scheme == 'https';
   }
 }
 

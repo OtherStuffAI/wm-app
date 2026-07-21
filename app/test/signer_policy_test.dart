@@ -3,14 +3,15 @@ import 'package:wingman_app/src/features/browser/signer_policy.dart';
 
 void main() {
   group('SignerPolicy', () {
-    test('normalizes trusted origins and allows matching injection', () {
+    test('normalizes trusted origins and injects on web pages', () {
       final policy = SignerPolicy(
         trustedOrigins: const ['https://flightdeck.example/app'],
       );
 
       expect(policy.trustedOrigins, ['https://flightdeck.example']);
       expect(policy.canInject('https://flightdeck.example/tasks'), isTrue);
-      expect(policy.canInject('https://unknown.example/tasks'), isFalse);
+      expect(policy.canInject('https://unknown.example/tasks'), isTrue);
+      expect(policy.canInject('file:///tmp/index.html'), isFalse);
     });
 
     test('allows NIP-98 only when page and target origins are trusted', () {

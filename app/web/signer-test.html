@@ -102,6 +102,7 @@
       <div class="actions">
         <button id="check">Check bridge</button>
         <button id="pubkey" class="secondary">Get public key</button>
+        <button id="sign-event" class="secondary">Sign Nostr event</button>
         <button id="sign">Sign NIP-98 GET</button>
       </div>
 
@@ -155,6 +156,25 @@
           write(String(error && error.message ? error.message : error));
         }
       });
+
+      document
+        .querySelector("#sign-event")
+        .addEventListener("click", async () => {
+          if (!window.nostr || !window.nostr.signEvent) {
+            write("window.nostr.signEvent is not available.");
+            return;
+          }
+          try {
+            const event = await window.nostr.signEvent({
+              kind: 1,
+              tags: [["client", "wingman-app"]],
+              content: "Testing Wingman App NIP-07 signing",
+            });
+            write({ event });
+          } catch (error) {
+            write(String(error && error.message ? error.message : error));
+          }
+        });
     </script>
   </body>
 </html>

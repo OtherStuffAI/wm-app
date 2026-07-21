@@ -48,6 +48,7 @@ class _WingmanAppState extends State<WingmanApp> {
         _config = _config.copyWith(
           deviceSecret: secret,
           deviceNpub: identity.npub,
+          devicePublicKeyHex: identity.publicKeyHex,
         );
       });
     } catch (_) {
