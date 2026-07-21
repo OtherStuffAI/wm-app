@@ -19,8 +19,7 @@ class AppConfig {
       towerUrl: 'http://127.0.0.1:3100',
       appNpub:
           'npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5',
-      flightDeckUrl:
-          'https://kind-net-duck.rick.runwingman.com/signer-test.html',
+      flightDeckUrl: 'https://near-tea-crab.rick.runwingman.com',
       workspaceId: '2e5caefd-dd65-45d2-b747-ee874e8e5fc9',
       workspaceServiceNpub:
           'npub1995l838tl29llpxwvpdv6hc66cttrt6hrr8xyeq7kmdqevkeyk0qwvfxlc',
@@ -34,6 +33,7 @@ class AppConfig {
         'http://127.0.0.1:8093',
         'https://kind-net-duck.rick.runwingman.com',
         'https://near-tea-crab.rick.runwingman.com',
+        'https://rick.runwingman.com',
       ],
       rememberNip98Approvals: true,
     );

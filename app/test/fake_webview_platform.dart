@@ -61,6 +61,12 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   }
 
   @override
+  Future<void> loadHtmlString(String html, {String? baseUrl}) async {
+    _currentUrl = baseUrl ?? 'about:blank';
+    _navigationDelegate?.finish(_currentUrl!);
+  }
+
+  @override
   Future<String?> currentUrl() async => _currentUrl;
 
   @override

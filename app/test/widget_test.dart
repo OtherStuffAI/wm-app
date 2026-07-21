@@ -21,17 +21,21 @@ void main() {
     expect(find.byTooltip('New tab'), findsOneWidget);
     expect(find.byTooltip('Account'), findsOneWidget);
     expect(find.byTooltip('Back'), findsOneWidget);
-    expect(find.text('kind-net-duck.rick.runwingman.com'), findsOneWidget);
+    expect(find.text('Wingman Home'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 6));
     expect(find.byTooltip('Back'), findsNothing);
 
-    await tester.tap(find.text('kind-net-duck.rick.runwingman.com'));
+    await tester.tap(find.text('Wingman Home'));
     await tester.pump();
     expect(find.byTooltip('Back'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 4));
     expect(find.byTooltip('Back'), findsNothing);
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    expect(find.text('Wingman Home'), findsNWidgets(2));
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();

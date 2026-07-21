@@ -42,11 +42,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
   static const _nip44PolicyTarget = '*';
   static const _newTabAddressReveal = Duration(seconds: 5);
   static const _tabClickAddressReveal = Duration(seconds: 3);
+  static const _homeTitle = 'Wingman Home';
+  static const _rickAutopilotUrl = 'https://rick.runwingman.com';
 
   @override
   void initState() {
     super.initState();
-    _createTab(widget.config.flightDeckUrl, activate: true);
+    _createHomeTab(activate: true);
   }
 
   @override
@@ -131,7 +133,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
               ),
               IconButton(
                 tooltip: 'New tab',
-                onPressed: () => _createTab(widget.config.flightDeckUrl),
+                onPressed: () => _createHomeTab(),
                 icon: const Icon(Icons.add),
               ),
               _BrowserAvatarMenu(
@@ -256,6 +258,41 @@ class _BrowserScreenState extends State<BrowserScreen> {
     _loadAddressForTab(tab, url);
   }
 
+  void _createHomeTab({bool activate = true}) {
+    final id = _nextTabId++;
+    late final BrowserTab tab;
+    final controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'WingmanSigner',
+        onMessageReceived: (message) => _onSignerMessage(id, message),
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (url) => _onPageFinished(id, url),
+        ),
+      );
+    tab = BrowserTab(
+      id: id,
+      controller: controller,
+      addressController: TextEditingController(),
+      addressFocusNode: FocusNode(),
+      title: _homeTitle,
+      isHome: true,
+    );
+    tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
+    setState(() {
+      _tabs.add(tab);
+      if (activate) {
+        _activeTabId = id;
+      }
+    });
+    if (activate) {
+      _revealAddressBar(_newTabAddressReveal);
+    }
+    _loadHomeForTab(tab);
+  }
+
   void _activateTab(int id) {
     if (_activeTabId == id) {
       _revealAddressBar(_tabClickAddressReveal);
@@ -290,6 +327,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   void _reload() {
     final tab = _activeTab;
+    if (tab.isHome) {
+      _loadHomeForTab(tab);
+      return;
+    }
     final uri = Uri.tryParse(tab.currentUrl ?? tab.addressController.text);
     if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
       tab.controller.reload();
@@ -330,6 +371,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     setState(() {
+      tab.isHome = false;
       tab.currentUrl = uri.toString();
       tab.addressController.text = tab.currentUrl!;
       tab.title = _titleForUrl(tab.currentUrl!);
@@ -341,6 +383,23 @@ class _BrowserScreenState extends State<BrowserScreen> {
       }
     });
     tab.controller.loadRequest(uri);
+  }
+
+  void _loadHomeForTab(BrowserTab tab) {
+    setState(() {
+      tab.isHome = true;
+      tab.currentUrl = null;
+      tab.addressController.clear();
+      tab.title = _homeTitle;
+      tab.message = null;
+    });
+    tab.controller.loadHtmlString(
+      _homePageHtml(
+        flightDeckUrl: widget.config.flightDeckUrl,
+        rickAutopilotUrl: _rickAutopilotUrl,
+      ),
+      baseUrl: 'https://wingman.local/',
+    );
   }
 
   void _onAddressFocusChanged(int tabId) {
@@ -426,8 +485,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
+    if (tab.isHome &&
+        (url == 'about:blank' || url == 'https://wingman.local/')) {
+      await _injectTabCapture(tab);
+      return;
+    }
     final title = await tab.controller.getTitle();
     setState(() {
+      tab.isHome = false;
       tab.currentUrl = url;
       tab.addressController.text = url;
       tab.title =
@@ -436,6 +501,119 @@ class _BrowserScreenState extends State<BrowserScreen> {
     await _refreshNavigationState(tab);
     await _injectTabCapture(tab);
     await _injectIfTrusted(tab);
+  }
+
+  String _homePageHtml({
+    required String flightDeckUrl,
+    required String rickAutopilotUrl,
+  }) {
+    final bookmarks = [
+      _HomeBookmark(
+        label: 'Flight Deck',
+        url: flightDeckUrl,
+        description: 'Workspace, tasks, chats, files, and WApps.',
+      ),
+      const _HomeBookmark(
+        label: 'Rick Autopilot',
+        url: _rickAutopilotUrl,
+        description: 'Sessions, apps, pipelines, and Wingman runtime.',
+      ),
+    ];
+    final cards = bookmarks.map((bookmark) {
+      return '''
+        <a class="bookmark" href="${_escapeHtml(bookmark.url)}">
+          <span class="bookmark-title">${_escapeHtml(bookmark.label)}</span>
+          <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
+          <span class="bookmark-description">${_escapeHtml(bookmark.description)}</span>
+        </a>
+      ''';
+    }).join('\n');
+    return '''
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wingman Home</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f8f5;
+      color: #1d1f1d;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: start center;
+      background: #f7f8f5;
+    }
+    main {
+      width: min(860px, calc(100vw - 32px));
+      padding: 56px 0;
+    }
+    h1 {
+      margin: 0 0 20px;
+      font-size: 28px;
+      font-weight: 650;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .bookmark {
+      display: grid;
+      gap: 8px;
+      min-height: 132px;
+      padding: 18px;
+      border: 1px solid #d8ddd4;
+      border-radius: 8px;
+      background: #ffffff;
+      color: inherit;
+      text-decoration: none;
+      box-sizing: border-box;
+    }
+    .bookmark:focus,
+    .bookmark:hover {
+      border-color: #286a5a;
+      outline: none;
+    }
+    .bookmark-title {
+      font-size: 18px;
+      font-weight: 650;
+    }
+    .bookmark-url {
+      color: #286a5a;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .bookmark-description {
+      color: #535b55;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Wingman</h1>
+    <section class="grid">
+      $cards
+    </section>
+  </main>
+</body>
+</html>
+''';
+  }
+
+  String _escapeHtml(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
   }
 
   Future<void> _injectIfTrusted(BrowserTab tab) async {
@@ -1444,6 +1622,18 @@ enum _BrowserAvatarAction {
   status,
 }
 
+class _HomeBookmark {
+  const _HomeBookmark({
+    required this.label,
+    required this.url,
+    required this.description,
+  });
+
+  final String label;
+  final String url;
+  final String description;
+}
+
 class BrowserTab {
   BrowserTab({
     required this.id,
@@ -1451,6 +1641,7 @@ class BrowserTab {
     required this.addressController,
     required this.addressFocusNode,
     required this.title,
+    this.isHome = false,
   });
 
   final int id;
@@ -1460,6 +1651,7 @@ class BrowserTab {
   String title;
   String? currentUrl;
   String? message;
+  bool isHome;
   bool canGoBack = false;
   bool canGoForward = false;
 
