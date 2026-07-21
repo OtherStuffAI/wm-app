@@ -7,9 +7,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use wmapp_core::{
     DeviceKey, DeviceSeenRequest, DriveDeltaOptions, DriveItemType, DriveProjection,
-    DriveTreeOptions, FuseMountConfig, Nip98Request, Nip98Signer, NostrEventSigner, ObjectCache,
-    ObjectCacheConfig, ObjectCacheError, ProjectionFileReader, RegisterDeviceRequest, SqliteIndex,
-    SqliteIndexConfig, SyncEngine, TowerClient, TowerClientConfig, UnsignedNostrEvent,
+    DriveTreeOptions, FuseMountConfig, Nip44Crypto, Nip98Request, Nip98Signer, NostrEventSigner,
+    ObjectCache, ObjectCacheConfig, ObjectCacheError, ProjectionFileReader, RegisterDeviceRequest,
+    SqliteIndex, SqliteIndexConfig, SyncEngine, TowerClient, TowerClientConfig, UnsignedNostrEvent,
     VisibleMetadata,
 };
 
@@ -64,6 +64,11 @@ enum Command {
         /// Unsigned event JSON. pubkey/id/sig are ignored and recomputed.
         #[arg(long)]
         event: String,
+    },
+    /// Run NIP-44 encryption or decryption with the local device key.
+    Nip44 {
+        #[command(subcommand)]
+        command: Nip44Command,
     },
 }
 
@@ -270,6 +275,28 @@ enum DeviceCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum Nip44Command {
+    /// Encrypt plaintext to a peer x-only pubkey or npub.
+    Encrypt {
+        #[arg(long)]
+        secret: String,
+        #[arg(long)]
+        peer_pubkey: String,
+        #[arg(long)]
+        plaintext: String,
+    },
+    /// Decrypt ciphertext from a peer x-only pubkey or npub.
+    Decrypt {
+        #[arg(long)]
+        secret: String,
+        #[arg(long)]
+        peer_pubkey: String,
+        #[arg(long)]
+        ciphertext: String,
+    },
+}
+
 #[derive(Serialize)]
 struct DeviceOutput {
     npub: String,
@@ -344,6 +371,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let signed = NostrEventSigner::new(key).sign(unsigned)?;
             print_json(&signed)?;
         }
+        Command::Nip44 { command } => match command {
+            Nip44Command::Encrypt {
+                secret,
+                peer_pubkey,
+                plaintext,
+            } => {
+                let key = DeviceKey::import(&secret)?;
+                let ciphertext = Nip44Crypto::new(key).encrypt(&peer_pubkey, &plaintext)?;
+                print_json(&serde_json::json!({ "ciphertext": ciphertext }))?;
+            }
+            Nip44Command::Decrypt {
+                secret,
+                peer_pubkey,
+                ciphertext,
+            } => {
+                let key = DeviceKey::import(&secret)?;
+                let plaintext = Nip44Crypto::new(key).decrypt(&peer_pubkey, &ciphertext)?;
+                print_json(&serde_json::json!({ "plaintext": plaintext }))?;
+            }
+        },
     }
     Ok(())
 }

@@ -161,6 +161,40 @@ class NativeCoreBridge {
     ], config: config);
   }
 
+  Future<CoreCommandResult> nip44Encrypt({
+    required AppConfig config,
+    required String peerPubkey,
+    required String plaintext,
+  }) {
+    return _runCore([
+      'nip44',
+      'encrypt',
+      '--secret',
+      config.deviceSecret,
+      '--peer-pubkey',
+      peerPubkey,
+      '--plaintext',
+      plaintext,
+    ], config: config);
+  }
+
+  Future<CoreCommandResult> nip44Decrypt({
+    required AppConfig config,
+    required String peerPubkey,
+    required String ciphertext,
+  }) {
+    return _runCore([
+      'nip44',
+      'decrypt',
+      '--secret',
+      config.deviceSecret,
+      '--peer-pubkey',
+      peerPubkey,
+      '--ciphertext',
+      ciphertext,
+    ], config: config);
+  }
+
   Future<CoreCommandResult> _runCore(
     List<String> args, {
     AppConfig? config,

@@ -99,10 +99,14 @@
       <label for="target">NIP-98 target URL</label>
       <input id="target" />
 
+      <label for="peer">NIP-44 peer public key hex</label>
+      <input id="peer" />
+
       <div class="actions">
         <button id="check">Check bridge</button>
         <button id="pubkey" class="secondary">Get public key</button>
         <button id="sign-event" class="secondary">Sign Nostr event</button>
+        <button id="nip44" class="secondary">NIP-44 round trip</button>
         <button id="sign">Sign NIP-98 GET</button>
       </div>
 
@@ -111,6 +115,7 @@
 
     <script>
       const target = document.querySelector("#target");
+      const peer = document.querySelector("#peer");
       const output = document.querySelector("#output");
       target.value = `${window.location.origin}/api/health`;
 
@@ -175,6 +180,28 @@
             write(String(error && error.message ? error.message : error));
           }
         });
+
+      document.querySelector("#nip44").addEventListener("click", async () => {
+        if (!window.nostr || !window.nostr.nip44) {
+          write("window.nostr.nip44 is not available.");
+          return;
+        }
+        try {
+          const self = await window.nostr.getPublicKey();
+          if (!peer.value) peer.value = self;
+          const ciphertext = await window.nostr.nip44.encrypt(
+            peer.value,
+            "Testing Wingman App NIP-44 encryption",
+          );
+          const plaintext = await window.nostr.nip44.decrypt(
+            peer.value,
+            ciphertext,
+          );
+          write({ peer: peer.value, ciphertext, plaintext });
+        } catch (error) {
+          write(String(error && error.message ? error.message : error));
+        }
+      });
     </script>
   </body>
 </html>

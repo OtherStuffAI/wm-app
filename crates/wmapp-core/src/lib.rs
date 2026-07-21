@@ -8,8 +8,8 @@ pub mod sync;
 pub mod tower;
 
 pub use auth::{
-    DevelopmentKeyStore, DeviceKey, DeviceKeyStore, Nip98Request, Nip98Signer, NostrEventSigner,
-    SignedNip98Event, SignedNostrEvent, UnsignedNostrEvent,
+    DevelopmentKeyStore, DeviceKey, DeviceKeyStore, Nip44Crypto, Nip98Request, Nip98Signer,
+    NostrEventSigner, SignedNip98Event, SignedNostrEvent, UnsignedNostrEvent,
 };
 pub use cache::{ObjectCache, ObjectCacheConfig, ObjectCacheError};
 pub use mount::{

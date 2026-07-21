@@ -57,14 +57,14 @@ The current desktop spike can generate/import a device key, register a device th
 
 The browser prototype has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
-prompt-backed `signEvent`, empty `getRelays`, and explicit not-yet-supported
-errors for NIP-04/NIP-44 encryption. NIP-98 remains more restrictive: both the
-loaded WebView origin and the requested NIP-98 target origin must be trusted
-before the native approval prompt appears. Remembered NIP-98 approvals and
-signer audit entries are persisted locally, and the Signer tab can revoke
-approvals or clear the audit log. A static signer test page is served from the
-Flutter web build at `/signer-test.html` for native WebView/manual bridge
-checks.
+prompt-backed `signEvent`, empty `getRelays`, and prompt-backed
+`nip44.encrypt`/`nip44.decrypt`. NIP-04 still returns explicit
+not-yet-supported errors. NIP-98 remains more restrictive: both the loaded
+WebView origin and the requested NIP-98 target origin must be trusted before
+the native approval prompt appears. Remembered NIP-98 approvals and signer
+audit entries are persisted locally, and the Signer tab can revoke approvals or
+clear the audit log. A static signer test page is served from the Flutter web
+build at `/signer-test.html` for native WebView/manual bridge checks.
 
 Fresh dev builds default to Pete's Wingman App channel and the hosted signer test:
 

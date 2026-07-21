@@ -252,6 +252,17 @@ class _BrowserScreenState extends State<BrowserScreen> {
       return;
     }
 
+    if (method == 'nip44.encrypt' || method == 'nip44.decrypt') {
+      await _handleNip44Request(
+        id: id,
+        method: method,
+        params: payload['params'] is Map<String, dynamic>
+            ? payload['params'] as Map<String, dynamic>
+            : <String, dynamic>{},
+      );
+      return;
+    }
+
     if (method == 'signNip98') {
       final request = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
@@ -479,6 +490,145 @@ class _BrowserScreenState extends State<BrowserScreen> {
         const SignerPromptResult(approved: false, remember: false);
   }
 
+  Future<void> _handleNip44Request({
+    required String id,
+    required String method,
+    required Map<String, dynamic> params,
+  }) async {
+    final pageUrl = _currentUrl ?? widget.config.flightDeckUrl;
+    final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
+    if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
+      final reason = 'unsupported NIP-44 page origin: $pageOrigin';
+      setState(() {
+        _message = 'Signer denied: $reason';
+      });
+      await _resolveSignerRequest(id, {'error': reason});
+      return;
+    }
+
+    final peerPubkey = params['peerPubkey']?.toString() ?? '';
+    final payload = params['payload']?.toString() ?? '';
+    final operation = method == 'nip44.encrypt' ? 'encrypt' : 'decrypt';
+    final approval = await _confirmNip44(
+      operation: operation,
+      pageOrigin: pageOrigin,
+      peerPubkey: peerPubkey,
+      payload: payload,
+    );
+    if (!approval.approved) {
+      await _recordNip44Audit(
+        pageOrigin: pageOrigin,
+        peerPubkey: peerPubkey,
+        operation: operation,
+        allowed: false,
+        outcome: 'user_denied',
+        reason: 'denied by user',
+      );
+      await _resolveSignerRequest(id, {'error': 'denied'});
+      return;
+    }
+
+    final result = method == 'nip44.encrypt'
+        ? await widget.bridge.nip44Encrypt(
+            config: widget.config,
+            peerPubkey: peerPubkey,
+            plaintext: payload,
+          )
+        : await widget.bridge.nip44Decrypt(
+            config: widget.config,
+            peerPubkey: peerPubkey,
+            ciphertext: payload,
+          );
+    if (!result.ok) {
+      await _recordNip44Audit(
+        pageOrigin: pageOrigin,
+        peerPubkey: peerPubkey,
+        operation: operation,
+        allowed: false,
+        outcome: 'signer_error',
+        reason: result.error ?? 'native NIP-44 failed',
+      );
+      await _resolveSignerRequest(id, {'error': result.error});
+      return;
+    }
+
+    await _recordNip44Audit(
+      pageOrigin: pageOrigin,
+      peerPubkey: peerPubkey,
+      operation: operation,
+      allowed: true,
+      outcome: operation,
+    );
+    await _resolveSignerRequest(id, {
+      'result': operation == 'encrypt'
+          ? result.json['ciphertext']
+          : result.json['plaintext'],
+    });
+  }
+
+  Future<SignerPromptResult> _confirmNip44({
+    required String operation,
+    required String pageOrigin,
+    required String peerPubkey,
+    required String payload,
+  }) async {
+    final title = operation == 'encrypt'
+        ? 'Approve NIP-44 encryption'
+        : 'Approve NIP-44 decryption';
+    return await showDialog<SignerPromptResult>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: Text(title),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Website: $pageOrigin'),
+                    Text('Peer pubkey: $peerPubkey'),
+                    Text('Device: ${widget.config.deviceNpub}'),
+                    if (payload.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(operation == 'encrypt'
+                          ? 'Plaintext preview:'
+                          : 'Ciphertext preview:'),
+                      SelectableText(
+                        payload.length > 500
+                            ? '${payload.substring(0, 500)}...'
+                            : payload,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: false,
+                      remember: false,
+                    ),
+                  ),
+                  child: const Text('Deny'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: true,
+                      remember: false,
+                    ),
+                  ),
+                  child: Text(operation == 'encrypt' ? 'Encrypt' : 'Decrypt'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        const SignerPromptResult(approved: false, remember: false);
+  }
+
   Future<void> _recordSignerAudit({
     required SignerPolicyDecision decision,
     required String targetUrl,
@@ -516,6 +666,28 @@ class _BrowserScreenState extends State<BrowserScreen> {
         targetOrigin: pageOrigin,
         targetUrl: _currentUrl ?? widget.config.flightDeckUrl,
         method: 'signEvent kind ${event['kind'] ?? 'unknown'}',
+        deviceNpub: widget.config.deviceNpub,
+        allowed: allowed,
+        outcome: outcome,
+        reason: reason,
+      ),
+    );
+  }
+
+  Future<void> _recordNip44Audit({
+    required String pageOrigin,
+    required String peerPubkey,
+    required String operation,
+    required bool allowed,
+    required String outcome,
+    String reason = '',
+  }) async {
+    await widget.signerStore.appendAudit(
+      SignerAuditEntry.create(
+        pageOrigin: pageOrigin,
+        targetOrigin: pageOrigin,
+        targetUrl: peerPubkey,
+        method: 'nip44.$operation',
         deviceNpub: widget.config.deviceNpub,
         allowed: allowed,
         outcome: outcome,
@@ -569,8 +741,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
       decrypt: () => Promise.reject(new Error('nip04 decryption is not enabled in Wingman App yet')),
     },
     nip44: {
-      encrypt: () => Promise.reject(new Error('nip44 encryption is not enabled in Wingman App yet')),
-      decrypt: () => Promise.reject(new Error('nip44 decryption is not enabled in Wingman App yet')),
+      encrypt: (peerPubkey, plaintext) => callNative('nip44.encrypt', { peerPubkey, payload: plaintext }),
+      decrypt: (peerPubkey, ciphertext) => callNative('nip44.decrypt', { peerPubkey, payload: ciphertext }),
     },
   };
 })();
