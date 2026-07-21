@@ -42,6 +42,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   String? _currentUrl;
   String? _message;
+  static const _nip44PolicyTarget = '*';
 
   @override
   void initState() {
@@ -213,17 +214,60 @@ class _BrowserScreenState extends State<BrowserScreen> {
         await _resolveSignerRequest(id, {'error': reason});
         return;
       }
-      final approval = await _confirmSignEvent(event, pageOrigin);
-      if (!approval.approved) {
+      const operation = 'signEvent';
+      final policyTarget = _signEventPolicyTarget(event);
+      final policyRule = await widget.signerStore.findPolicyRule(
+        pageOrigin: pageOrigin,
+        operation: operation,
+        target: policyTarget,
+        deviceNpub: widget.config.deviceNpub,
+      );
+      if (policyRule != null && !policyRule.allows) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
           event: event,
           allowed: false,
-          outcome: 'user_denied',
-          reason: 'denied by user',
+          outcome: 'policy_denied',
+          reason: 'denied by signer policy',
+          rememberedApproval: true,
+        );
+        await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+        return;
+      }
+      final remembered = policyRule != null && policyRule.allows;
+      final approval = remembered
+          ? const SignerPromptResult(approved: true)
+          : await _confirmSignEvent(event, pageOrigin);
+      if (!approval.approved) {
+        if (approval.denyAlways) {
+          await _rememberSignerPolicy(
+            pageOrigin: pageOrigin,
+            operation: operation,
+            target: policyTarget,
+            decision: SignerPolicyRuleDecision.deny,
+            label: 'Sign event ${policyTarget.replaceFirst('kind:', 'kind ')}',
+          );
+        }
+        await _recordNip07Audit(
+          pageOrigin: pageOrigin,
+          event: event,
+          allowed: false,
+          outcome: approval.denyAlways ? 'policy_saved_deny' : 'user_denied',
+          reason: approval.denyAlways
+              ? 'denied by user and saved as policy'
+              : 'denied by user',
         );
         await _resolveSignerRequest(id, {'error': 'denied'});
         return;
+      }
+      if (approval.remember) {
+        await _rememberSignerPolicy(
+          pageOrigin: pageOrigin,
+          operation: operation,
+          target: policyTarget,
+          decision: SignerPolicyRuleDecision.allow,
+          label: 'Sign event ${policyTarget.replaceFirst('kind:', 'kind ')}',
+        );
       }
       final result = await widget.bridge.signEvent(
         config: widget.config,
@@ -244,7 +288,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
         pageOrigin: pageOrigin,
         event: event,
         allowed: true,
-        outcome: 'signed',
+        outcome: remembered ? 'signed_with_policy' : 'signed',
+        rememberedApproval: remembered || approval.remember,
       );
       await _resolveSignerRequest(id, {
         'result': result.json,
@@ -291,26 +336,68 @@ class _BrowserScreenState extends State<BrowserScreen> {
         await _resolveSignerRequest(id, {'error': decision.reason});
         return;
       }
-      final remembered = widget.config.rememberNip98Approvals &&
-          await widget.signerStore.hasApproval(
-            pageOrigin: decision.pageOrigin,
-            targetOrigin: decision.targetOrigin,
-            deviceNpub: widget.config.deviceNpub,
-          );
-      final approval = remembered
-          ? const SignerPromptResult(approved: true, remember: false)
-          : await _confirmNip98(request, decision);
-      if (!approval.approved) {
+      const policyOperation = 'nip98';
+      final policyRule = await widget.signerStore.findPolicyRule(
+        pageOrigin: decision.pageOrigin,
+        operation: policyOperation,
+        target: decision.targetOrigin,
+        deviceNpub: widget.config.deviceNpub,
+      );
+      if (policyRule != null && !policyRule.allows) {
         await _recordSignerAudit(
           decision: decision,
           targetUrl: requestUrl,
           method: decision.method,
           allowed: false,
-          outcome: 'user_denied',
-          reason: 'denied by user',
+          outcome: 'policy_denied',
+          reason: 'denied by signer policy',
+          rememberedApproval: true,
+        );
+        await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+        return;
+      }
+      final rememberedPolicy = policyRule != null && policyRule.allows;
+      final rememberedApproval = widget.config.rememberNip98Approvals &&
+          await widget.signerStore.hasApproval(
+            pageOrigin: decision.pageOrigin,
+            targetOrigin: decision.targetOrigin,
+            deviceNpub: widget.config.deviceNpub,
+          );
+      final remembered = rememberedPolicy || rememberedApproval;
+      final approval = remembered
+          ? const SignerPromptResult(approved: true)
+          : await _confirmNip98(request, decision);
+      if (!approval.approved) {
+        if (approval.denyAlways) {
+          await _rememberSignerPolicy(
+            pageOrigin: decision.pageOrigin,
+            operation: policyOperation,
+            target: decision.targetOrigin,
+            decision: SignerPolicyRuleDecision.deny,
+            label: 'NIP-98 ${decision.pageOrigin} -> ${decision.targetOrigin}',
+          );
+        }
+        await _recordSignerAudit(
+          decision: decision,
+          targetUrl: requestUrl,
+          method: decision.method,
+          allowed: false,
+          outcome: approval.denyAlways ? 'policy_saved_deny' : 'user_denied',
+          reason: approval.denyAlways
+              ? 'denied by user and saved as policy'
+              : 'denied by user',
         );
         await _resolveSignerRequest(id, {'error': 'denied'});
         return;
+      }
+      if (approval.remember) {
+        await _rememberSignerPolicy(
+          pageOrigin: decision.pageOrigin,
+          operation: policyOperation,
+          target: decision.targetOrigin,
+          decision: SignerPolicyRuleDecision.allow,
+          label: 'NIP-98 ${decision.pageOrigin} -> ${decision.targetOrigin}',
+        );
       }
       if (approval.remember && widget.config.rememberNip98Approvals) {
         await widget.signerStore.rememberApproval(
@@ -366,68 +453,88 @@ class _BrowserScreenState extends State<BrowserScreen> {
     }
   }
 
+  String _signEventPolicyTarget(Map<String, dynamic> event) {
+    return 'kind:${event['kind']?.toString() ?? 'unknown'}';
+  }
+
+  Future<void> _rememberSignerPolicy({
+    required String pageOrigin,
+    required String operation,
+    required String target,
+    required SignerPolicyRuleDecision decision,
+    required String label,
+  }) {
+    return widget.signerStore.rememberPolicyRule(
+      SignerPolicyRule(
+        pageOrigin: pageOrigin,
+        operation: operation,
+        target: target,
+        deviceNpub: widget.config.deviceNpub,
+        decision: decision,
+        createdAt: DateTime.now().toUtc(),
+        label: label,
+      ),
+    );
+  }
+
   Future<SignerPromptResult> _confirmNip98(
     Map<String, dynamic> request,
     SignerPolicyDecision decision,
   ) async {
     final url = request['url']?.toString() ?? '';
-    bool remember = widget.config.rememberNip98Approvals;
     return await showDialog<SignerPromptResult>(
           context: context,
           builder: (context) {
-            return StatefulBuilder(
-              builder: (context, setDialogState) {
-                return AlertDialog(
-                  title: const Text('Approve NIP-98 signature'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('WebView origin: ${decision.pageOrigin}'),
-                      Text('Target origin: ${decision.targetOrigin}'),
-                      Text('Method: ${decision.method}'),
-                      Text('URL: $url'),
-                      const Text('Event kind: 27235'),
-                      Text('Device: ${widget.config.deviceNpub}'),
-                      if (widget.config.rememberNip98Approvals)
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: remember,
-                          onChanged: (value) {
-                            setDialogState(() {
-                              remember = value ?? false;
-                            });
-                          },
-                          title: const Text('Remember for this origin pair'),
-                        ),
-                    ],
+            return AlertDialog(
+              title: const Text('Approve NIP-98 signature'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('WebView origin: ${decision.pageOrigin}'),
+                  Text('Target origin: ${decision.targetOrigin}'),
+                  Text('Method: ${decision.method}'),
+                  Text('URL: $url'),
+                  const Text('Event kind: 27235'),
+                  Text('Device: ${widget.config.deviceNpub}'),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: false,
+                      denyAlways: true,
+                    ),
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(
-                        const SignerPromptResult(
-                          approved: false,
-                          remember: false,
-                        ),
-                      ),
-                      child: const Text('Deny'),
+                  child: const Text('Deny always'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: false),
+                  ),
+                  child: const Text('Deny'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: true),
+                  ),
+                  child: const Text('Approve'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(
+                      approved: true,
+                      remember: true,
                     ),
-                    FilledButton(
-                      onPressed: () => Navigator.of(context).pop(
-                        SignerPromptResult(
-                          approved: true,
-                          remember: remember,
-                        ),
-                      ),
-                      child: const Text('Approve'),
-                    ),
-                  ],
-                );
-              },
+                  ),
+                  child: const Text('Approve always'),
+                ),
+              ],
             );
           },
         ) ??
-        const SignerPromptResult(approved: false, remember: false);
+        const SignerPromptResult(approved: false);
   }
 
   Future<SignerPromptResult> _confirmSignEvent(
@@ -469,25 +576,37 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   onPressed: () => Navigator.of(context).pop(
                     const SignerPromptResult(
                       approved: false,
-                      remember: false,
+                      denyAlways: true,
                     ),
                   ),
-                  child: const Text('Deny'),
+                  child: const Text('Reject always'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: false),
+                  ),
+                  child: const Text('Reject'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: true),
+                  ),
+                  child: const Text('Sign'),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(
                     const SignerPromptResult(
                       approved: true,
-                      remember: false,
+                      remember: true,
                     ),
                   ),
-                  child: const Text('Sign'),
+                  child: const Text('Sign always'),
                 ),
               ],
             );
           },
         ) ??
-        const SignerPromptResult(approved: false, remember: false);
+        const SignerPromptResult(approved: false);
   }
 
   Future<void> _handleNip44Request({
@@ -509,23 +628,65 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final peerPubkey = params['peerPubkey']?.toString() ?? '';
     final payload = params['payload']?.toString() ?? '';
     final operation = method == 'nip44.encrypt' ? 'encrypt' : 'decrypt';
-    final approval = await _confirmNip44(
-      operation: operation,
+    final policyRule = await widget.signerStore.findPolicyRule(
       pageOrigin: pageOrigin,
-      peerPubkey: peerPubkey,
-      payload: payload,
+      operation: method,
+      target: _nip44PolicyTarget,
+      deviceNpub: widget.config.deviceNpub,
     );
-    if (!approval.approved) {
+    if (policyRule != null && !policyRule.allows) {
       await _recordNip44Audit(
         pageOrigin: pageOrigin,
         peerPubkey: peerPubkey,
         operation: operation,
         allowed: false,
-        outcome: 'user_denied',
-        reason: 'denied by user',
+        outcome: 'policy_denied',
+        reason: 'denied by signer policy',
+        rememberedApproval: true,
+      );
+      await _resolveSignerRequest(id, {'error': 'denied by signer policy'});
+      return;
+    }
+    final remembered = policyRule != null && policyRule.allows;
+    final approval = remembered
+        ? const SignerPromptResult(approved: true)
+        : await _confirmNip44(
+            operation: operation,
+            pageOrigin: pageOrigin,
+            peerPubkey: peerPubkey,
+            payload: payload,
+          );
+    if (!approval.approved) {
+      if (approval.denyAlways) {
+        await _rememberSignerPolicy(
+          pageOrigin: pageOrigin,
+          operation: method,
+          target: _nip44PolicyTarget,
+          decision: SignerPolicyRuleDecision.deny,
+          label: 'NIP-44 $operation for $pageOrigin',
+        );
+      }
+      await _recordNip44Audit(
+        pageOrigin: pageOrigin,
+        peerPubkey: peerPubkey,
+        operation: operation,
+        allowed: false,
+        outcome: approval.denyAlways ? 'policy_saved_deny' : 'user_denied',
+        reason: approval.denyAlways
+            ? 'denied by user and saved as policy'
+            : 'denied by user',
       );
       await _resolveSignerRequest(id, {'error': 'denied'});
       return;
+    }
+    if (approval.remember) {
+      await _rememberSignerPolicy(
+        pageOrigin: pageOrigin,
+        operation: method,
+        target: _nip44PolicyTarget,
+        decision: SignerPolicyRuleDecision.allow,
+        label: 'NIP-44 $operation for $pageOrigin',
+      );
     }
 
     final result = method == 'nip44.encrypt'
@@ -547,6 +708,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         allowed: false,
         outcome: 'signer_error',
         reason: result.error ?? 'native NIP-44 failed',
+        rememberedApproval: remembered,
       );
       await _resolveSignerRequest(id, {'error': result.error});
       return;
@@ -557,7 +719,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
       peerPubkey: peerPubkey,
       operation: operation,
       allowed: true,
-      outcome: operation,
+      outcome: remembered ? '${operation}_with_policy' : operation,
+      rememberedApproval: remembered || approval.remember,
     );
     await _resolveSignerRequest(id, {
       'result': operation == 'encrypt'
@@ -608,25 +771,37 @@ class _BrowserScreenState extends State<BrowserScreen> {
                   onPressed: () => Navigator.of(context).pop(
                     const SignerPromptResult(
                       approved: false,
-                      remember: false,
+                      denyAlways: true,
                     ),
+                  ),
+                  child: const Text('Deny always'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: false),
                   ),
                   child: const Text('Deny'),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(
+                    const SignerPromptResult(approved: true),
+                  ),
+                  child: const Text('Approve'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
                     const SignerPromptResult(
                       approved: true,
-                      remember: false,
+                      remember: true,
                     ),
                   ),
-                  child: Text(operation == 'encrypt' ? 'Encrypt' : 'Decrypt'),
+                  child: const Text('Approve always'),
                 ),
               ],
             );
           },
         ) ??
-        const SignerPromptResult(approved: false, remember: false);
+        const SignerPromptResult(approved: false);
   }
 
   Future<void> _recordSignerAudit({
@@ -659,6 +834,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     required bool allowed,
     required String outcome,
     String reason = '',
+    bool rememberedApproval = false,
   }) async {
     await widget.signerStore.appendAudit(
       SignerAuditEntry.create(
@@ -670,6 +846,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         allowed: allowed,
         outcome: outcome,
         reason: reason,
+        rememberedApproval: rememberedApproval,
       ),
     );
   }
@@ -681,6 +858,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     required bool allowed,
     required String outcome,
     String reason = '',
+    bool rememberedApproval = false,
   }) async {
     await widget.signerStore.appendAudit(
       SignerAuditEntry.create(
@@ -692,6 +870,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
         allowed: allowed,
         outcome: outcome,
         reason: reason,
+        rememberedApproval: rememberedApproval,
       ),
     );
   }
@@ -753,9 +932,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
 class SignerPromptResult {
   const SignerPromptResult({
     required this.approved,
-    required this.remember,
+    this.remember = false,
+    this.denyAlways = false,
   });
 
   final bool approved;
   final bool remember;
+  final bool denyAlways;
 }

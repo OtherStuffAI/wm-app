@@ -61,6 +61,49 @@ class _SignerScreenState extends State<SignerScreen> {
             const SizedBox(height: 24),
             _sectionHeader(
               context,
+              title: 'Signer policies',
+              action: TextButton.icon(
+                onPressed: _refresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reload'),
+              ),
+            ),
+            if (state == null) const LinearProgressIndicator(),
+            if (state != null && state.policyRules.isEmpty)
+              const Text('No signer allow or deny policies.'),
+            if (state != null)
+              for (final rule in state.policyRules)
+                Card(
+                  margin: const EdgeInsets.only(top: 8),
+                  child: ListTile(
+                    leading: Icon(
+                      rule.allows
+                          ? Icons.check_circle_outline
+                          : Icons.block_outlined,
+                    ),
+                    title: Text(
+                      '${rule.decision.name.toUpperCase()} ${rule.operation}',
+                    ),
+                    subtitle: SelectableText(
+                      [
+                        rule.label ?? '',
+                        'Website: ${rule.pageOrigin}',
+                        'Target: ${rule.target}',
+                        rule.deviceNpub,
+                        rule.createdAt.toLocal().toString(),
+                      ].where((line) => line.isNotEmpty).join('\n'),
+                    ),
+                    isThreeLine: true,
+                    trailing: IconButton(
+                      tooltip: 'Revoke',
+                      onPressed: () => _revokePolicy(rule.key),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ),
+                ),
+            const SizedBox(height: 24),
+            _sectionHeader(
+              context,
               title: 'Remembered approvals',
               action: TextButton.icon(
                 onPressed: _refresh,
@@ -148,9 +191,14 @@ class _SignerScreenState extends State<SignerScreen> {
   }
 
   Future<SignerState> _load() async {
+    final policyRules = await widget.signerStore.listPolicyRules();
     final approvals = await widget.signerStore.listApprovals();
     final audit = await widget.signerStore.listAudit();
-    return SignerState(approvals: approvals, audit: audit);
+    return SignerState(
+      policyRules: policyRules,
+      approvals: approvals,
+      audit: audit,
+    );
   }
 
   void _refresh() {
@@ -164,6 +212,11 @@ class _SignerScreenState extends State<SignerScreen> {
     _refresh();
   }
 
+  Future<void> _revokePolicy(String key) async {
+    await widget.signerStore.revokePolicyRule(key);
+    _refresh();
+  }
+
   Future<void> _clearAudit() async {
     await widget.signerStore.clearAudit();
     _refresh();
@@ -172,10 +225,12 @@ class _SignerScreenState extends State<SignerScreen> {
 
 class SignerState {
   const SignerState({
+    required this.policyRules,
     required this.approvals,
     required this.audit,
   });
 
+  final List<SignerPolicyRule> policyRules;
   final List<SignerApproval> approvals;
   final List<SignerAuditEntry> audit;
 }
