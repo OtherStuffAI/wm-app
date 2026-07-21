@@ -53,24 +53,27 @@ The `mount --dry-run` command prints the read-only Drive tree that the FUSE/macF
 
 The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status screens plus a `NativeCoreBridge` local-process bridge to the existing Rust core.
 
-The current desktop spike can generate/import a device key, register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a `window.nostr` bridge into WebView pages.
+The current desktop build can register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a `window.nostr` bridge into WebView pages. Device key generation/import, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart so they work in the Flutter app on desktop and mobile without shelling out to Rust.
 
 The browser prototype has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
 prompt-backed `signEvent`, empty `getRelays`, and prompt-backed
-`nip44.encrypt`/`nip44.decrypt`. NIP-04 still returns explicit
-not-yet-supported errors. NIP-98 remains more restrictive: both the loaded
+`nip44.encrypt`/`nip44.decrypt` on desktop through `wmapp-core`. NIP-44 is not
+mobile-native yet. NIP-04 still returns explicit not-yet-supported errors.
+NIP-98 remains more restrictive: both the loaded
 WebView origin and the requested NIP-98 target origin must be trusted before
 the native approval prompt appears. Remembered NIP-98 approvals and signer
 audit entries are persisted locally, and the Signer tab can revoke approvals or
 clear the audit log. A static signer test page is served from the Flutter web
 build at `/signer-test.html` for native WebView/manual bridge checks.
 
-Fresh dev builds default to Pete's Wingman App channel and the hosted signer test:
+Fresh dev builds default to Pete's Wingman App channel and a browser home page
+with Flight Deck and Rick Autopilot bookmarks:
 
 - Tower URL: `http://127.0.0.1:3100`
-- Browser URL: `https://kind-net-duck.rick.runwingman.com/signer-test.html`
-- Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, and `near-tea-crab.rick.runwingman.com`
+- Flight Deck URL: `https://near-tea-crab.rick.runwingman.com`
+- Rick Autopilot URL: `https://rick.runwingman.com`
+- Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, `near-tea-crab.rick.runwingman.com`, and `rick.runwingman.com`
 
 For a laptop development signer, keep the private key in an ignored root
 `.env.local` file:
@@ -98,6 +101,9 @@ Then launch through the root helper scripts:
 startup the Flutter shell imports `WINGMAN_NSEC`, derives the matching device
 `npub`, and uses that identity for the browser signer and NIP-98 calls.
 
+Android and iOS do not receive shell environment variables, so configure or
+generate the signer key inside the app's Setup screen for mobile test builds.
+
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
 macOS signer/browser development builds do not require macFUSE or `fuse.pc`.
@@ -107,7 +113,8 @@ separate packaging target.
 
 When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wingmanbefree/wm-app`, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
 
-Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
+Flutter platform folders have been generated for macOS, Linux, web, Android,
+and iOS. To validate the shell locally:
 
 ```bash
 cd app
@@ -117,6 +124,33 @@ flutter build web
 flutter build macos --debug
 flutter run -d macos
 ```
+
+Root helper scripts are available for the most common local builds:
+
+```bash
+./build_runapp.sh          # macOS debug build, then launch
+./build_android_apk.sh     # Android debug APK
+./build_ios_debug.sh       # iOS device debug build without codesigning
+./build_ios_debug.sh simulator
+```
+
+The Android APK is written to:
+
+```text
+app/build/app/outputs/flutter-apk/app-debug.apk
+```
+
+The iOS debug builds are written to:
+
+```text
+app/build/ios/iphoneos/Runner.app
+app/build/ios/iphonesimulator/Runner.app
+```
+
+Mobile status:
+
+- Browser shell, home bookmarks, WebView browsing, policy prompts, local key generation/import, NIP-07 `signEvent`, and NIP-98 signing are mobile-ready.
+- Drive sync, device registration, channel validation, local file mounting, and NIP-44 encryption/decryption still use the desktop `wmapp-core` process path and need a mobile-native bridge in a later package.
 
 See:
 

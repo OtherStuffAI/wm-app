@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'app_config.dart';
+import 'nostr_crypto.dart';
 
 class NativeCoreBridge {
   String debugResolveRepoRoot() => _repoRoot();
@@ -90,19 +91,21 @@ class NativeCoreBridge {
   }
 
   Future<DeviceIdentity> generateDeviceKey() async {
-    final result = await _runCore(['device', 'generate', '--show-secret']);
-    if (!result.ok) {
-      throw StateError(result.error ?? 'device generation failed');
-    }
-    return DeviceIdentity.fromJson(result.json);
+    final identity = NostrCrypto.generateIdentity();
+    return DeviceIdentity(
+      npub: identity.npub,
+      publicKeyHex: identity.publicKeyHex,
+      nsec: identity.nsec,
+    );
   }
 
   Future<DeviceIdentity> importDeviceKey(String secret) async {
-    final result = await _runCore(['device', 'import', '--secret', secret]);
-    if (!result.ok) {
-      throw StateError(result.error ?? 'device import failed');
-    }
-    return DeviceIdentity.fromJson(result.json).copyWith(nsec: secret);
+    final identity = NostrCrypto.importIdentity(secret);
+    return DeviceIdentity(
+      npub: identity.npub,
+      publicKeyHex: identity.publicKeyHex,
+      nsec: secret,
+    );
   }
 
   Future<CoreCommandResult> registerDevice(AppConfig config) {
@@ -135,30 +138,49 @@ class NativeCoreBridge {
     required String method,
     required String url,
     String? body,
-  }) {
-    return _runCore([
-      'sign-nip98',
-      '--secret',
-      config.deviceSecret,
-      '--method',
-      method,
-      '--url',
-      url,
-      if (body != null) ...['--body', body],
-    ], config: config);
+  }) async {
+    try {
+      final signed = NostrCrypto.signNip98(
+        secret: config.deviceSecret,
+        method: method,
+        url: url,
+        body: body,
+      );
+      return CoreCommandResult(
+        ok: true,
+        json: {
+          'authorization': signed.authorization,
+          'event': signed.event,
+        },
+      );
+    } catch (error) {
+      return CoreCommandResult(
+        ok: false,
+        json: const {},
+        error: error.toString(),
+      );
+    }
   }
 
   Future<CoreCommandResult> signEvent({
     required AppConfig config,
     required Map<String, dynamic> event,
-  }) {
-    return _runCore([
-      'sign-event',
-      '--secret',
-      config.deviceSecret,
-      '--event',
-      jsonEncode(event),
-    ], config: config);
+  }) async {
+    try {
+      return CoreCommandResult(
+        ok: true,
+        json: NostrCrypto.signEvent(
+          secret: config.deviceSecret,
+          event: event,
+        ),
+      );
+    } catch (error) {
+      return CoreCommandResult(
+        ok: false,
+        json: const {},
+        error: error.toString(),
+      );
+    }
   }
 
   Future<CoreCommandResult> nip44Encrypt({
@@ -200,6 +222,15 @@ class NativeCoreBridge {
     AppConfig? config,
     String? signingSecret,
   }) async {
+    if (!_canRunCoreProcess) {
+      return CoreCommandResult(
+        ok: false,
+        json: const {},
+        error:
+            'wmapp-core local process is not available on ${Platform.operatingSystem} yet',
+      );
+    }
+
     final executable = Platform.environment['WMAPP_CORE_BIN'];
     final environment = <String, String>{
       if (config != null) ...{
@@ -283,6 +314,10 @@ class NativeCoreBridge {
     }
 
     return Directory.current.path;
+  }
+
+  bool get _canRunCoreProcess {
+    return Platform.isMacOS || Platform.isLinux || Platform.isWindows;
   }
 }
 
