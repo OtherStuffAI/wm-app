@@ -100,6 +100,11 @@ startup the Flutter shell imports `WINGMAN_NSEC`, derives the matching device
 
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
+macOS signer/browser development builds do not require macFUSE or `fuse.pc`.
+The Rust core uses fuser's `macos-no-mount` build mode on macOS so NIP-07 and
+NIP-98 signing can compile on a normal laptop. The kernel Drive mount remains a
+separate packaging target.
+
 When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wingmanbefree/wm-app`, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
 
 Flutter platform folders have been generated for macOS, Linux, and web. To validate the shell locally:
