@@ -13,12 +13,20 @@ class BrowserScreen extends StatefulWidget {
     required this.config,
     required this.bridge,
     required this.signerStore,
+    required this.onOpenDrawer,
+    required this.onOpenSetup,
+    required this.onOpenSigner,
+    required this.onOpenStatus,
     super.key,
   });
 
   final AppConfig config;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
+  final VoidCallback onOpenDrawer;
+  final VoidCallback onOpenSetup;
+  final VoidCallback onOpenSigner;
+  final VoidCallback onOpenStatus;
 
   @override
   State<BrowserScreen> createState() => _BrowserScreenState();
@@ -28,6 +36,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   final List<BrowserTab> _tabs = [];
   int _activeTabId = 0;
   int _nextTabId = 1;
+  bool _addressBarVisible = true;
   static const _nip44PolicyTarget = '*';
 
   @override
@@ -84,41 +93,57 @@ class _BrowserScreenState extends State<BrowserScreen> {
           bottom: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
       ),
-      child: SizedBox(
-        height: 40,
-        child: Row(
-          children: [
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.only(left: 8),
-                scrollDirection: Axis.horizontal,
-                itemCount: _tabs.length,
-                separatorBuilder: (context, index) => const SizedBox(width: 4),
-                itemBuilder: (context, index) {
-                  final tab = _tabs[index];
-                  final active = tab.id == _activeTabId;
-                  return _BrowserTabButton(
-                    title: tab.label,
-                    active: active,
-                    closeable: _tabs.length > 1,
-                    onPressed: () => _activateTab(tab.id),
-                    onClose: () => _closeTab(tab.id),
-                  );
-                },
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 42,
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Open menu',
+                onPressed: widget.onOpenDrawer,
+                icon: const Icon(Icons.menu),
               ),
-            ),
-            IconButton(
-              tooltip: 'New tab',
-              onPressed: () => _createTab(widget.config.flightDeckUrl),
-              icon: const Icon(Icons.add),
-            ),
-          ],
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.only(left: 4),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _tabs.length,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 4),
+                  itemBuilder: (context, index) {
+                    final tab = _tabs[index];
+                    final active = tab.id == _activeTabId;
+                    return _BrowserTabButton(
+                      title: tab.label,
+                      active: active,
+                      closeable: _tabs.length > 1,
+                      onPressed: () => _activateTab(tab.id),
+                      onClose: () => _closeTab(tab.id),
+                    );
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: 'New tab',
+                onPressed: () => _createTab(widget.config.flightDeckUrl),
+                icon: const Icon(Icons.add),
+              ),
+              _BrowserAvatarMenu(
+                deviceNpub: widget.config.deviceNpub,
+                onOpenSetup: widget.onOpenSetup,
+                onOpenSigner: widget.onOpenSigner,
+                onOpenStatus: widget.onOpenStatus,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildAddressBar(BuildContext context) {
+    if (!_addressBarVisible) return const SizedBox.shrink();
     final tab = _activeTab;
     final theme = Theme.of(context);
     return DecoratedBox(
@@ -213,15 +238,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
     setState(() {
       _tabs.add(tab);
-      if (activate) _activeTabId = id;
+      if (activate) {
+        _activeTabId = id;
+        _addressBarVisible = true;
+      }
     });
     _loadAddressForTab(tab, url);
   }
 
   void _activateTab(int id) {
-    if (_activeTabId == id) return;
+    if (_activeTabId == id) {
+      setState(() {
+        _addressBarVisible = true;
+      });
+      return;
+    }
     setState(() {
       _activeTabId = id;
+      _addressBarVisible = true;
     });
     _refreshNavigationState(_activeTab);
   }
@@ -237,6 +271,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _tabs.removeAt(index);
       _activeTabId = nextActiveId;
+      _addressBarVisible = true;
     });
     removed.dispose();
   }
@@ -270,10 +305,14 @@ class _BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _loadAddress(String value) {
-    _loadAddressForTab(_activeTab, value);
+    _loadAddressForTab(_activeTab, value, hideAddressBarAfterLoad: true);
   }
 
-  void _loadAddressForTab(BrowserTab tab, String value) {
+  void _loadAddressForTab(
+    BrowserTab tab,
+    String value, {
+    bool hideAddressBarAfterLoad = false,
+  }) {
     final normalized = _normalizeAddress(value);
     final uri = Uri.tryParse(normalized);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
@@ -287,6 +326,9 @@ class _BrowserScreenState extends State<BrowserScreen> {
       tab.addressController.text = tab.currentUrl!;
       tab.title = _titleForUrl(tab.currentUrl!);
       tab.message = null;
+      if (hideAddressBarAfterLoad) {
+        _addressBarVisible = false;
+      }
     });
     tab.controller.loadRequest(uri);
   }
@@ -341,6 +383,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
           title?.trim().isNotEmpty == true ? title!.trim() : _titleForUrl(url);
     });
     await _refreshNavigationState(tab);
+    await _injectTabCapture(tab);
     await _injectIfTrusted(tab);
   }
 
@@ -1107,6 +1150,56 @@ class _BrowserScreenState extends State<BrowserScreen> {
     );
   }
 
+  Future<void> _injectTabCapture(BrowserTab tab) async {
+    await tab.controller.runJavaScript(_tabCaptureScript());
+  }
+
+  String _tabCaptureScript() {
+    return '''
+(() => {
+  if (window.__wingmanTabCapture) return;
+  window.__wingmanTabCapture = true;
+  let seq = 0;
+  function openWingmanTab(rawUrl) {
+    if (!rawUrl || !window.WingmanSigner) return Promise.resolve(false);
+    let href;
+    try {
+      href = new URL(String(rawUrl), window.location.href).href;
+    } catch (_) {
+      return Promise.resolve(false);
+    }
+    const id = `tab-\${++seq}`;
+    WingmanSigner.postMessage(JSON.stringify({
+      id,
+      method: 'openTab',
+      params: { url: href },
+    }));
+    return Promise.resolve(true);
+  }
+  const originalWindowOpen = window.open ? window.open.bind(window) : null;
+  window.open = (url, target, features) => {
+    const normalizedTarget = String(target || '_blank').toLowerCase();
+    if (normalizedTarget !== '_self') {
+      openWingmanTab(url);
+      return null;
+    }
+    if (originalWindowOpen) return originalWindowOpen(url, target, features);
+    if (url) window.location.href = String(url);
+    return null;
+  };
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    const anchor = target && target.closest ? target.closest('a[href]') : null;
+    if (!anchor) return;
+    const linkTarget = String(anchor.getAttribute('target') || '').toLowerCase();
+    if (!linkTarget || linkTarget === '_self') return;
+    event.preventDefault();
+    openWingmanTab(anchor.href);
+  }, true);
+})();
+''';
+  }
+
   String _bridgeScript(String devicePublicKeyHex) {
     final escapedPublicKey =
         devicePublicKeyHex.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
@@ -1131,36 +1224,6 @@ class _BrowserScreenState extends State<BrowserScreen> {
     WingmanSigner.postMessage(message);
     return promise;
   }
-  function openWingmanTab(rawUrl) {
-    if (!rawUrl) return Promise.resolve(false);
-    let href;
-    try {
-      href = new URL(String(rawUrl), window.location.href).href;
-    } catch (_) {
-      return Promise.resolve(false);
-    }
-    return callNative('openTab', { url: href }).catch(() => false);
-  }
-  const originalWindowOpen = window.open ? window.open.bind(window) : null;
-  window.open = (url, target, features) => {
-    const normalizedTarget = String(target || '_blank').toLowerCase();
-    if (normalizedTarget !== '_self') {
-      openWingmanTab(url);
-      return null;
-    }
-    if (originalWindowOpen) return originalWindowOpen(url, target, features);
-    if (url) window.location.href = String(url);
-    return null;
-  };
-  document.addEventListener('click', (event) => {
-    const target = event.target;
-    const anchor = target && target.closest ? target.closest('a[href]') : null;
-    if (!anchor) return;
-    const linkTarget = String(anchor.getAttribute('target') || '').toLowerCase();
-    if (!linkTarget || linkTarget === '_self') return;
-    event.preventDefault();
-    openWingmanTab(anchor.href);
-  }, true);
   window.nostr = {
     __wingman: true,
     getPublicKey: () => callNative('getPublicKey').then((value) => value || "$escapedPublicKey"),
@@ -1258,6 +1321,76 @@ class _BrowserTabButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BrowserAvatarMenu extends StatelessWidget {
+  const _BrowserAvatarMenu({
+    required this.deviceNpub,
+    required this.onOpenSetup,
+    required this.onOpenSigner,
+    required this.onOpenStatus,
+  });
+
+  final String deviceNpub;
+  final VoidCallback onOpenSetup;
+  final VoidCallback onOpenSigner;
+  final VoidCallback onOpenStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_BrowserAvatarAction>(
+      tooltip: 'Account',
+      icon: CircleAvatar(
+        radius: 15,
+        child: Text(_avatarLabel),
+      ),
+      onSelected: (action) {
+        switch (action) {
+          case _BrowserAvatarAction.setup:
+            onOpenSetup();
+          case _BrowserAvatarAction.signer:
+            onOpenSigner();
+          case _BrowserAvatarAction.status:
+            onOpenStatus();
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          value: _BrowserAvatarAction.setup,
+          child: ListTile(
+            leading: Icon(Icons.tune),
+            title: Text('Setup'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _BrowserAvatarAction.signer,
+          child: ListTile(
+            leading: Icon(Icons.shield_outlined),
+            title: Text('Signer'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _BrowserAvatarAction.status,
+          child: ListTile(
+            leading: Icon(Icons.monitor_heart_outlined),
+            title: Text('Status'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String get _avatarLabel {
+    final trimmed = deviceNpub.trim();
+    if (trimmed.isEmpty) return 'W';
+    return trimmed.substring(0, 1).toUpperCase();
+  }
+}
+
+enum _BrowserAvatarAction {
+  setup,
+  signer,
+  status,
 }
 
 class BrowserTab {
