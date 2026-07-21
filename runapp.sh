@@ -6,6 +6,7 @@ APP_DIR="$REPO_DIR/app"
 APP_BUNDLE="$APP_DIR/build/macos/Build/Products/Debug/wingman_app.app"
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/wingman_app"
 LOG_FILE="${TMPDIR:-/tmp}/wingman_app.log"
+ENV_FILE="$REPO_DIR/.env.local"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "runapp.sh currently launches the macOS Flutter build only." >&2
@@ -18,6 +19,13 @@ if [[ ! -x "$APP_EXECUTABLE" ]]; then
   echo >&2
   echo "Run ./build_runapp.sh first." >&2
   exit 1
+fi
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
 fi
 
 echo "Starting Wingman app..."

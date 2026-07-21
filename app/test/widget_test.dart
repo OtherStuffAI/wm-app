@@ -10,7 +10,9 @@ void main() {
   });
 
   testWidgets('Wingman shell renders primary tabs', (tester) async {
-    await tester.pumpWidget(const WingmanApp());
+    await tester.pumpWidget(
+      const WingmanApp(seedDeviceKeyFromEnvironment: false),
+    );
 
     expect(find.text('Setup'), findsAtLeastNWidgets(1));
     expect(find.text('Drive'), findsAtLeastNWidgets(1));

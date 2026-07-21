@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 
 import 'core/app_config.dart';
 import 'core/native_core_bridge.dart';
+import 'core/runtime_environment.dart';
 import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 
 class WingmanApp extends StatefulWidget {
-  const WingmanApp({super.key});
+  const WingmanApp({
+    this.seedDeviceKeyFromEnvironment = true,
+    super.key,
+  });
+
+  final bool seedDeviceKeyFromEnvironment;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -17,10 +23,39 @@ class _WingmanAppState extends State<WingmanApp> {
   late final NativeCoreBridge _bridge = NativeCoreBridge();
   late final SignerStore _signerStore = SignerStore();
 
+  @override
+  void initState() {
+    super.initState();
+    if (widget.seedDeviceKeyFromEnvironment) {
+      _seedDeviceKeyFromEnvironment();
+    }
+  }
+
   void _updateConfig(AppConfig config) {
     setState(() {
       _config = config;
     });
+  }
+
+  Future<void> _seedDeviceKeyFromEnvironment() async {
+    final secret = RuntimeEnvironment.wingmanSecret?.trim();
+    if (secret == null || secret.isEmpty) return;
+
+    try {
+      final identity = await _bridge.importDeviceKey(secret);
+      if (!mounted) return;
+      setState(() {
+        _config = _config.copyWith(
+          deviceSecret: secret,
+          deviceNpub: identity.npub,
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _config = _config.copyWith(deviceSecret: secret);
+      });
+    }
   }
 
   @override

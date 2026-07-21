@@ -63,6 +63,32 @@ Fresh dev builds default to Pete's Wingman App channel and the hosted signer tes
 - Browser URL: `https://kind-net-duck.rick.runwingman.com/signer-test.html`
 - Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, and `near-tea-crab.rick.runwingman.com`
 
+For a laptop development signer, keep the private key in an ignored root
+`.env.local` file:
+
+```bash
+cd ~/code/wm-app
+cp .env.local.example .env.local
+$EDITOR .env.local
+```
+
+Set:
+
+```bash
+export WINGMAN_NSEC="<your-nsec-or-hex-secret-key>"
+```
+
+Then launch through the root helper scripts:
+
+```bash
+./build_runapp.sh  # pull, fetch deps, build, launch
+./runapp.sh        # launch the existing macOS build
+```
+
+`runapp.sh` sources `.env.local` and passes `WMAPP_REPO_DIR` to the app. On
+startup the Flutter shell imports `WINGMAN_NSEC`, derives the matching device
+`npub`, and uses that identity for the browser signer and NIP-98 calls.
+
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
 When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wingmanbefree/wm-app`, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
