@@ -302,6 +302,18 @@ class _BrowserScreenState extends State<BrowserScreen> {
     return Uri.https('njump.me', '/', {'q': trimmed}).toString();
   }
 
+  String? _normalizeOpenTabUrl(String value, String baseUrl) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme && parsed.host.isNotEmpty) {
+      return parsed.toString();
+    }
+    final base = Uri.tryParse(baseUrl);
+    if (base == null || !base.hasScheme || base.host.isEmpty) return null;
+    return base.resolve(trimmed).toString();
+  }
+
   String _titleForUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.host.isEmpty) return 'New tab';
@@ -358,6 +370,28 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final requestId = payload['id']?.toString() ?? '';
     final method = payload['method']?.toString() ?? '';
     if (requestId.isEmpty || method.isEmpty) return;
+
+    if (method == 'openTab') {
+      final params = payload['params'] is Map<String, dynamic>
+          ? payload['params'] as Map<String, dynamic>
+          : <String, dynamic>{};
+      final url = params['url']?.toString() ?? '';
+      final normalized = _normalizeOpenTabUrl(
+        url,
+        tab.currentUrl ?? widget.config.flightDeckUrl,
+      );
+      if (normalized == null) {
+        await _resolveSignerRequest(
+          tab,
+          requestId,
+          {'error': 'invalid new tab URL'},
+        );
+        return;
+      }
+      _createTab(normalized);
+      await _resolveSignerRequest(tab, requestId, {'result': true});
+      return;
+    }
 
     if (method == 'getPublicKey') {
       await _resolveSignerRequest(
@@ -1097,6 +1131,36 @@ class _BrowserScreenState extends State<BrowserScreen> {
     WingmanSigner.postMessage(message);
     return promise;
   }
+  function openWingmanTab(rawUrl) {
+    if (!rawUrl) return Promise.resolve(false);
+    let href;
+    try {
+      href = new URL(String(rawUrl), window.location.href).href;
+    } catch (_) {
+      return Promise.resolve(false);
+    }
+    return callNative('openTab', { url: href }).catch(() => false);
+  }
+  const originalWindowOpen = window.open ? window.open.bind(window) : null;
+  window.open = (url, target, features) => {
+    const normalizedTarget = String(target || '_blank').toLowerCase();
+    if (normalizedTarget !== '_self') {
+      openWingmanTab(url);
+      return null;
+    }
+    if (originalWindowOpen) return originalWindowOpen(url, target, features);
+    if (url) window.location.href = String(url);
+    return null;
+  };
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    const anchor = target && target.closest ? target.closest('a[href]') : null;
+    if (!anchor) return;
+    const linkTarget = String(anchor.getAttribute('target') || '').toLowerCase();
+    if (!linkTarget || linkTarget === '_self') return;
+    event.preventDefault();
+    openWingmanTab(anchor.href);
+  }, true);
   window.nostr = {
     __wingman: true,
     getPublicKey: () => callNative('getPublicKey').then((value) => value || "$escapedPublicKey"),

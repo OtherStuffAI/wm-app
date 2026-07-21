@@ -107,8 +107,15 @@
         <button id="pubkey" class="secondary">Get public key</button>
         <button id="sign-event" class="secondary">Sign Nostr event</button>
         <button id="nip44" class="secondary">NIP-44 round trip</button>
+        <button id="new-window" class="secondary">Open test tab</button>
         <button id="sign">Sign NIP-98 GET</button>
       </div>
+
+      <p>
+        <a href="https://example.com/" target="_blank" rel="noreferrer">
+          Target blank test link
+        </a>
+      </p>
 
       <pre id="output">Ready.</pre>
     </main>
@@ -201,6 +208,11 @@
         } catch (error) {
           write(String(error && error.message ? error.message : error));
         }
+      });
+
+      document.querySelector("#new-window").addEventListener("click", () => {
+        window.open("https://example.com/", "_blank");
+        write("Requested a new Wingman browser tab.");
       });
     </script>
   </body>
