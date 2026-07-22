@@ -46,9 +46,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
   static const _homeTitle = 'Wingman Home';
   static const _rickAutopilotUrl = 'https://rick.runwingman.com';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
+  static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   String? _lastWebStateSignerNpub;
+  Timer? _persistTabsTimer;
   bool _clearingWebState = false;
+  bool _restoringTabs = false;
 
   @override
   void initState() {
@@ -61,7 +64,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   void didUpdateWidget(covariant BrowserScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
-      _syncWebStateToSigner();
+      unawaited(_switchSignerTabs(oldWidget.config.deviceNpub));
     }
     if (oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
       _loadConfiguredUrl();
@@ -70,6 +73,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
+    unawaited(_persistTabsNow());
+    _persistTabsTimer?.cancel();
     _addressBarHideTimer?.cancel();
     for (final tab in _tabs) {
       tab.dispose();
@@ -248,7 +253,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
       );
   }
 
-  void _createTab(String url, {bool activate = true}) {
+  void _createTab(
+    String url, {
+    bool activate = true,
+    bool persistState = true,
+  }) {
     final id = _nextTabId++;
     late final BrowserTab tab;
     final controller = _createWebViewController(id);
@@ -270,9 +279,13 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadAddressForTab(tab, url);
+    if (persistState) _schedulePersistTabs();
   }
 
-  void _createHomeTab({bool activate = true}) {
+  void _createHomeTab({
+    bool activate = true,
+    bool persistState = true,
+  }) {
     final id = _nextTabId++;
     late final BrowserTab tab;
     final controller = _createWebViewController(id);
@@ -295,6 +308,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadHomeForTab(tab);
+    if (persistState) _schedulePersistTabs();
   }
 
   void _activateTab(int id) {
@@ -307,6 +321,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     });
     _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
+    _schedulePersistTabs();
   }
 
   void _closeTab(int id) {
@@ -323,10 +338,17 @@ class _BrowserScreenState extends State<BrowserScreen> {
     });
     _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
+    _schedulePersistTabs();
   }
 
   void _loadConfiguredUrl() {
     _loadAddress(widget.config.flightDeckUrl);
+  }
+
+  Future<void> _switchSignerTabs(String previousSignerNpub) async {
+    await _persistTabsForSigner(previousSignerNpub);
+    if (!mounted) return;
+    await _syncWebStateToSigner();
   }
 
   Future<void> _syncWebStateToSigner({
@@ -339,7 +361,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
     final preferences = SharedPreferencesAsync();
     final previousSignerNpub = await preferences.getString(_browserSignerKey);
     if (!mounted) return;
-    if (previousSignerNpub == signerNpub) return;
+    if (previousSignerNpub == signerNpub) {
+      await _restoreTabsForSigner(signerNpub);
+      return;
+    }
 
     await _clearWebState(
       resetTabs: resetTabsOnChange &&
@@ -347,6 +372,12 @@ class _BrowserScreenState extends State<BrowserScreen> {
           previousSignerNpub.isNotEmpty,
     );
     await preferences.setString(_browserSignerKey, signerNpub);
+    await _restoreTabsForSigner(
+      signerNpub,
+      resetToHomeWhenMissing: previousSignerNpub != null &&
+          previousSignerNpub.isNotEmpty &&
+          previousSignerNpub != signerNpub,
+    );
   }
 
   Future<void> _clearWebState({required bool resetTabs}) async {
@@ -369,6 +400,11 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _clearingWebState = false;
     }
     if (!mounted || !resetTabs) return;
+    _resetTabsToHome(persistState: false);
+  }
+
+  void _resetTabsToHome({required bool persistState}) {
+    final tabs = List<BrowserTab>.from(_tabs);
     for (final tab in tabs) {
       tab.dispose();
     }
@@ -379,7 +415,104 @@ class _BrowserScreenState extends State<BrowserScreen> {
       _addressBarVisible = false;
       _addressBarHideTimer?.cancel();
     });
-    _createHomeTab(activate: true);
+    final wasRestoringTabs = _restoringTabs;
+    if (!persistState) _restoringTabs = true;
+    _createHomeTab(activate: true, persistState: persistState);
+    _restoringTabs = wasRestoringTabs;
+  }
+
+  Future<void> _restoreTabsForSigner(
+    String signerNpub, {
+    bool resetToHomeWhenMissing = false,
+  }) async {
+    final key = _tabsStorageKey(signerNpub);
+    if (key == null) {
+      if (resetToHomeWhenMissing) {
+        _resetTabsToHome(persistState: true);
+      }
+      return;
+    }
+    final raw = await SharedPreferencesAsync().getString(key);
+    if (!mounted) return;
+    final snapshot = _BrowserTabsSnapshot.tryParse(raw);
+    if (snapshot == null || snapshot.tabs.isEmpty) {
+      if (resetToHomeWhenMissing) {
+        _resetTabsToHome(persistState: true);
+      }
+      return;
+    }
+
+    _restoringTabs = true;
+    final oldTabs = List<BrowserTab>.from(_tabs);
+    for (final tab in oldTabs) {
+      tab.dispose();
+    }
+    setState(() {
+      _tabs.clear();
+      _activeTabId = 0;
+      _nextTabId = 1;
+      _addressBarVisible = false;
+      _addressBarHideTimer?.cancel();
+    });
+
+    for (final tab in snapshot.tabs) {
+      if (tab.isHome || tab.url == null || tab.url!.isEmpty) {
+        _createHomeTab(activate: false, persistState: false);
+      } else {
+        _createTab(tab.url!, activate: false, persistState: false);
+      }
+      final restored = _tabs.last;
+      if (tab.title != null && tab.title!.trim().isNotEmpty) {
+        restored.title = tab.title!.trim();
+      }
+    }
+
+    final activeIndex = snapshot.activeIndex.clamp(0, _tabs.length - 1).toInt();
+    setState(() {
+      _activeTabId = _tabs[activeIndex].id;
+    });
+    _restoringTabs = false;
+  }
+
+  void _schedulePersistTabs() {
+    if (_restoringTabs) return;
+    _persistTabsTimer?.cancel();
+    _persistTabsTimer = Timer(const Duration(milliseconds: 100), () {
+      unawaited(_persistTabsNow());
+    });
+  }
+
+  Future<void> _persistTabsNow() {
+    return _persistTabsForSigner(widget.config.deviceNpub);
+  }
+
+  Future<void> _persistTabsForSigner(String signerNpub) async {
+    if (_restoringTabs) return;
+    final key = _tabsStorageKey(signerNpub);
+    if (key == null || _tabs.isEmpty) return;
+    final snapshot = _BrowserTabsSnapshot(
+      activeIndex: _activeTabIndex,
+      tabs: [
+        for (final tab in _tabs)
+          _BrowserTabSnapshot(
+            title: tab.title,
+            url: tab.isHome
+                ? null
+                : (tab.currentUrl ?? tab.addressController.text).trim(),
+            isHome: tab.isHome,
+          ),
+      ],
+    );
+    await SharedPreferencesAsync().setString(
+      key,
+      jsonEncode(snapshot.toJson()),
+    );
+  }
+
+  String? _tabsStorageKey(String signerNpub) {
+    final normalized = signerNpub.trim();
+    if (normalized.isEmpty) return null;
+    return '$_browserTabsKeyPrefix$normalized';
   }
 
   void _reload() {
@@ -440,6 +573,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       }
     });
     tab.controller.loadRequest(uri);
+    _schedulePersistTabs();
   }
 
   void _loadHomeForTab(BrowserTab tab) {
@@ -457,6 +591,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       ),
       baseUrl: 'https://wingman.local/',
     );
+    _schedulePersistTabs();
   }
 
   void _onAddressFocusChanged(int tabId) {
@@ -571,6 +706,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     await _refreshNavigationState(tab);
     await _injectTabCapture(tab);
     await _injectIfTrusted(tab);
+    _schedulePersistTabs();
   }
 
   String _homePageHtml({
@@ -1726,6 +1862,78 @@ class _HomeBookmark {
   final String label;
   final String url;
   final String description;
+}
+
+class _BrowserTabsSnapshot {
+  const _BrowserTabsSnapshot({
+    required this.activeIndex,
+    required this.tabs,
+  });
+
+  final int activeIndex;
+  final List<_BrowserTabSnapshot> tabs;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'version': 1,
+      'active_index': activeIndex,
+      'tabs': [for (final tab in tabs) tab.toJson()],
+    };
+  }
+
+  static _BrowserTabsSnapshot? tryParse(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map<String, dynamic>) return null;
+      final tabsValue = decoded['tabs'];
+      if (tabsValue is! List) return null;
+      final tabs = [
+        for (final rawTab in tabsValue)
+          if (rawTab is Map<String, dynamic>)
+            _BrowserTabSnapshot.tryParse(rawTab),
+      ].whereType<_BrowserTabSnapshot>().toList(growable: false);
+      if (tabs.isEmpty) return null;
+      return _BrowserTabsSnapshot(
+        activeIndex:
+            decoded['active_index'] is int ? decoded['active_index'] as int : 0,
+        tabs: tabs,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _BrowserTabSnapshot {
+  const _BrowserTabSnapshot({
+    required this.title,
+    required this.url,
+    required this.isHome,
+  });
+
+  final String? title;
+  final String? url;
+  final bool isHome;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'title': title,
+      'url': url,
+      'is_home': isHome,
+    };
+  }
+
+  static _BrowserTabSnapshot? tryParse(Map<String, dynamic> value) {
+    final isHome = value['is_home'] == true;
+    final url = value['url']?.toString().trim();
+    if (!isHome && (url == null || url.isEmpty)) return null;
+    return _BrowserTabSnapshot(
+      title: value['title']?.toString(),
+      url: url == null || url.isEmpty ? null : url,
+      isHome: isHome,
+    );
+  }
 }
 
 class BrowserTab {

@@ -3,10 +3,12 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 final fakeLoadedHtmlStrings = <String>[];
+final fakeLoadedRequestUrls = <String>[];
 int fakeClearCookieCalls = 0;
 
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
+  fakeLoadedRequestUrls.clear();
   fakeClearCookieCalls = 0;
   WebViewPlatform.instance = _FakeWebViewPlatform();
 }
@@ -74,6 +76,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController
     );
     if (decision == NavigationDecision.prevent) return;
     _currentUrl = url;
+    fakeLoadedRequestUrls.add(url);
     _navigationDelegate?.finish(_currentUrl!);
   }
 

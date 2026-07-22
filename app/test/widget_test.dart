@@ -104,6 +104,58 @@ void main() {
     expect(await preferences.getString(profileKey), 'npub-new');
   });
 
+  testWidgets('Wingman shell restores browser tabs for the current signer',
+      (tester) async {
+    final config = AppConfig.defaults().copyWith(
+      deviceSecret: 'nsec-placeholder',
+      deviceNpub: 'npub-tabs',
+      devicePublicKeyHex: 'abcdef',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(TextField),
+      'https://rick.runwingman.com',
+    );
+    await tester.tap(find.byTooltip('Go'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(find.text('rick.runwingman.com'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 200));
+    installFakeWebViewPlatform();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(find.text('rick.runwingman.com'), findsOneWidget);
+    expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+  });
+
   testWidgets('Wingman app prompts for signer vault on first launch',
       (tester) async {
     await tester.pumpWidget(
