@@ -8,6 +8,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
+import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
 import 'signer_store.dart';
 
@@ -49,7 +50,9 @@ class BrowserScreenState extends State<BrowserScreen> {
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
+  final NostrProfileStore _profileStore = NostrProfileStore();
   String? _lastWebStateSignerNpub;
+  NostrProfile _profile = const NostrProfile();
   Timer? _persistTabsTimer;
   bool _clearingWebState = false;
   bool _restoringTabs = false;
@@ -59,6 +62,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
     _createFlightDeckTab(activate: true, loadAfterFrame: true);
+    unawaited(_loadProfile());
     _syncWebStateToSigner(resetTabsOnChange: false);
   }
 
@@ -66,6 +70,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   void didUpdateWidget(covariant BrowserScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
+      unawaited(_loadProfile());
       unawaited(_switchSignerTabs(oldWidget.config.deviceNpub));
     }
     if (oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
@@ -182,6 +187,8 @@ class BrowserScreenState extends State<BrowserScreen> {
               ),
               _BrowserAvatarMenu(
                 deviceNpub: widget.config.deviceNpub,
+                profile: _profile,
+                onEditProfile: _editProfile,
                 onOpenSetup: widget.onOpenSetup,
                 onOpenSigner: widget.onOpenSigner,
                 onOpenStatus: widget.onOpenStatus,
@@ -268,6 +275,32 @@ class BrowserScreenState extends State<BrowserScreen> {
       if (tab.id == id) return tab;
     }
     return null;
+  }
+
+  Future<void> _loadProfile() async {
+    final deviceNpub = widget.config.deviceNpub;
+    final profile = await _profileStore.load(deviceNpub);
+    if (!mounted || widget.config.deviceNpub != deviceNpub) return;
+    setState(() {
+      _profile = profile;
+    });
+  }
+
+  Future<void> _editProfile() async {
+    final deviceNpub = widget.config.deviceNpub;
+    final profile = await showDialog<NostrProfile>(
+      context: context,
+      builder: (context) => _EditNostrProfileDialog(
+        deviceNpub: deviceNpub,
+        profile: _profile,
+      ),
+    );
+    if (profile == null) return;
+    await _profileStore.save(deviceNpub, profile);
+    if (!mounted || widget.config.deviceNpub != deviceNpub) return;
+    setState(() {
+      _profile = profile;
+    });
   }
 
   bool _handleKeyboardEvent(KeyEvent event) {
@@ -1957,26 +1990,38 @@ class _BrowserTabButton extends StatelessWidget {
 class _BrowserAvatarMenu extends StatelessWidget {
   const _BrowserAvatarMenu({
     required this.deviceNpub,
+    required this.profile,
+    required this.onEditProfile,
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
   });
 
   final String deviceNpub;
+  final NostrProfile profile;
+  final VoidCallback onEditProfile;
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
 
   @override
   Widget build(BuildContext context) {
+    final label = profile.labelFor(deviceNpub);
     return PopupMenuButton<_BrowserAvatarAction>(
-      tooltip: 'Account',
-      icon: CircleAvatar(
-        radius: 15,
-        child: Text(_avatarLabel),
+      tooltip: 'Profile',
+      offset: const Offset(0, 8),
+      child: Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: _BrowserProfileChip(
+          label: label,
+          npub: deviceNpub,
+          profile: profile,
+        ),
       ),
       onSelected: (action) {
         switch (action) {
+          case _BrowserAvatarAction.editProfile:
+            onEditProfile();
           case _BrowserAvatarAction.setup:
             onOpenSetup();
           case _BrowserAvatarAction.signer:
@@ -1985,22 +2030,48 @@ class _BrowserAvatarMenu extends StatelessWidget {
             onOpenStatus();
         }
       },
-      itemBuilder: (context) => const [
+      itemBuilder: (context) => [
         PopupMenuItem(
+          enabled: false,
+          child: SizedBox(
+            width: 280,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _ProfileAvatar(profile: profile, label: label),
+              title: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                _shortNpub(deviceNpub),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: _BrowserAvatarAction.editProfile,
+          child: ListTile(
+            leading: Icon(Icons.person_outline),
+            title: Text('Edit Nostr profile'),
+          ),
+        ),
+        const PopupMenuItem(
           value: _BrowserAvatarAction.setup,
           child: ListTile(
             leading: Icon(Icons.tune),
             title: Text('Setup'),
           ),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _BrowserAvatarAction.signer,
           child: ListTile(
             leading: Icon(Icons.shield_outlined),
             title: Text('Signer'),
           ),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _BrowserAvatarAction.status,
           child: ListTile(
             leading: Icon(Icons.monitor_heart_outlined),
@@ -2010,18 +2081,276 @@ class _BrowserAvatarMenu extends StatelessWidget {
       ],
     );
   }
+}
 
-  String get _avatarLabel {
-    final trimmed = deviceNpub.trim();
-    if (trimmed.isEmpty) return 'W';
-    return trimmed.substring(0, 1).toUpperCase();
+class _BrowserProfileChip extends StatelessWidget {
+  const _BrowserProfileChip({
+    required this.label,
+    required this.npub,
+    required this.profile,
+  });
+
+  final String label;
+  final String npub;
+  final NostrProfile profile;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 168),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: colors.outlineVariant),
+          color: colors.surface,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ProfileAvatar(profile: profile, label: label, radius: 15),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
 enum _BrowserAvatarAction {
+  editProfile,
   setup,
   signer,
   status,
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({
+    required this.profile,
+    required this.label,
+    this.radius = 20,
+  });
+
+  final NostrProfile profile;
+  final String label;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarUrl = profile.avatarUrl;
+    final fallback = CircleAvatar(
+      radius: radius,
+      child: Text(_initials(label)),
+    );
+    if (avatarUrl.isEmpty) return fallback;
+    return ClipOval(
+      child: Image.network(
+        avatarUrl,
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => fallback,
+      ),
+    );
+  }
+
+  String _initials(String value) {
+    final words = value
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList(growable: false);
+    if (words.isEmpty) return 'W';
+    if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
+    return '${words[0][0]}${words[1][0]}'.toUpperCase();
+  }
+}
+
+String _shortNpub(String npub) {
+  final normalized = npub.trim();
+  if (normalized.length <= 18) {
+    return normalized.isEmpty ? 'No signer' : normalized;
+  }
+  return '${normalized.substring(0, 10)}...${normalized.substring(normalized.length - 6)}';
+}
+
+class _EditNostrProfileDialog extends StatefulWidget {
+  const _EditNostrProfileDialog({
+    required this.deviceNpub,
+    required this.profile,
+  });
+
+  final String deviceNpub;
+  final NostrProfile profile;
+
+  @override
+  State<_EditNostrProfileDialog> createState() =>
+      _EditNostrProfileDialogState();
+}
+
+class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
+  late final TextEditingController _displayNameController;
+  late final TextEditingController _nameController;
+  late final TextEditingController _pictureController;
+  late final TextEditingController _nip05Controller;
+  late final TextEditingController _websiteController;
+  late final TextEditingController _aboutController;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayNameController =
+        TextEditingController(text: widget.profile.displayName);
+    _nameController = TextEditingController(text: widget.profile.name);
+    _pictureController = TextEditingController(text: widget.profile.pictureUrl);
+    _nip05Controller = TextEditingController(text: widget.profile.nip05);
+    _websiteController = TextEditingController(text: widget.profile.website);
+    _aboutController = TextEditingController(text: widget.profile.about);
+  }
+
+  @override
+  void dispose() {
+    _displayNameController.dispose();
+    _nameController.dispose();
+    _pictureController.dispose();
+    _nip05Controller.dispose();
+    _websiteController.dispose();
+    _aboutController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = _currentProfile();
+    final label = preview.labelFor(widget.deviceNpub);
+    return AlertDialog(
+      title: const Text('Edit Nostr profile'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  _ProfileAvatar(profile: preview, label: label, radius: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(
+                          _shortNpub(widget.deviceNpub),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _field(
+                controller: _displayNameController,
+                label: 'Display name',
+                icon: Icons.badge_outlined,
+              ),
+              _field(
+                controller: _nameController,
+                label: 'Username',
+                icon: Icons.alternate_email,
+              ),
+              _field(
+                controller: _pictureController,
+                label: 'Avatar URL',
+                icon: Icons.image_outlined,
+              ),
+              _field(
+                controller: _nip05Controller,
+                label: 'NIP-05',
+                icon: Icons.verified_outlined,
+              ),
+              _field(
+                controller: _websiteController,
+                label: 'Website',
+                icon: Icons.link,
+              ),
+              _field(
+                controller: _aboutController,
+                label: 'About',
+                icon: Icons.notes_outlined,
+                maxLines: 3,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: () => Navigator.of(context).pop(_currentProfile()),
+          icon: const Icon(Icons.save_outlined),
+          label: const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  Widget _field({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    int maxLines = 1,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        maxLines: maxLines,
+        onChanged: (_) => setState(() {}),
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          prefixIcon: Icon(icon),
+          labelText: label,
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  NostrProfile _currentProfile() {
+    return NostrProfile(
+      displayName: _displayNameController.text.trim(),
+      name: _nameController.text.trim(),
+      pictureUrl: _pictureController.text.trim(),
+      nip05: _nip05Controller.text.trim(),
+      website: _websiteController.text.trim(),
+      about: _aboutController.text.trim(),
+    );
+  }
 }
 
 class _HomeBookmark {

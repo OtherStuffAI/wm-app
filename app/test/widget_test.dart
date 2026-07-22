@@ -35,7 +35,7 @@ void main() {
     await tester.pump();
 
     expect(find.byTooltip('New tab'), findsOneWidget);
-    expect(find.byTooltip('Account'), findsOneWidget);
+    expect(find.byTooltip('Profile'), findsOneWidget);
     expect(find.byTooltip('Back'), findsNothing);
     expect(find.text('Flight Deck'), findsOneWidget);
     expect(
@@ -87,7 +87,7 @@ void main() {
 
     await tester.tapAt(const Offset(500, 300));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Account'));
+    await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();
 
     expect(find.text('Setup'), findsOneWidget);
@@ -227,6 +227,62 @@ void main() {
     expect(activeBrowserStackIndex(tester), 1);
   });
 
+  testWidgets('Wingman browser edits and persists local Nostr profile',
+      (tester) async {
+    final config = AppConfig.defaults().copyWith(
+      deviceSecret: 'nsec-placeholder',
+      deviceNpub: 'npub-profile',
+      devicePublicKeyHex: 'abcdef',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit Nostr profile'));
+    await tester.pumpAndSettle();
+
+    final displayNameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Display name',
+    );
+    expect(displayNameField, findsOneWidget);
+
+    await tester.enterText(displayNameField, 'Pete Winn');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pete Winn'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    installFakeWebViewPlatform();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pete Winn'), findsOneWidget);
+  });
+
   testWidgets('Wingman app persists the Flight Deck URL setting',
       (tester) async {
     await tester.pumpWidget(
@@ -234,7 +290,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Account'));
+    await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Setup'));
     await tester.pumpAndSettle();
