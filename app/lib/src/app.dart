@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 
 import 'core/app_config.dart';
 import 'core/native_core_bridge.dart';
-import 'core/runtime_environment.dart';
+import 'core/signer_vault.dart';
 import 'features/browser/signer_store.dart';
+import 'features/onboarding/signer_onboarding_screen.dart';
 import 'features/shell/shell_home.dart';
 
 class WingmanApp extends StatefulWidget {
   const WingmanApp({
-    this.seedDeviceKeyFromEnvironment = true,
+    this.useSignerVault = true,
+    this.signerVault,
     super.key,
   });
 
-  final bool seedDeviceKeyFromEnvironment;
+  final bool useSignerVault;
+  final SignerVault? signerVault;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -22,13 +25,14 @@ class _WingmanAppState extends State<WingmanApp> {
   AppConfig _config = AppConfig.defaults();
   late final NativeCoreBridge _bridge = NativeCoreBridge();
   late final SignerStore _signerStore = SignerStore();
+  late final SignerVault _signerVault = widget.signerVault ?? SignerVault();
+  SignerVaultRecord? _vaultRecord;
+  bool _checkingVault = true;
 
   @override
   void initState() {
     super.initState();
-    if (widget.seedDeviceKeyFromEnvironment) {
-      _seedDeviceKeyFromEnvironment();
-    }
+    _loadSignerVault();
   }
 
   void _updateConfig(AppConfig config) {
@@ -37,26 +41,29 @@ class _WingmanAppState extends State<WingmanApp> {
     });
   }
 
-  Future<void> _seedDeviceKeyFromEnvironment() async {
-    final secret = RuntimeEnvironment.wingmanSecret?.trim();
-    if (secret == null || secret.isEmpty) return;
-
-    try {
-      final identity = await _bridge.importDeviceKey(secret);
-      if (!mounted) return;
+  Future<void> _loadSignerVault() async {
+    if (!widget.useSignerVault) {
       setState(() {
-        _config = _config.copyWith(
-          deviceSecret: secret,
-          deviceNpub: identity.npub,
-          devicePublicKeyHex: identity.publicKeyHex,
-        );
+        _checkingVault = false;
       });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _config = _config.copyWith(deviceSecret: secret);
-      });
+      return;
     }
+    final record = await _signerVault.loadRecord();
+    if (!mounted) return;
+    setState(() {
+      _vaultRecord = record;
+      _checkingVault = false;
+    });
+  }
+
+  void _unlockSigner(SignerVaultUnlock unlocked) {
+    setState(() {
+      _config = _config.copyWith(
+        deviceSecret: unlocked.nsec,
+        deviceNpub: unlocked.npub,
+        devicePublicKeyHex: unlocked.publicKeyHex,
+      );
+    });
   }
 
   @override
@@ -72,12 +79,28 @@ class _WingmanAppState extends State<WingmanApp> {
         useMaterial3: true,
         visualDensity: VisualDensity.standard,
       ),
-      home: ShellHome(
-        config: _config,
-        bridge: _bridge,
-        signerStore: _signerStore,
-        onConfigChanged: _updateConfig,
-      ),
+      home: _home(),
+    );
+  }
+
+  Widget _home() {
+    if (_checkingVault) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (widget.useSignerVault && !_config.hasDeviceSecret) {
+      return SignerOnboardingScreen(
+        vault: _signerVault,
+        record: _vaultRecord,
+        onUnlocked: _unlockSigner,
+      );
+    }
+    return ShellHome(
+      config: _config,
+      bridge: _bridge,
+      signerStore: _signerStore,
+      onConfigChanged: _updateConfig,
     );
   }
 }

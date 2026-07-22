@@ -26,7 +26,6 @@ class _SetupScreenState extends State<SetupScreen> {
   late final TextEditingController _workspaceController;
   late final TextEditingController _workspaceServiceController;
   late final TextEditingController _channelController;
-  late final TextEditingController _secretController;
   late final TextEditingController _registrationSecretController;
   late final TextEditingController _deviceNpubController;
   late final TextEditingController _devicePublicKeyHexController;
@@ -47,7 +46,6 @@ class _SetupScreenState extends State<SetupScreen> {
     _workspaceServiceController =
         TextEditingController(text: widget.config.workspaceServiceNpub);
     _channelController = TextEditingController(text: widget.config.channelId);
-    _secretController = TextEditingController(text: widget.config.deviceSecret);
     _registrationSecretController =
         TextEditingController(text: widget.config.registrationSecret);
     _deviceNpubController =
@@ -68,7 +66,6 @@ class _SetupScreenState extends State<SetupScreen> {
     _workspaceController.dispose();
     _workspaceServiceController.dispose();
     _channelController.dispose();
-    _secretController.dispose();
     _registrationSecretController.dispose();
     _deviceNpubController.dispose();
     _devicePublicKeyHexController.dispose();
@@ -123,11 +120,19 @@ class _SetupScreenState extends State<SetupScreen> {
           label: 'Device public key hex',
           icon: Icons.tag,
         ),
-        _field(
-          controller: _secretController,
-          label: 'Device key',
-          icon: Icons.key,
-          obscureText: true,
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            widget.config.hasDeviceSecret
+                ? Icons.lock_open_outlined
+                : Icons.lock_outline,
+          ),
+          title: const Text('Signer key'),
+          subtitle: Text(
+            widget.config.hasDeviceSecret
+                ? 'Unlocked for this app session. The nsec is not shown or saved in settings.'
+                : 'Locked. Restart the app and unlock the signer vault.',
+          ),
         ),
         _field(
           controller: _registrationSecretController,
@@ -161,16 +166,6 @@ class _SetupScreenState extends State<SetupScreen> {
               onPressed: _busy ? null : _save,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _generateDevice,
-              icon: const Icon(Icons.add_circle_outline),
-              label: const Text('Generate key'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _importDevice,
-              icon: const Icon(Icons.input),
-              label: const Text('Import key'),
             ),
             OutlinedButton.icon(
               onPressed: _busy ? null : _registerDevice,
@@ -235,47 +230,11 @@ class _SetupScreenState extends State<SetupScreen> {
       workspaceServiceNpub: _workspaceServiceController.text.trim(),
       channelId: _channelController.text.trim(),
       deviceNpub: _deviceNpubController.text.trim(),
-      deviceSecret: _secretController.text.trim(),
+      deviceSecret: widget.config.deviceSecret,
       registrationSecret: _registrationSecretController.text.trim(),
       rememberNip98Approvals: _rememberNip98Approvals,
       devicePublicKeyHex: _devicePublicKeyHexController.text.trim(),
     );
-  }
-
-  Future<void> _generateDevice() async {
-    await _run('Generating device key...', () async {
-      final identity = await widget.bridge.generateDeviceKey();
-      _deviceNpubController.text = identity.npub;
-      _devicePublicKeyHexController.text = identity.publicKeyHex;
-      if (identity.nsec != null) {
-        _secretController.text = identity.nsec!;
-      }
-      widget.onConfigChanged(
-        _currentConfig().copyWith(
-          deviceNpub: identity.npub,
-          deviceSecret: identity.nsec,
-          devicePublicKeyHex: identity.publicKeyHex,
-        ),
-      );
-      return 'Generated device key ${identity.npub}.';
-    });
-  }
-
-  Future<void> _importDevice() async {
-    await _run('Importing device key...', () async {
-      final secret = _secretController.text.trim();
-      if (secret.isEmpty) return 'Paste a device key first.';
-      final identity = await widget.bridge.importDeviceKey(secret);
-      _deviceNpubController.text = identity.npub;
-      _devicePublicKeyHexController.text = identity.publicKeyHex;
-      widget.onConfigChanged(
-        _currentConfig().copyWith(
-          deviceNpub: identity.npub,
-          devicePublicKeyHex: identity.publicKeyHex,
-        ),
-      );
-      return 'Imported device key ${identity.npub}.';
-    });
   }
 
   Future<void> _registerDevice() async {

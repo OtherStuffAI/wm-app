@@ -10,8 +10,10 @@ dependencies:
   bech32: ^0.2.2
   bip340: ^0.3.1
   crypto: ^3.0.7
+  cryptography: ^2.9.0
   flutter:
     sdk: flutter
+  flutter_secure_storage: ^10.3.1
   shared_preferences: ^2.5.5
   webview_flutter: ^4.8.0
   webview_flutter_wkwebview: ^3.14.0

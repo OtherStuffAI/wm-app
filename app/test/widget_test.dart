@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wingman_app/src/app.dart';
+import 'package:wingman_app/src/core/signer_vault.dart';
 
 import 'fake_webview_platform.dart';
 
@@ -14,7 +15,7 @@ void main() {
 
   testWidgets('Wingman shell renders browser-first navigation', (tester) async {
     await tester.pumpWidget(
-      const WingmanApp(seedDeviceKeyFromEnvironment: false),
+      const WingmanApp(useSignerVault: false),
     );
     await tester.pump();
 
@@ -51,5 +52,23 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Setup'), findsOneWidget);
+  });
+
+  testWidgets('Wingman app prompts for signer vault on first launch',
+      (tester) async {
+    await tester.pumpWidget(
+      WingmanApp(
+        signerVault: SignerVault(
+          localStore: MemorySignerVaultLocalStore(),
+          secretStore: MemorySignerVaultSecretStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Set Up Wingman Signer'), findsOneWidget);
+    expect(find.text('Nostr private key'), findsOneWidget);
+    expect(find.text('PIN'), findsOneWidget);
+    expect(find.text('Confirm PIN'), findsOneWidget);
   });
 }

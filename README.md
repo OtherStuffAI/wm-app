@@ -75,19 +75,22 @@ with Flight Deck and Rick Autopilot bookmarks:
 - Rick Autopilot URL: `https://rick.runwingman.com`
 - Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, `near-tea-crab.rick.runwingman.com`, and `rick.runwingman.com`
 
-For a laptop development signer, keep the private key in an ignored root
-`.env.local` file:
+On first launch, the app asks for the nsec to sign with and a local PIN. The
+nsec is encrypted into the local signer vault and is only held in memory after
+unlocking the app session. The vault stores AES-GCM ciphertext in the local app
+store and derives the encryption key from:
+
+- the PIN;
+- a random per-install device/session secret stored in platform secure storage;
+- a random vault salt.
+
+Do not put signer nsecs in `.env.local` anymore. That file is only for local
+development overrides such as `WMAPP_CORE_BIN`:
 
 ```bash
 cd ~/code/wm-app
 cp .env.local.example .env.local
 $EDITOR .env.local
-```
-
-Set:
-
-```bash
-export WINGMAN_NSEC="<your-nsec-or-hex-secret-key>"
 ```
 
 Then launch through the root helper scripts:
@@ -97,12 +100,9 @@ Then launch through the root helper scripts:
 ./runapp.sh        # launch the existing macOS build
 ```
 
-`runapp.sh` sources `.env.local` and passes `WMAPP_REPO_DIR` to the app. On
-startup the Flutter shell imports `WINGMAN_NSEC`, derives the matching device
-`npub`, and uses that identity for the browser signer and NIP-98 calls.
-
-Android and iOS do not receive shell environment variables, so configure or
-generate the signer key inside the app's Setup screen for mobile test builds.
+`runapp.sh` sources `.env.local` and passes `WMAPP_REPO_DIR` to the app. The
+signer identity still comes from the encrypted onboarding vault, not from shell
+environment variables.
 
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
@@ -149,7 +149,7 @@ app/build/ios/iphonesimulator/Runner.app
 
 Mobile status:
 
-- Browser shell, home bookmarks, WebView browsing, policy prompts, local key generation/import, NIP-07 `signEvent`, and NIP-98 signing are mobile-ready.
+- Browser shell, home bookmarks, WebView browsing, policy prompts, encrypted local signer onboarding, NIP-07 `signEvent`, and NIP-98 signing are mobile-ready.
 - Drive sync, device registration, channel validation, local file mounting, and NIP-44 encryption/decryption still use the desktop `wmapp-core` process path and need a mobile-native bridge in a later package.
 
 See:

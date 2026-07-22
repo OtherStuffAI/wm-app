@@ -8,7 +8,7 @@ It is intentionally thin:
 - Status calls a bridge abstraction for `wmapp-core` where the local process is available.
 - Drive shows the expected workspace/scope/channel/file surface.
 - Browser provides the embedded WApp/WebView signer area.
-- Local key generation/import, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart for desktop and mobile.
+- Encrypted signer onboarding, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart for desktop and mobile.
 
 Flutter platform folders have been generated for macOS, Linux, web, Android,
 and iOS. To run the current shell locally:
@@ -36,3 +36,8 @@ Desktop still uses `wmapp-core` for Drive sync, device registration, channel
 validation, local file mounting, and NIP-44 encryption/decryption. Mobile builds
 currently report those process-backed operations as unavailable instead of
 attempting to shell out to Rust.
+
+Signer keys are not loaded from shell environment variables. On first launch
+the app asks for an nsec and PIN, encrypts the nsec with a PIN plus
+per-install secure-storage secret, and keeps the clear nsec only in memory
+after unlock.
