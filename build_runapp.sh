@@ -22,6 +22,14 @@ command -v flutter >/dev/null 2>&1 || {
 echo "Updating repo..."
 git -C "$REPO_DIR" pull --ff-only
 
+if [[ "${WMAPP_SKIP_CLEAN:-0}" != "1" ]]; then
+  echo "Cleaning Flutter build cache..."
+  (
+    cd "$APP_DIR"
+    flutter clean
+  )
+fi
+
 echo "Fetching Flutter dependencies..."
 (
   cd "$APP_DIR"
