@@ -56,7 +56,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _createFlightDeckTab(activate: true);
+    _createFlightDeckTab(activate: true, loadAfterFrame: true);
     _syncWebStateToSigner(resetTabsOnChange: false);
   }
 
@@ -314,6 +314,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   void _createFlightDeckTab({
     bool activate = true,
     bool persistState = true,
+    bool loadAfterFrame = false,
   }) {
     final id = _nextTabId++;
     late final BrowserTab tab;
@@ -334,8 +335,19 @@ class BrowserScreenState extends State<BrowserScreen> {
         _activeTabId = id;
       }
     });
-    _loadAddressForTab(tab, url);
+    if (loadAfterFrame) {
+      _loadAddressForTabAfterFrame(tab, url);
+    } else {
+      _loadAddressForTab(tab, url);
+    }
     if (persistState) _schedulePersistTabs();
+  }
+
+  void _loadAddressForTabAfterFrame(BrowserTab tab, String url) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tabById(tab.id) != tab) return;
+      _loadAddressForTab(tab, url);
+    });
   }
 
   void _createHomeTab({
