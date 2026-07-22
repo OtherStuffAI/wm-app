@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
@@ -44,16 +45,24 @@ class _BrowserScreenState extends State<BrowserScreen> {
   static const _tabClickAddressReveal = Duration(seconds: 3);
   static const _homeTitle = 'Wingman Home';
   static const _rickAutopilotUrl = 'https://rick.runwingman.com';
+  static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
+  final WebViewCookieManager _cookieManager = WebViewCookieManager();
+  String? _lastWebStateSignerNpub;
+  bool _clearingWebState = false;
 
   @override
   void initState() {
     super.initState();
     _createHomeTab(activate: true);
+    _syncWebStateToSigner(resetTabsOnChange: false);
   }
 
   @override
   void didUpdateWidget(covariant BrowserScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
+      _syncWebStateToSigner();
+    }
     if (oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
       _loadConfiguredUrl();
     }
@@ -233,8 +242,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onNavigationRequest: (request) =>
-              _onNavigationRequest(id, request),
+          onNavigationRequest: (request) => _onNavigationRequest(id, request),
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
@@ -319,6 +327,59 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   void _loadConfiguredUrl() {
     _loadAddress(widget.config.flightDeckUrl);
+  }
+
+  Future<void> _syncWebStateToSigner({
+    bool resetTabsOnChange = true,
+  }) async {
+    final signerNpub = widget.config.deviceNpub.trim();
+    if (signerNpub.isEmpty || _lastWebStateSignerNpub == signerNpub) return;
+    _lastWebStateSignerNpub = signerNpub;
+
+    final preferences = SharedPreferencesAsync();
+    final previousSignerNpub = await preferences.getString(_browserSignerKey);
+    if (!mounted) return;
+    if (previousSignerNpub == signerNpub) return;
+
+    await _clearWebState(
+      resetTabs: resetTabsOnChange &&
+          previousSignerNpub != null &&
+          previousSignerNpub.isNotEmpty,
+    );
+    await preferences.setString(_browserSignerKey, signerNpub);
+  }
+
+  Future<void> _clearWebState({required bool resetTabs}) async {
+    if (_clearingWebState) return;
+    _clearingWebState = true;
+    final tabs = List<BrowserTab>.from(_tabs);
+    try {
+      try {
+        await _cookieManager.clearCookies();
+      } catch (_) {}
+      for (final tab in tabs) {
+        try {
+          await tab.controller.clearCache();
+        } catch (_) {}
+        try {
+          await tab.controller.clearLocalStorage();
+        } catch (_) {}
+      }
+    } finally {
+      _clearingWebState = false;
+    }
+    if (!mounted || !resetTabs) return;
+    for (final tab in tabs) {
+      tab.dispose();
+    }
+    setState(() {
+      _tabs.clear();
+      _activeTabId = 0;
+      _nextTabId = 1;
+      _addressBarVisible = false;
+      _addressBarHideTimer?.cancel();
+    });
+    _createHomeTab(activate: true);
   }
 
   void _reload() {
@@ -478,7 +539,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
     });
   }
 
-  NavigationDecision _onNavigationRequest(int tabId, NavigationRequest request) {
+  NavigationDecision _onNavigationRequest(
+      int tabId, NavigationRequest request) {
     if (request.isMainFrame) return NavigationDecision.navigate;
     final tab = _tabById(tabId);
     final normalized = _normalizeOpenTabUrl(

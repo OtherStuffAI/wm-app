@@ -36,7 +36,41 @@ class _ShellHomeState extends State<ShellHome> {
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(context),
-      body: _screenForSurface(),
+      body: IndexedStack(
+        index: _surfaceIndex(_selectedSurface),
+        children: [
+          _browserScreen(),
+          _surfaceScaffold(
+            title: 'Drive',
+            child: DriveScreen(
+              config: widget.config,
+              bridge: widget.bridge,
+            ),
+          ),
+          _surfaceScaffold(
+            title: 'Signer',
+            child: SignerScreen(
+              config: widget.config,
+              signerStore: widget.signerStore,
+            ),
+          ),
+          _surfaceScaffold(
+            title: 'Status',
+            child: StatusScreen(
+              config: widget.config,
+              bridge: widget.bridge,
+            ),
+          ),
+          _surfaceScaffold(
+            title: 'Setup',
+            child: SetupScreen(
+              config: widget.config,
+              bridge: widget.bridge,
+              onConfigChanged: widget.onConfigChanged,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -122,46 +156,25 @@ class _ShellHomeState extends State<ShellHome> {
     );
   }
 
-  Widget _screenForSurface() {
-    return switch (_selectedSurface) {
-      ShellSurface.browser => BrowserScreen(
-          config: widget.config,
-          bridge: widget.bridge,
-          signerStore: widget.signerStore,
-          onOpenDrawer: _openDrawer,
-          onOpenSetup: () => _selectSurface(ShellSurface.setup),
-          onOpenSigner: () => _selectSurface(ShellSurface.signer),
-          onOpenStatus: () => _selectSurface(ShellSurface.status),
-        ),
-      ShellSurface.setup => _surfaceScaffold(
-          title: 'Setup',
-          child: SetupScreen(
-            config: widget.config,
-            bridge: widget.bridge,
-            onConfigChanged: widget.onConfigChanged,
-          ),
-        ),
-      ShellSurface.drive => _surfaceScaffold(
-          title: 'Drive',
-          child: DriveScreen(
-            config: widget.config,
-            bridge: widget.bridge,
-          ),
-        ),
-      ShellSurface.signer => _surfaceScaffold(
-          title: 'Signer',
-          child: SignerScreen(
-            config: widget.config,
-            signerStore: widget.signerStore,
-          ),
-        ),
-      ShellSurface.status => _surfaceScaffold(
-          title: 'Status',
-          child: StatusScreen(
-            config: widget.config,
-            bridge: widget.bridge,
-          ),
-        ),
+  Widget _browserScreen() {
+    return BrowserScreen(
+      config: widget.config,
+      bridge: widget.bridge,
+      signerStore: widget.signerStore,
+      onOpenDrawer: _openDrawer,
+      onOpenSetup: () => _selectSurface(ShellSurface.setup),
+      onOpenSigner: () => _selectSurface(ShellSurface.signer),
+      onOpenStatus: () => _selectSurface(ShellSurface.status),
+    );
+  }
+
+  int _surfaceIndex(ShellSurface surface) {
+    return switch (surface) {
+      ShellSurface.browser => 0,
+      ShellSurface.drive => 1,
+      ShellSurface.signer => 2,
+      ShellSurface.status => 3,
+      ShellSurface.setup => 4,
     };
   }
 

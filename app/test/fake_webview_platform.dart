@@ -3,9 +3,11 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 final fakeLoadedHtmlStrings = <String>[];
+int fakeClearCookieCalls = 0;
 
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
+  fakeClearCookieCalls = 0;
   WebViewPlatform.instance = _FakeWebViewPlatform();
 }
 
@@ -30,6 +32,13 @@ class _FakeWebViewPlatform extends WebViewPlatform
     PlatformWebViewWidgetCreationParams params,
   ) {
     return _FakePlatformWebViewWidget(params);
+  }
+
+  @override
+  PlatformWebViewCookieManager createPlatformCookieManager(
+    PlatformWebViewCookieManagerCreationParams params,
+  ) {
+    return _FakePlatformWebViewCookieManager(params);
   }
 }
 
@@ -94,6 +103,12 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   Future<void> reload() async {}
 
   @override
+  Future<void> clearCache() async {}
+
+  @override
+  Future<void> clearLocalStorage() async {}
+
+  @override
   Future<void> runJavaScript(String javaScript) async {}
 
   @override
@@ -136,4 +151,21 @@ class _FakePlatformWebViewWidget extends PlatformWebViewWidget
   Widget build(BuildContext context) {
     return const SizedBox.expand();
   }
+}
+
+class _FakePlatformWebViewCookieManager extends PlatformWebViewCookieManager
+    with MockPlatformInterfaceMixin {
+  _FakePlatformWebViewCookieManager(super.params) : super.implementation();
+
+  @override
+  Future<bool> clearCookies() async {
+    fakeClearCookieCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<void> setCookie(WebViewCookie cookie) async {}
+
+  @override
+  Future<List<WebViewCookie>> getCookies(Uri url) async => [];
 }
