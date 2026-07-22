@@ -2,7 +2,10 @@ import 'package:flutter/widgets.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
+final fakeLoadedHtmlStrings = <String>[];
+
 void installFakeWebViewPlatform() {
+  fakeLoadedHtmlStrings.clear();
   WebViewPlatform.instance = _FakeWebViewPlatform();
 }
 
@@ -56,12 +59,18 @@ class _FakePlatformWebViewController extends PlatformWebViewController
 
   @override
   Future<void> loadRequest(LoadRequestParams params) async {
-    _currentUrl = params.uri.toString();
+    final url = params.uri.toString();
+    final decision = await _navigationDelegate?.request(
+      NavigationRequest(url: url, isMainFrame: true),
+    );
+    if (decision == NavigationDecision.prevent) return;
+    _currentUrl = url;
     _navigationDelegate?.finish(_currentUrl!);
   }
 
   @override
   Future<void> loadHtmlString(String html, {String? baseUrl}) async {
+    fakeLoadedHtmlStrings.add(html);
     _currentUrl = baseUrl ?? 'about:blank';
     _navigationDelegate?.finish(_currentUrl!);
   }
@@ -95,11 +104,23 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
     with MockPlatformInterfaceMixin {
   _FakePlatformNavigationDelegate(super.params) : super.implementation();
 
+  NavigationRequestCallback? _onNavigationRequest;
   PageEventCallback? _onPageFinished;
+
+  @override
+  Future<void> setOnNavigationRequest(
+    NavigationRequestCallback onNavigationRequest,
+  ) async {
+    _onNavigationRequest = onNavigationRequest;
+  }
 
   @override
   Future<void> setOnPageFinished(PageEventCallback onPageFinished) async {
     _onPageFinished = onPageFinished;
+  }
+
+  Future<NavigationDecision?> request(NavigationRequest request) async {
+    return _onNavigationRequest?.call(request);
   }
 
   void finish(String url) {

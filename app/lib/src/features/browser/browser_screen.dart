@@ -224,10 +224,8 @@ class _BrowserScreenState extends State<BrowserScreen> {
     return null;
   }
 
-  void _createTab(String url, {bool activate = true}) {
-    final id = _nextTabId++;
-    late final BrowserTab tab;
-    final controller = WebViewController()
+  WebViewController _createWebViewController(int id) {
+    return WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
         'WingmanSigner',
@@ -235,9 +233,17 @@ class _BrowserScreenState extends State<BrowserScreen> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) =>
+              _onNavigationRequest(id, request),
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
+  }
+
+  void _createTab(String url, {bool activate = true}) {
+    final id = _nextTabId++;
+    late final BrowserTab tab;
+    final controller = _createWebViewController(id);
     tab = BrowserTab(
       id: id,
       controller: controller,
@@ -261,17 +267,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
   void _createHomeTab({bool activate = true}) {
     final id = _nextTabId++;
     late final BrowserTab tab;
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'WingmanSigner',
-        onMessageReceived: (message) => _onSignerMessage(id, message),
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (url) => _onPageFinished(id, url),
-        ),
-      );
+    final controller = _createWebViewController(id);
     tab = BrowserTab(
       id: id,
       controller: controller,
@@ -482,6 +478,18 @@ class _BrowserScreenState extends State<BrowserScreen> {
     });
   }
 
+  NavigationDecision _onNavigationRequest(int tabId, NavigationRequest request) {
+    if (request.isMainFrame) return NavigationDecision.navigate;
+    final tab = _tabById(tabId);
+    final normalized = _normalizeOpenTabUrl(
+      request.url,
+      tab?.currentUrl ?? widget.config.flightDeckUrl,
+    );
+    if (normalized == null) return NavigationDecision.prevent;
+    _createTab(normalized);
+    return NavigationDecision.prevent;
+  }
+
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
@@ -521,7 +529,7 @@ class _BrowserScreenState extends State<BrowserScreen> {
     ];
     final cards = bookmarks.map((bookmark) {
       return '''
-        <a class="bookmark" href="${_escapeHtml(bookmark.url)}">
+        <a class="bookmark" href="${_escapeHtml(bookmark.url)}" data-wingman-tab-url="${_escapeHtml(bookmark.url)}">
           <span class="bookmark-title">${_escapeHtml(bookmark.label)}</span>
           <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
           <span class="bookmark-description">${_escapeHtml(bookmark.description)}</span>
@@ -603,6 +611,30 @@ class _BrowserScreenState extends State<BrowserScreen> {
       $cards
     </section>
   </main>
+  <script>
+    (() => {
+      let seq = 0;
+      document.addEventListener('click', (event) => {
+        const target = event.target;
+        const anchor = target && target.closest
+          ? target.closest('a[data-wingman-tab-url]')
+          : null;
+        if (!anchor || !window.WingmanSigner) return;
+        event.preventDefault();
+        let href;
+        try {
+          href = new URL(anchor.dataset.wingmanTabUrl, window.location.href).href;
+        } catch (_) {
+          return;
+        }
+        window.WingmanSigner.postMessage(JSON.stringify({
+          id: `home-tab-\${++seq}`,
+          method: 'openTab',
+          params: { url: href },
+        }));
+      }, true);
+    })();
+  </script>
 </body>
 </html>
 ''';

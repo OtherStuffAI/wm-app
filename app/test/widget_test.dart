@@ -23,6 +23,12 @@ void main() {
     expect(find.byTooltip('Account'), findsOneWidget);
     expect(find.byTooltip('Back'), findsOneWidget);
     expect(find.text('Wingman Home'), findsOneWidget);
+    expect(fakeLoadedHtmlStrings.single, contains('Rick Autopilot'));
+    expect(
+      fakeLoadedHtmlStrings.single,
+      contains('data-wingman-tab-url="https://rick.runwingman.com"'),
+    );
+    expect(fakeLoadedHtmlStrings.single, contains("method: 'openTab'"));
 
     await tester.pump(const Duration(seconds: 6));
     expect(find.byTooltip('Back'), findsNothing);
