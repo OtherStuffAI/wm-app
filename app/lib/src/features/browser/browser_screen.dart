@@ -8,6 +8,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
+import '../../core/nostr_crypto.dart';
+import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
 import 'signer_store.dart';
@@ -51,6 +53,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final NostrProfileStore _profileStore = NostrProfileStore();
+  final NostrProfileRelayClient _profileRelayClient = NostrProfileRelayClient();
   String? _lastWebStateSignerNpub;
   NostrProfile _profile = const NostrProfile();
   Timer? _persistTabsTimer;
@@ -283,6 +286,23 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (!mounted || widget.config.deviceNpub != deviceNpub) return;
     setState(() {
       _profile = profile;
+    });
+    unawaited(_refreshProfileFromRelays(deviceNpub));
+  }
+
+  Future<void> _refreshProfileFromRelays(String deviceNpub) async {
+    late final String publicKeyHex;
+    try {
+      publicKeyHex = NostrCrypto.publicKeyHexFromNpub(deviceNpub);
+    } catch (_) {
+      return;
+    }
+    final fetched = await _profileRelayClient.fetchProfile(publicKeyHex);
+    if (fetched == null) return;
+    final cached = await _profileStore.save(deviceNpub, fetched);
+    if (!mounted || widget.config.deviceNpub != deviceNpub) return;
+    setState(() {
+      _profile = cached;
     });
   }
 
@@ -2050,7 +2070,7 @@ class _BrowserAvatarMenu extends StatelessWidget {
           value: _BrowserAvatarAction.editProfile,
           child: ListTile(
             leading: Icon(Icons.person_outline),
-            title: Text('Edit Nostr profile'),
+            title: Text('Edit profile'),
           ),
         ),
         const PopupMenuItem(
@@ -2094,18 +2114,15 @@ class _BrowserProfileChip extends StatelessWidget {
     return SizedBox(
       width: 40,
       height: 40,
-      child: Tooltip(
-        message: label,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: colors.primary, width: 2),
-            color: colors.surface,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(2),
-            child: _ProfileAvatar(profile: profile, label: label, radius: 17),
-          ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: colors.primary, width: 2),
+          color: colors.surface,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: _ProfileAvatar(profile: profile, label: label, radius: 17),
         ),
       ),
     );
@@ -2173,14 +2190,6 @@ class _ProfileAvatar extends StatelessWidget {
   }
 }
 
-String _shortNpub(String npub) {
-  final normalized = npub.trim();
-  if (normalized.length <= 18) {
-    return normalized.isEmpty ? 'No signer' : normalized;
-  }
-  return '${normalized.substring(0, 10)}...${normalized.substring(normalized.length - 6)}';
-}
-
 Widget? _profileSubtitle(NostrProfile profile) {
   final nip05 = profile.nip05.trim();
   if (nip05.isNotEmpty) {
@@ -2243,7 +2252,7 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
     final preview = _currentProfile();
     final label = preview.labelFor(widget.deviceNpub);
     return AlertDialog(
-      title: const Text('Edit Nostr profile'),
+      title: const Text('Edit profile'),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
@@ -2264,11 +2273,12 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        Text(
-                          _shortNpub(widget.deviceNpub),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        if (preview.nip05.trim().isNotEmpty)
+                          Text(
+                            preview.nip05.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                       ],
                     ),
                   ),
@@ -2292,7 +2302,7 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
               ),
               _field(
                 controller: _nip05Controller,
-                label: 'NIP-05',
+                label: 'Verified address',
                 icon: Icons.verified_outlined,
               ),
               _field(

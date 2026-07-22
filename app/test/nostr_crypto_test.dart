@@ -16,6 +16,8 @@ void main() {
         '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
     expect(identity.nsec, startsWith('nsec1'));
     expect(identity.npub, startsWith('npub1'));
+    expect(
+        NostrCrypto.publicKeyHexFromNpub(identity.npub), identity.publicKeyHex);
 
     final roundTrip = NostrCrypto.importIdentity(identity.nsec);
     expect(roundTrip.secretHex, secret);

@@ -30,6 +30,18 @@ class NostrCrypto {
     );
   }
 
+  static String publicKeyHexFromNpub(String npub) {
+    final decoded = bech32.decode(npub.trim(), 2000);
+    if (decoded.hrp != 'npub') {
+      throw const FormatException('expected npub public key');
+    }
+    final bytes = _convertBits(decoded.data, 5, 8, false);
+    if (bytes.length != 32) {
+      throw const FormatException('public key must be 32 bytes');
+    }
+    return _hexEncode(bytes);
+  }
+
   static Map<String, dynamic> signEvent({
     required String secret,
     required Map<String, dynamic> event,

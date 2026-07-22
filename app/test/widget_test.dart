@@ -249,7 +249,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Edit Nostr profile'));
+    await tester.tap(find.text('Edit profile'));
     await tester.pumpAndSettle();
 
     final displayNameField = find.byWidgetPredicate(

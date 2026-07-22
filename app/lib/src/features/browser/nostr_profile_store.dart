@@ -87,11 +87,7 @@ class NostrProfile {
     if (primary.isNotEmpty) return primary;
     final secondary = name.trim();
     if (secondary.isNotEmpty) return secondary;
-    final normalized = npub.trim();
-    if (normalized.length > 12) {
-      return '${normalized.substring(0, 8)}...${normalized.substring(normalized.length - 4)}';
-    }
-    return normalized.isEmpty ? 'Wingman' : normalized;
+    return 'Profile';
   }
 
   String get avatarUrl {
@@ -190,6 +186,30 @@ class NostrProfile {
         about: decoded['about']?.toString() ?? '',
         cachedPictureUrl: decoded['cached_picture_url']?.toString() ?? '',
         cachedPictureBase64: decoded['cached_picture_base64']?.toString() ?? '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static NostrProfile? fromKind0Content(String content) {
+    try {
+      final decoded = jsonDecode(content);
+      if (decoded is! Map<String, dynamic>) return null;
+      final displayName = decoded['display_name']?.toString() ??
+          decoded['displayName']?.toString() ??
+          '';
+      final pictureUrl = decoded['picture']?.toString() ??
+          decoded['image']?.toString() ??
+          decoded['avatar']?.toString() ??
+          '';
+      return NostrProfile(
+        displayName: displayName,
+        name: decoded['name']?.toString() ?? '',
+        pictureUrl: pictureUrl,
+        nip05: decoded['nip05']?.toString() ?? '',
+        website: decoded['website']?.toString() ?? '',
+        about: decoded['about']?.toString() ?? '',
       );
     } catch (_) {
       return null;
