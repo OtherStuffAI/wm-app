@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -56,6 +57,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
     _createFlightDeckTab(activate: true, loadAfterFrame: true);
     _syncWebStateToSigner(resetTabsOnChange: false);
   }
@@ -73,6 +75,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
     unawaited(_persistTabsNow());
     _persistTabsTimer?.cancel();
     _addressBarHideTimer?.cancel();
@@ -265,6 +268,27 @@ class BrowserScreenState extends State<BrowserScreen> {
       if (tab.id == id) return tab;
     }
     return null;
+  }
+
+  bool _handleKeyboardEvent(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.tab) return false;
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isControlPressed) return false;
+    _activateAdjacentTab(keyboard.isShiftPressed ? -1 : 1);
+    return true;
+  }
+
+  void _activateAdjacentTab(int delta) {
+    if (_tabs.length < 2) return;
+    final nextIndex = (_activeTabIndex + delta) % _tabs.length;
+    final normalizedIndex =
+        nextIndex < 0 ? nextIndex + _tabs.length : nextIndex;
+    setState(() {
+      _activeTabId = _tabs[normalizedIndex].id;
+    });
+    _refreshNavigationState(_activeTab);
+    _schedulePersistTabs();
   }
 
   WebViewController _createWebViewController(int id) {

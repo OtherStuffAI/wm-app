@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
@@ -13,6 +14,14 @@ import 'package:wingman_app/src/features/shell/shell_home.dart';
 import 'fake_webview_platform.dart';
 
 void main() {
+  int activeBrowserStackIndex(WidgetTester tester) {
+    return tester
+            .widgetList<IndexedStack>(find.byType(IndexedStack))
+            .last
+            .index ??
+        0;
+  }
+
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
@@ -178,6 +187,44 @@ void main() {
     expect(find.text('Wingman Home'), findsOneWidget);
     expect(find.text('rick.runwingman.com'), findsOneWidget);
     expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+  });
+
+  testWidgets('Wingman browser cycles tabs with Ctrl+Tab', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            deviceSecret: 'nsec-placeholder',
+            deviceNpub: 'npub-keyboard-tabs',
+            devicePublicKeyHex: 'abcdef',
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(activeBrowserStackIndex(tester), 0);
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    expect(activeBrowserStackIndex(tester), 1);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(activeBrowserStackIndex(tester), 0);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(activeBrowserStackIndex(tester), 1);
   });
 
   testWidgets('Wingman app persists the Flight Deck URL setting',
