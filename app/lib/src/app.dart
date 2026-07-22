@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/app_config.dart';
 import 'core/native_core_bridge.dart';
@@ -22,6 +26,8 @@ class WingmanApp extends StatefulWidget {
 }
 
 class _WingmanAppState extends State<WingmanApp> {
+  static const _appConfigKey = 'wingman.app.config.v1';
+
   AppConfig _config = AppConfig.defaults();
   late final NativeCoreBridge _bridge = NativeCoreBridge();
   late final SignerStore _signerStore = SignerStore();
@@ -32,28 +38,91 @@ class _WingmanAppState extends State<WingmanApp> {
   @override
   void initState() {
     super.initState();
-    _loadSignerVault();
+    _loadInitialState();
   }
 
   void _updateConfig(AppConfig config) {
     setState(() {
       _config = config;
     });
+    unawaited(_saveAppConfig(config));
   }
 
-  Future<void> _loadSignerVault() async {
-    if (!widget.useSignerVault) {
-      setState(() {
-        _checkingVault = false;
-      });
-      return;
+  Future<void> _loadInitialState() async {
+    final savedConfig = await _loadAppConfig();
+    SignerVaultRecord? record;
+    if (widget.useSignerVault) {
+      record = await _signerVault.loadRecord();
     }
-    final record = await _signerVault.loadRecord();
     if (!mounted) return;
     setState(() {
+      _config = savedConfig.copyWith(
+        deviceSecret: _config.deviceSecret,
+        deviceNpub: _config.deviceNpub,
+        devicePublicKeyHex: _config.devicePublicKeyHex,
+      );
       _vaultRecord = record;
       _checkingVault = false;
     });
+  }
+
+  Future<AppConfig> _loadAppConfig() async {
+    final defaults = AppConfig.defaults();
+    final raw = await SharedPreferencesAsync().getString(_appConfigKey);
+    if (raw == null || raw.trim().isEmpty) return defaults;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return defaults;
+      return defaults.copyWith(
+        towerUrl: _stringValue(decoded, 'tower_url') ?? defaults.towerUrl,
+        appNpub: _stringValue(decoded, 'app_npub') ?? defaults.appNpub,
+        flightDeckUrl:
+            _stringValue(decoded, 'flight_deck_url') ?? defaults.flightDeckUrl,
+        workspaceId:
+            _stringValue(decoded, 'workspace_id') ?? defaults.workspaceId,
+        workspaceServiceNpub: _stringValue(decoded, 'workspace_service_npub') ??
+            defaults.workspaceServiceNpub,
+        channelId: _stringValue(decoded, 'channel_id') ?? defaults.channelId,
+        trustedOrigins: _stringListValue(decoded, 'trusted_origins') ??
+            defaults.trustedOrigins,
+        rememberNip98Approvals: decoded['remember_nip98_approvals'] is bool
+            ? decoded['remember_nip98_approvals'] as bool
+            : defaults.rememberNip98Approvals,
+      );
+    } catch (_) {
+      return defaults;
+    }
+  }
+
+  Future<void> _saveAppConfig(AppConfig config) async {
+    final payload = {
+      'version': 1,
+      'tower_url': config.towerUrl,
+      'app_npub': config.appNpub,
+      'flight_deck_url': config.flightDeckUrl,
+      'workspace_id': config.workspaceId,
+      'workspace_service_npub': config.workspaceServiceNpub,
+      'channel_id': config.channelId,
+      'trusted_origins': config.trustedOrigins,
+      'remember_nip98_approvals': config.rememberNip98Approvals,
+    };
+    await SharedPreferencesAsync()
+        .setString(_appConfigKey, jsonEncode(payload));
+  }
+
+  String? _stringValue(Map<String, dynamic> map, String key) {
+    final value = map[key]?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  List<String>? _stringListValue(Map<String, dynamic> map, String key) {
+    final value = map[key];
+    if (value is! List) return null;
+    final items = value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    return items.isEmpty ? null : items;
   }
 
   void _unlockSigner(SignerVaultUnlock unlocked) {

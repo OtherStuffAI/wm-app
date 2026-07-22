@@ -27,19 +27,17 @@ void main() {
 
     expect(find.byTooltip('New tab'), findsOneWidget);
     expect(find.byTooltip('Account'), findsOneWidget);
-    expect(find.byTooltip('Back'), findsOneWidget);
-    expect(find.text('Wingman Home'), findsOneWidget);
-    expect(fakeLoadedHtmlStrings.single, contains('Rick Autopilot'));
+    expect(find.byTooltip('Back'), findsNothing);
+    expect(find.text('Flight Deck'), findsOneWidget);
     expect(
-      fakeLoadedHtmlStrings.single,
-      contains('data-wingman-tab-url="https://rick.runwingman.com"'),
+      fakeLoadedRequestUrls,
+      contains('https://near-tea-crab.rick.runwingman.com'),
     );
-    expect(fakeLoadedHtmlStrings.single, contains("method: 'openTab'"));
 
     await tester.pump(const Duration(seconds: 6));
     expect(find.byTooltip('Back'), findsNothing);
 
-    await tester.tap(find.text('Wingman Home'));
+    await tester.tap(find.text('Flight Deck'));
     await tester.pump();
     expect(find.byTooltip('Back'), findsOneWidget);
 
@@ -48,7 +46,14 @@ void main() {
 
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump();
-    expect(find.text('Wingman Home'), findsNWidgets(2));
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(fakeLoadedHtmlStrings.single, contains('Rick Autopilot'));
+    expect(
+      fakeLoadedHtmlStrings.single,
+      contains('data-wingman-tab-url="https://rick.runwingman.com"'),
+    );
+    expect(fakeLoadedHtmlStrings.single, contains("method: 'openTab'"));
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();
@@ -60,7 +65,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Browser').last);
     await tester.pumpAndSettle();
-    expect(find.text('Wingman Home'), findsNWidgets(2));
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('Wingman Home'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();
@@ -138,6 +144,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.enterText(
       find.byType(TextField),
       'https://rick.runwingman.com',
@@ -146,6 +154,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Flight Deck'), findsOneWidget);
     expect(find.text('Wingman Home'), findsOneWidget);
     expect(find.text('rick.runwingman.com'), findsOneWidget);
 
@@ -165,9 +174,50 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Flight Deck'), findsOneWidget);
     expect(find.text('Wingman Home'), findsOneWidget);
     expect(find.text('rick.runwingman.com'), findsOneWidget);
     expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+  });
+
+  testWidgets('Wingman app persists the Flight Deck URL setting',
+      (tester) async {
+    await tester.pumpWidget(
+      const WingmanApp(useSignerVault: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+
+    final flightDeckField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Flight Deck URL',
+    );
+    expect(flightDeckField, findsOneWidget);
+
+    await tester.enterText(flightDeckField, 'https://example.com/flightdeck');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.drag(find.byType(ListView), const Offset(0, -1200));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    installFakeWebViewPlatform();
+
+    await tester.pumpWidget(
+      const WingmanApp(useSignerVault: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(fakeLoadedRequestUrls, contains('https://example.com/flightdeck'));
   });
 
   testWidgets('Wingman app prompts for signer vault on first launch',
