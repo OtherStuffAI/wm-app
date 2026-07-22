@@ -29,6 +29,8 @@ class ShellHome extends StatefulWidget {
 
 class _ShellHomeState extends State<ShellHome> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<BrowserScreenState> _browserKey =
+      GlobalKey<BrowserScreenState>();
   ShellSurface _selectedSurface = ShellSurface.browser;
 
   @override
@@ -67,6 +69,7 @@ class _ShellHomeState extends State<ShellHome> {
               config: widget.config,
               bridge: widget.bridge,
               onConfigChanged: widget.onConfigChanged,
+              onClearBrowserData: _clearBrowserData,
             ),
           ),
         ],
@@ -158,6 +161,7 @@ class _ShellHomeState extends State<ShellHome> {
 
   Widget _browserScreen() {
     return BrowserScreen(
+      key: _browserKey,
       config: widget.config,
       bridge: widget.bridge,
       signerStore: widget.signerStore,
@@ -206,6 +210,10 @@ class _ShellHomeState extends State<ShellHome> {
     setState(() {
       _selectedSurface = surface;
     });
+  }
+
+  Future<void> _clearBrowserData() async {
+    await _browserKey.currentState?.clearBrowserData();
   }
 }
 

@@ -31,10 +31,10 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenStatus;
 
   @override
-  State<BrowserScreen> createState() => _BrowserScreenState();
+  State<BrowserScreen> createState() => BrowserScreenState();
 }
 
-class _BrowserScreenState extends State<BrowserScreen> {
+class BrowserScreenState extends State<BrowserScreen> {
   final List<BrowserTab> _tabs = [];
   int _activeTabId = 0;
   int _nextTabId = 1;
@@ -343,6 +343,10 @@ class _BrowserScreenState extends State<BrowserScreen> {
 
   void _loadConfiguredUrl() {
     _loadAddress(widget.config.flightDeckUrl);
+  }
+
+  Future<void> clearBrowserData() {
+    return _clearWebState(resetTabs: false);
   }
 
   Future<void> _switchSignerTabs(String previousSignerNpub) async {

@@ -8,12 +8,14 @@ class SetupScreen extends StatefulWidget {
     required this.config,
     required this.bridge,
     required this.onConfigChanged,
+    required this.onClearBrowserData,
     super.key,
   });
 
   final AppConfig config;
   final NativeCoreBridge bridge;
   final ValueChanged<AppConfig> onConfigChanged;
+  final Future<void> Function() onClearBrowserData;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -80,6 +82,17 @@ class _SetupScreenState extends State<SetupScreen> {
       children: [
         Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 20),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.cleaning_services_outlined),
+          title: const Text('Browser data'),
+          subtitle: const Text('Clear cookies, cache, and local storage.'),
+          trailing: OutlinedButton(
+            onPressed: _busy ? null : _resetBrowserData,
+            child: const Text('Reset browser data'),
+          ),
+        ),
+        const SizedBox(height: 14),
         _field(
           controller: _towerController,
           label: 'Tower URL',
@@ -252,6 +265,34 @@ class _SetupScreenState extends State<SetupScreen> {
       final result = await widget.bridge.validateChannel(_currentConfig());
       if (!result.ok) return 'Channel validation failed: ${result.error}';
       return 'Channel validated.';
+    });
+  }
+
+  Future<void> _resetBrowserData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset browser data?'),
+        content: const Text(
+          'This clears WebView cookies, cache, local storage, and service worker cache. Open tabs remain listed, but sites may sign out.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.cleaning_services_outlined),
+            label: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run('Resetting browser data...', () async {
+      await widget.onClearBrowserData();
+      return 'Browser cookies, cache, and local storage reset.';
     });
   }
 

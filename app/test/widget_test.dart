@@ -76,6 +76,20 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Setup'), findsOneWidget);
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsWidgets);
+    final resetBrowserDataButton =
+        find.widgetWithText(OutlinedButton, 'Reset browser data');
+    expect(resetBrowserDataButton, findsOneWidget);
+
+    await tester.tap(resetBrowserDataButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Reset browser data?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Reset'));
+    await tester.pumpAndSettle();
+    expect(fakeClearCookieCalls, 1);
   });
 
   testWidgets('Wingman shell clears browser web state when signer changes',
