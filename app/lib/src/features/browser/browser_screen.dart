@@ -296,10 +296,10 @@ class BrowserScreenState extends State<BrowserScreen> {
       ),
     );
     if (profile == null) return;
-    await _profileStore.save(deviceNpub, profile);
+    final cachedProfile = await _profileStore.save(deviceNpub, profile);
     if (!mounted || widget.config.deviceNpub != deviceNpub) return;
     setState(() {
-      _profile = profile;
+      _profile = cachedProfile;
     });
   }
 
@@ -2014,7 +2014,6 @@ class _BrowserAvatarMenu extends StatelessWidget {
         padding: const EdgeInsets.only(right: 8),
         child: _BrowserProfileChip(
           label: label,
-          npub: deviceNpub,
           profile: profile,
         ),
       ),
@@ -2042,10 +2041,7 @@ class _BrowserAvatarMenu extends StatelessWidget {
                 label,
                 overflow: TextOverflow.ellipsis,
               ),
-              subtitle: Text(
-                _shortNpub(deviceNpub),
-                overflow: TextOverflow.ellipsis,
-              ),
+              subtitle: _profileSubtitle(profile),
             ),
           ),
         ),
@@ -2086,44 +2082,29 @@ class _BrowserAvatarMenu extends StatelessWidget {
 class _BrowserProfileChip extends StatelessWidget {
   const _BrowserProfileChip({
     required this.label,
-    required this.npub,
     required this.profile,
   });
 
   final String label;
-  final String npub;
   final NostrProfile profile;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 168),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colors.outlineVariant),
-          color: colors.surface,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _ProfileAvatar(profile: profile, label: label, radius: 15),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
-            ],
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Tooltip(
+        message: label,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: colors.primary, width: 2),
+            color: colors.surface,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(2),
+            child: _ProfileAvatar(profile: profile, label: label, radius: 17),
           ),
         ),
       ),
@@ -2152,10 +2133,22 @@ class _ProfileAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatarUrl = profile.avatarUrl;
+    final cachedBytes = profile.cachedAvatarBytes;
     final fallback = CircleAvatar(
       radius: radius,
       child: Text(_initials(label)),
     );
+    if (cachedBytes != null) {
+      return ClipOval(
+        child: Image.memory(
+          cachedBytes,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => fallback,
+        ),
+      );
+    }
     if (avatarUrl.isEmpty) return fallback;
     return ClipOval(
       child: Image.network(
@@ -2186,6 +2179,18 @@ String _shortNpub(String npub) {
     return normalized.isEmpty ? 'No signer' : normalized;
   }
   return '${normalized.substring(0, 10)}...${normalized.substring(normalized.length - 6)}';
+}
+
+Widget? _profileSubtitle(NostrProfile profile) {
+  final nip05 = profile.nip05.trim();
+  if (nip05.isNotEmpty) {
+    return Text(nip05, overflow: TextOverflow.ellipsis);
+  }
+  final name = profile.name.trim();
+  if (name.isNotEmpty) {
+    return Text('@$name', overflow: TextOverflow.ellipsis);
+  }
+  return null;
 }
 
 class _EditNostrProfileDialog extends StatefulWidget {

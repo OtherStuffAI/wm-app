@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NostrProfileStore {
@@ -17,16 +18,46 @@ class NostrProfileStore {
     return NostrProfile.tryParse(raw) ?? const NostrProfile();
   }
 
-  Future<void> save(String npub, NostrProfile profile) async {
+  Future<NostrProfile> save(String npub, NostrProfile profile) async {
     final key = _keyFor(npub);
-    if (key == null) return;
-    await _preferences.setString(key, jsonEncode(profile.toJson()));
+    if (key == null) return profile;
+    final cached = await _withCachedAvatar(profile);
+    await _preferences.setString(key, jsonEncode(cached.toJson()));
+    return cached;
   }
 
   String? _keyFor(String npub) {
     final normalized = npub.trim();
     if (normalized.isEmpty) return null;
     return '$_profileKeyPrefix$normalized';
+  }
+
+  Future<NostrProfile> _withCachedAvatar(NostrProfile profile) async {
+    final avatarUrl = profile.avatarUrl;
+    if (avatarUrl.isEmpty) {
+      return profile.copyWithCachedAvatar(url: '', base64: '');
+    }
+    if (profile.cachedPictureUrl == avatarUrl &&
+        profile.cachedPictureBase64.isNotEmpty) {
+      return profile;
+    }
+    try {
+      final data = await NetworkAssetBundle(Uri.parse(avatarUrl))
+          .load(avatarUrl)
+          .timeout(const Duration(seconds: 6));
+      if (data.lengthInBytes > 1500000) return profile;
+      final bytes = Uint8List.view(
+        data.buffer,
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      return profile.copyWithCachedAvatar(
+        url: avatarUrl,
+        base64: base64Encode(bytes),
+      );
+    } catch (_) {
+      return profile.copyWithCachedAvatar(url: '', base64: '');
+    }
   }
 }
 
@@ -38,6 +69,8 @@ class NostrProfile {
     this.nip05 = '',
     this.website = '',
     this.about = '',
+    this.cachedPictureUrl = '',
+    this.cachedPictureBase64 = '',
   });
 
   final String displayName;
@@ -46,6 +79,8 @@ class NostrProfile {
   final String nip05;
   final String website;
   final String about;
+  final String cachedPictureUrl;
+  final String cachedPictureBase64;
 
   String labelFor(String npub) {
     final primary = displayName.trim();
@@ -66,6 +101,17 @@ class NostrProfile {
     return value;
   }
 
+  Uint8List? get cachedAvatarBytes {
+    if (cachedPictureUrl.trim() != avatarUrl || cachedPictureBase64.isEmpty) {
+      return null;
+    }
+    try {
+      return base64Decode(cachedPictureBase64);
+    } catch (_) {
+      return null;
+    }
+  }
+
   NostrProfile copyWith({
     String? displayName,
     String? name,
@@ -81,6 +127,24 @@ class NostrProfile {
       nip05: nip05 ?? this.nip05,
       website: website ?? this.website,
       about: about ?? this.about,
+      cachedPictureUrl: cachedPictureUrl,
+      cachedPictureBase64: cachedPictureBase64,
+    );
+  }
+
+  NostrProfile copyWithCachedAvatar({
+    required String url,
+    required String base64,
+  }) {
+    return NostrProfile(
+      displayName: displayName,
+      name: name,
+      pictureUrl: pictureUrl,
+      nip05: nip05,
+      website: website,
+      about: about,
+      cachedPictureUrl: url,
+      cachedPictureBase64: base64,
     );
   }
 
@@ -104,6 +168,8 @@ class NostrProfile {
       'nip05': nip05,
       'website': website,
       'about': about,
+      'cached_picture_url': cachedPictureUrl,
+      'cached_picture_base64': cachedPictureBase64,
       'kind0_content': toKind0Json(),
     };
   }
@@ -122,6 +188,8 @@ class NostrProfile {
         nip05: decoded['nip05']?.toString() ?? '',
         website: decoded['website']?.toString() ?? '',
         about: decoded['about']?.toString() ?? '',
+        cachedPictureUrl: decoded['cached_picture_url']?.toString() ?? '',
+        cachedPictureBase64: decoded['cached_picture_base64']?.toString() ?? '',
       );
     } catch (_) {
       return null;

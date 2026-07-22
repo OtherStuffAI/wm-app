@@ -262,7 +262,13 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Pete Winn'), findsNothing);
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
     expect(find.text('Pete Winn'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+    expect(find.text('Pete Winn'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -280,6 +286,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Pete Winn'), findsNothing);
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
     expect(find.text('Pete Winn'), findsOneWidget);
   });
 
