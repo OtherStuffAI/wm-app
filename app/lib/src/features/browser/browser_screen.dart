@@ -2112,17 +2112,17 @@ class _BrowserProfileChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return SizedBox(
-      width: 40,
-      height: 40,
+      width: 34,
+      height: 34,
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: colors.primary, width: 2),
+          border: Border.all(color: colors.primary, width: 1.5),
           color: colors.surface,
         ),
         child: Padding(
-          padding: const EdgeInsets.all(2),
-          child: _ProfileAvatar(profile: profile, label: label, radius: 17),
+          padding: const EdgeInsets.all(3),
+          child: _ProfileAvatar(profile: profile, label: label, radius: 12.5),
         ),
       ),
     );
