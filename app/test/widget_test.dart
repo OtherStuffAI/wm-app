@@ -227,6 +227,102 @@ void main() {
     expect(activeBrowserStackIndex(tester), 1);
   });
 
+  testWidgets('Focus Mode preserves the active browser tab and restores chrome',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semantics = tester.ensureSemantics();
+    final config = AppConfig.defaults().copyWith(
+      deviceSecret: 'nsec-placeholder',
+      deviceNpub: 'npub-focus-mode',
+      devicePublicKeyHex: 'abcdef',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.light(),
+        darkTheme: ThemeData.dark(),
+        themeMode: ThemeMode.dark,
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    expect(activeBrowserStackIndex(tester), 1);
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    final controllerCountBeforeFocus = fakeWebViewControllerCreationCount;
+
+    await tester.tap(find.byTooltip('Enter Focus Mode'));
+    await tester.pump();
+
+    expect(activeBrowserStackIndex(tester), 1);
+    expect(find.byTooltip('Exit Focus Mode'), findsOneWidget);
+    expect(find.byTooltip('Enter Focus Mode'), findsNothing);
+    expect(find.byTooltip('Open menu'), findsNothing);
+    expect(find.byTooltip('New tab'), findsNothing);
+    expect(find.byTooltip('Profile'), findsNothing);
+    expect(find.bySemanticsLabel('Exit Focus Mode'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsNothing);
+    expect(find.text('Wingman Home'), findsNothing);
+    expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
+
+    final restoreButton = tester.widget<IconButton>(
+      find.byKey(const ValueKey('exit-focus-mode-button')),
+    );
+    expect(restoreButton.icon, isA<Icon>());
+    expect((restoreButton.icon as Icon).icon, Icons.fullscreen);
+    expect(tester.getSize(find.byType(IconButton).last).width,
+        greaterThanOrEqualTo(48));
+
+    await tester.tap(find.byTooltip('Exit Focus Mode'));
+    await tester.pump();
+
+    expect(activeBrowserStackIndex(tester), 1);
+    expect(find.byTooltip('Exit Focus Mode'), findsNothing);
+    expect(find.byTooltip('Enter Focus Mode'), findsOneWidget);
+    expect(find.byTooltip('Open menu'), findsOneWidget);
+    expect(find.byTooltip('Profile'), findsOneWidget);
+    expect(find.bySemanticsLabel('Enter Focus Mode'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
+
+    await tester.tap(find.byTooltip('Enter Focus Mode'));
+    await tester.pump();
+    expect(find.byTooltip('Exit Focus Mode'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: ShellHome(
+          config: config,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Enter Focus Mode'), findsOneWidget);
+    expect(find.byTooltip('Exit Focus Mode'), findsNothing);
+    semantics.dispose();
+  });
+
   testWidgets('Wingman browser edits and persists local Nostr profile',
       (tester) async {
     final config = AppConfig.defaults().copyWith(

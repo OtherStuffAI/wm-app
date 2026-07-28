@@ -44,6 +44,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   int _nextTabId = 1;
   Timer? _addressBarHideTimer;
   bool _addressBarVisible = false;
+  bool _focusMode = false;
   static const _nip44PolicyTarget = '*';
   static const _newTabAddressReveal = Duration(seconds: 5);
   static const _tabClickAddressReveal = Duration(seconds: 3);
@@ -95,29 +96,60 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        _buildTabBar(context),
-        _buildAddressBar(context),
-        Expanded(
-          child: IndexedStack(
-            index: _activeTabIndex,
-            children: [
-              for (final tab in _tabs)
-                WebViewWidget(
-                  key: ValueKey(tab.id),
-                  controller: tab.controller,
-                ),
-            ],
-          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!_focusMode) _buildTabBar(context),
+            if (!_focusMode) _buildAddressBar(context),
+            Expanded(
+              child: IndexedStack(
+                index: _activeTabIndex,
+                children: [
+                  for (final tab in _tabs)
+                    WebViewWidget(
+                      key: ValueKey(tab.id),
+                      controller: tab.controller,
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
+        if (_focusMode)
+          SafeArea(
+            minimum: const EdgeInsets.all(12),
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Material(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                elevation: 4,
+                shape: const CircleBorder(),
+                child: Semantics(
+                  label: 'Exit Focus Mode',
+                  button: true,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    key: const ValueKey('exit-focus-mode-button'),
+                    tooltip: 'Exit Focus Mode',
+                    onPressed: _exitFocusMode,
+                    icon: const Icon(Icons.fullscreen),
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
 
   Widget _buildTabBar(BuildContext context) {
     final theme = Theme.of(context);
+    final availableWidth = MediaQuery.sizeOf(context).width -
+        MediaQuery.paddingOf(context).horizontal;
+    final pinnedTabWidth = (availableWidth - 210).clamp(96.0, 190.0);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest,
@@ -144,6 +176,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                   active: _tabs.first.id == _activeTabId,
                   closeable: false,
                   pinned: true,
+                  width: pinnedTabWidth,
                   onPressed: () => _activateTab(_tabs.first.id),
                   onClose: () {},
                 ),
@@ -187,6 +220,17 @@ class BrowserScreenState extends State<BrowserScreen> {
                 tooltip: 'New tab',
                 onPressed: () => _createHomeTab(),
                 icon: const Icon(Icons.add),
+              ),
+              Semantics(
+                label: 'Enter Focus Mode',
+                button: true,
+                excludeSemantics: true,
+                child: IconButton(
+                  key: const ValueKey('enter-focus-mode-button'),
+                  tooltip: 'Enter Focus Mode',
+                  onPressed: _enterFocusMode,
+                  icon: const Icon(Icons.fullscreen),
+                ),
               ),
               _BrowserAvatarMenu(
                 deviceNpub: widget.config.deviceNpub,
@@ -278,6 +322,18 @@ class BrowserScreenState extends State<BrowserScreen> {
       if (tab.id == id) return tab;
     }
     return null;
+  }
+
+  void _enterFocusMode() {
+    setState(() {
+      _focusMode = true;
+    });
+  }
+
+  void _exitFocusMode() {
+    setState(() {
+      _focusMode = false;
+    });
   }
 
   Future<void> _loadProfile() async {
@@ -1933,6 +1989,7 @@ class _BrowserTabButton extends StatelessWidget {
     required this.onPressed,
     required this.onClose,
     this.pinned = false,
+    this.width = 190,
     super.key,
   });
 
@@ -1942,6 +1999,7 @@ class _BrowserTabButton extends StatelessWidget {
   final VoidCallback onPressed;
   final VoidCallback onClose;
   final bool pinned;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
@@ -1956,7 +2014,7 @@ class _BrowserTabButton extends StatelessWidget {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
           onTap: onPressed,
           child: Container(
-            width: 190,
+            width: width,
             height: 34,
             padding: const EdgeInsets.only(left: 12, right: 4),
             decoration: BoxDecoration(

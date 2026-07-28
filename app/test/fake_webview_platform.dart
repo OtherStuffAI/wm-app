@@ -5,11 +5,13 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 final fakeLoadedHtmlStrings = <String>[];
 final fakeLoadedRequestUrls = <String>[];
 int fakeClearCookieCalls = 0;
+int fakeWebViewControllerCreationCount = 0;
 
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
   fakeLoadedRequestUrls.clear();
   fakeClearCookieCalls = 0;
+  fakeWebViewControllerCreationCount = 0;
   WebViewPlatform.instance = _FakeWebViewPlatform();
 }
 
@@ -19,6 +21,7 @@ class _FakeWebViewPlatform extends WebViewPlatform
   PlatformWebViewController createPlatformWebViewController(
     PlatformWebViewControllerCreationParams params,
   ) {
+    fakeWebViewControllerCreationCount += 1;
     return _FakePlatformWebViewController(params);
   }
 
