@@ -409,7 +409,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onNavigationRequest: (request) => _onNavigationRequest(id, request),
+          onNavigationRequest: _onNavigationRequest,
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
@@ -949,17 +949,8 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
   }
 
-  NavigationDecision _onNavigationRequest(
-      int tabId, NavigationRequest request) {
-    if (request.isMainFrame) return NavigationDecision.navigate;
-    final tab = _tabById(tabId);
-    final normalized = _normalizeOpenTabUrl(
-      request.url,
-      tab?.currentUrl ?? widget.config.flightDeckUrl,
-    );
-    if (normalized == null) return NavigationDecision.prevent;
-    _createTab(normalized);
-    return NavigationDecision.prevent;
+  NavigationDecision _onNavigationRequest(NavigationRequest request) {
+    return NavigationDecision.navigate;
   }
 
   Future<void> _onPageFinished(int tabId, String url) async {

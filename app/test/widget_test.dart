@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wingman_app/src/app.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
@@ -225,6 +226,90 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pump();
     expect(activeBrowserStackIndex(tester), 1);
+  });
+
+  testWidgets(
+      'Artifact iframe navigation stays in its tab and explicit openTab creates one tab',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            deviceSecret: 'nsec-placeholder',
+            deviceNpub: 'npub-artifact-iframe',
+            devicePublicKeyHex: 'abcdef',
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    await tester.enterText(
+      find.byType(TextField),
+      'https://artifact.example/control',
+    );
+    await tester.tap(find.byTooltip('Go'));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-3')), findsNothing);
+    expect(activeBrowserStackIndex(tester), 1);
+
+    for (final url in <String>[
+      'about:blank',
+      'https://artifact.example/artifact-frame/project/artifact/v1/index.html',
+      'https://preview.example/rendered-artifact',
+    ]) {
+      final decision = await submitFakeNavigationRequest(
+        controllerIndex: 1,
+        url: url,
+        isMainFrame: false,
+      );
+      await tester.pump();
+
+      expect(decision, NavigationDecision.navigate, reason: url);
+      expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tab-3')), findsNothing);
+      expect(fakeWebViewControllerCreationCount, 2);
+      expect(activeBrowserStackIndex(tester), 1);
+    }
+
+    expect(
+      fakeExecutedJavaScripts,
+      contains(
+        allOf(
+          contains('window.open = (url, target, features)'),
+          contains("target || '_blank'"),
+          contains("normalizedTarget !== '_self'"),
+          contains("anchor.getAttribute('target')"),
+          contains("linkTarget === '_self'"),
+          contains("method: 'openTab'"),
+        ),
+      ),
+    );
+
+    submitFakeJavaScriptMessage(
+      controllerIndex: 1,
+      channel: 'WingmanSigner',
+      message: '''
+{"id":"popup-1","method":"openTab","params":{"url":"https://popup.example/page"}}
+''',
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-3')), findsOneWidget);
+    expect(fakeWebViewControllerCreationCount, 3);
+    expect(activeBrowserStackIndex(tester), 2);
+    expect(fakeLoadedRequestUrls.last, 'https://popup.example/page');
   });
 
   testWidgets('Focus Mode preserves the active browser tab and restores chrome',

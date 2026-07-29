@@ -4,14 +4,39 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 final fakeLoadedHtmlStrings = <String>[];
 final fakeLoadedRequestUrls = <String>[];
+final fakeExecutedJavaScripts = <String>[];
 int fakeClearCookieCalls = 0;
 int fakeWebViewControllerCreationCount = 0;
+final _fakeWebViewControllers = <_FakePlatformWebViewController>[];
+
+Future<NavigationDecision?> submitFakeNavigationRequest({
+  required int controllerIndex,
+  required String url,
+  required bool isMainFrame,
+}) {
+  return _fakeWebViewControllers[controllerIndex].requestNavigation(
+    NavigationRequest(url: url, isMainFrame: isMainFrame),
+  );
+}
+
+void submitFakeJavaScriptMessage({
+  required int controllerIndex,
+  required String channel,
+  required String message,
+}) {
+  _fakeWebViewControllers[controllerIndex].postJavaScriptMessage(
+    channel,
+    message,
+  );
+}
 
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
   fakeLoadedRequestUrls.clear();
+  fakeExecutedJavaScripts.clear();
   fakeClearCookieCalls = 0;
   fakeWebViewControllerCreationCount = 0;
+  _fakeWebViewControllers.clear();
   WebViewPlatform.instance = _FakeWebViewPlatform();
 }
 
@@ -22,7 +47,9 @@ class _FakeWebViewPlatform extends WebViewPlatform
     PlatformWebViewControllerCreationParams params,
   ) {
     fakeWebViewControllerCreationCount += 1;
-    return _FakePlatformWebViewController(params);
+    final controller = _FakePlatformWebViewController(params);
+    _fakeWebViewControllers.add(controller);
+    return controller;
   }
 
   @override
@@ -53,6 +80,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController
 
   _FakePlatformNavigationDelegate? _navigationDelegate;
   String? _currentUrl;
+  final Map<String, void Function(JavaScriptMessage)> _javaScriptChannels = {};
 
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
@@ -60,7 +88,10 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   @override
   Future<void> addJavaScriptChannel(
     JavaScriptChannelParams javaScriptChannelParams,
-  ) async {}
+  ) async {
+    _javaScriptChannels[javaScriptChannelParams.name] =
+        javaScriptChannelParams.onMessageReceived;
+  }
 
   @override
   Future<void> setPlatformNavigationDelegate(
@@ -115,10 +146,22 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   Future<void> clearLocalStorage() async {}
 
   @override
-  Future<void> runJavaScript(String javaScript) async {}
+  Future<void> runJavaScript(String javaScript) async {
+    fakeExecutedJavaScripts.add(javaScript);
+  }
 
   @override
   Future<String?> getTitle() async => null;
+
+  Future<NavigationDecision?> requestNavigation(
+    NavigationRequest request,
+  ) async {
+    return _navigationDelegate?.request(request);
+  }
+
+  void postJavaScriptMessage(String channel, String message) {
+    _javaScriptChannels[channel]?.call(JavaScriptMessage(message: message));
+  }
 }
 
 class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
