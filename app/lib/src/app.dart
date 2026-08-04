@@ -135,6 +135,12 @@ class _WingmanAppState extends State<WingmanApp> {
     });
   }
 
+  void _logOutSigner() {
+    setState(() {
+      _config = _config.copyWith(deviceSecret: '');
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -170,6 +176,7 @@ class _WingmanAppState extends State<WingmanApp> {
       bridge: _bridge,
       signerStore: _signerStore,
       onConfigChanged: _updateConfig,
+      onLogOut: _logOutSigner,
     );
   }
 }

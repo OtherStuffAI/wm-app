@@ -15,6 +15,7 @@ class ShellHome extends StatefulWidget {
     required this.bridge,
     required this.signerStore,
     required this.onConfigChanged,
+    this.onLogOut,
     super.key,
   });
 
@@ -22,6 +23,7 @@ class ShellHome extends StatefulWidget {
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
+  final VoidCallback? onLogOut;
 
   @override
   State<ShellHome> createState() => _ShellHomeState();
@@ -148,6 +150,7 @@ class _ShellHomeState extends State<ShellHome> {
                     onOpenSetup: () => _selectSurface(ShellSurface.setup),
                     onOpenSigner: () => _selectSurface(ShellSurface.signer),
                     onOpenStatus: () => _selectSurface(ShellSurface.status),
+                    onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
                   ),
                 ],
               ),
@@ -169,6 +172,7 @@ class _ShellHomeState extends State<ShellHome> {
       onOpenSetup: () => _selectSurface(ShellSurface.setup),
       onOpenSigner: () => _selectSurface(ShellSurface.signer),
       onOpenStatus: () => _selectSurface(ShellSurface.status),
+      onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );
   }
 
@@ -215,6 +219,32 @@ class _ShellHomeState extends State<ShellHome> {
   Future<void> _clearBrowserData() async {
     await _browserKey.currentState?.clearBrowserData();
   }
+
+  Future<void> _confirmLogOut() async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Log out?'),
+            content: const Text(
+              'This locks the signer and clears the private key from this app session. '
+              'The encrypted signer vault stays on this device, so you can unlock it again with your PIN.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(true),
+                icon: const Icon(Icons.logout),
+                label: const Text('Log out'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (confirmed) widget.onLogOut?.call();
+  }
 }
 
 enum ShellSurface {
@@ -231,12 +261,14 @@ class _AvatarMenu extends StatelessWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.onLogOut,
   });
 
   final String deviceNpub;
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final VoidCallback? onLogOut;
 
   @override
   Widget build(BuildContext context) {
@@ -254,30 +286,42 @@ class _AvatarMenu extends StatelessWidget {
             onOpenSigner();
           case _AvatarMenuAction.status:
             onOpenStatus();
+          case _AvatarMenuAction.logOut:
+            onLogOut?.call();
         }
       },
-      itemBuilder: (context) => const [
-        PopupMenuItem(
+      itemBuilder: (context) => [
+        const PopupMenuItem(
           value: _AvatarMenuAction.setup,
           child: ListTile(
             leading: Icon(Icons.tune),
             title: Text('Setup'),
           ),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _AvatarMenuAction.signer,
           child: ListTile(
             leading: Icon(Icons.shield_outlined),
             title: Text('Signer'),
           ),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _AvatarMenuAction.status,
           child: ListTile(
             leading: Icon(Icons.monitor_heart_outlined),
             title: Text('Status'),
           ),
         ),
+        if (onLogOut != null) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: _AvatarMenuAction.logOut,
+            child: ListTile(
+              leading: Icon(Icons.logout),
+              title: Text('Log out'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -293,4 +337,5 @@ enum _AvatarMenuAction {
   setup,
   signer,
   status,
+  logOut,
 }

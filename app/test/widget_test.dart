@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +11,7 @@ import 'package:wingman_app/src/app.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/signer_vault.dart';
+import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
 import 'package:wingman_app/src/features/shell/shell_home.dart';
 
@@ -23,10 +26,113 @@ void main() {
         0;
   }
 
+  Rect browserContentViewportRect(WidgetTester tester) {
+    return tester.getRect(
+      find.byKey(const ValueKey('browser-content-viewport')),
+    );
+  }
+
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
     installFakeWebViewPlatform();
+  });
+
+  testWidgets('Android sends touch gestures directly to embedded web views',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BrowserScreen(
+              config: AppConfig.defaults(),
+              bridge: NativeCoreBridge(),
+              signerStore: SignerStore(),
+              onOpenDrawer: () {},
+              onOpenSetup: () {},
+              onOpenSigner: () {},
+              onOpenStatus: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final webView = tester.widget<WebViewWidget>(find.byType(WebViewWidget));
+      expect(webView.gestureRecognizers, hasLength(1));
+      expect(
+        webView.gestureRecognizers.single.constructor(),
+        isA<EagerGestureRecognizer>(),
+      );
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets(
+      'address controls overlay the unchanged web viewport at narrow and wide sizes',
+      (tester) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+
+    for (final size in <Size>[
+      const Size(360, 640),
+      const Size(1280, 800),
+    ]) {
+      tester.view.physicalSize = size;
+      installFakeWebViewPlatform();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BrowserScreen(
+              config: AppConfig.defaults(),
+              bridge: NativeCoreBridge(),
+              signerStore: SignerStore(),
+              onOpenDrawer: () {},
+              onOpenSetup: () {},
+              onOpenSigner: () {},
+              onOpenStatus: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final hiddenViewport = browserContentViewportRect(tester);
+      expect(find.byTooltip('Back'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('tab-1')));
+      await tester.pump();
+
+      expect(browserContentViewportRect(tester), hiddenViewport);
+      expect(find.byTooltip('Back'), findsOneWidget);
+      final overlay = tester.getRect(
+        find.byKey(const ValueKey('browser-address-bar-overlay')),
+      );
+      expect(overlay.top, hiddenViewport.top);
+      expect(overlay.left, hiddenViewport.left);
+      expect(overlay.right, hiddenViewport.right);
+      expect(overlay.bottom, lessThan(hiddenViewport.bottom));
+
+      final targetUrl = 'https://${size.width.toInt()}.example';
+      await tester.enterText(find.byType(TextField), targetUrl);
+      await tester.tap(find.byTooltip('Go'));
+      await tester.pump();
+
+      expect(fakeLoadedRequestUrls, contains(targetUrl));
+      expect(browserContentViewportRect(tester), hiddenViewport);
+
+      await tester.pump(const Duration(seconds: 6));
+      expect(find.byTooltip('Back'), findsNothing);
+      expect(browserContentViewportRect(tester), hiddenViewport);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
   });
 
   testWidgets('Wingman shell renders browser-first navigation', (tester) async {
@@ -42,6 +148,12 @@ void main() {
     expect(
       fakeLoadedRequestUrls,
       contains('https://near-tea-crab.rick.runwingman.com'),
+    );
+    expect(
+      fakeExecutedJavaScripts.any(
+        (script) => script.contains("'-webkit-text-size-adjust', 'none'"),
+      ),
+      isTrue,
     );
 
     await tester.pump(const Duration(seconds: 6));
@@ -408,6 +520,44 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('Focus Mode keeps web content inside device safe areas',
+      (tester) async {
+    const safePadding = EdgeInsets.fromLTRB(8, 44, 8, 34);
+    final config = AppConfig.defaults().copyWith(
+      deviceSecret: 'nsec-placeholder',
+      deviceNpub: 'npub-safe-area',
+      devicePublicKeyHex: 'abcdef',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(padding: safePadding),
+          child: ShellHome(
+            config: config,
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onConfigChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Enter Focus Mode'));
+    await tester.pump();
+
+    final webViewStack = find.byType(IndexedStack).last;
+    final webViewRect = tester.getRect(webViewStack);
+    expect(webViewRect.top, safePadding.top);
+    expect(webViewRect.left, safePadding.left);
+    expect(
+      webViewRect.bottom,
+      tester.view.physicalSize.height / tester.view.devicePixelRatio -
+          safePadding.bottom,
+    );
+  });
+
   testWidgets('Wingman browser edits and persists local Nostr profile',
       (tester) async {
     final config = AppConfig.defaults().copyWith(
@@ -529,5 +679,37 @@ void main() {
     expect(find.text('Nostr private key'), findsOneWidget);
     expect(find.text('PIN'), findsOneWidget);
     expect(find.text('Confirm PIN'), findsOneWidget);
+  });
+
+  testWidgets('logging out asks for confirmation and locks the signer',
+      (tester) async {
+    var loggedOut = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            deviceSecret: 'nsec-placeholder',
+            deviceNpub: 'npub-logout',
+            devicePublicKeyHex: 'abcdef',
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+          onLogOut: () => loggedOut = true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Log out'));
+    await tester.pumpAndSettle();
+    expect(find.text('Log out?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Log out'));
+    await tester.pumpAndSettle();
+
+    expect(loggedOut, isTrue);
   });
 }

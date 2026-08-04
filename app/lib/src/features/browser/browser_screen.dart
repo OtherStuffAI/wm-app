@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +25,7 @@ class BrowserScreen extends StatefulWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.onLogOut,
     super.key,
   });
 
@@ -33,12 +36,17 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final VoidCallback? onLogOut;
 
   @override
   State<BrowserScreen> createState() => BrowserScreenState();
 }
 
 class BrowserScreenState extends State<BrowserScreen> {
+  static final Set<Factory<OneSequenceGestureRecognizer>>
+      _androidWebViewGestureRecognizers = {
+    const Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
+  };
   final List<BrowserTab> _tabs = [];
   int _activeTabId = 0;
   int _nextTabId = 1;
@@ -103,15 +111,19 @@ class BrowserScreenState extends State<BrowserScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (!_focusMode) _buildTabBar(context),
-            if (!_focusMode) _buildAddressBar(context),
             Expanded(
-              child: IndexedStack(
-                index: _activeTabIndex,
+              child: Stack(
+                key: const ValueKey('browser-content-viewport'),
+                fit: StackFit.expand,
                 children: [
-                  for (final tab in _tabs)
-                    WebViewWidget(
-                      key: ValueKey(tab.id),
-                      controller: tab.controller,
+                  _buildWebViewStack(),
+                  if (!_focusMode && _addressBarVisible)
+                    Positioned(
+                      key: const ValueKey('browser-address-bar-overlay'),
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildAddressBar(context),
                     ),
                 ],
               ),
@@ -143,6 +155,24 @@ class BrowserScreenState extends State<BrowserScreen> {
           ),
       ],
     );
+  }
+
+  Widget _buildWebViewStack() {
+    final stack = IndexedStack(
+      index: _activeTabIndex,
+      children: [
+        for (final tab in _tabs)
+          WebViewWidget(
+            key: ValueKey(tab.id),
+            controller: tab.controller,
+            gestureRecognizers: defaultTargetPlatform == TargetPlatform.android
+                ? _androidWebViewGestureRecognizers
+                : const <Factory<OneSequenceGestureRecognizer>>{},
+          ),
+      ],
+    );
+    if (!_focusMode) return stack;
+    return SafeArea(child: stack);
   }
 
   Widget _buildTabBar(BuildContext context) {
@@ -239,6 +269,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                 onOpenSetup: widget.onOpenSetup,
                 onOpenSigner: widget.onOpenSigner,
                 onOpenStatus: widget.onOpenStatus,
+                onLogOut: widget.onLogOut,
               ),
             ],
           ),
@@ -248,15 +279,14 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   Widget _buildAddressBar(BuildContext context) {
-    if (!_addressBarVisible) return const SizedBox.shrink();
     final tab = _activeTab;
     final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
+    return Material(
+      color: theme.colorScheme.surface,
+      elevation: 6,
+      shadowColor: theme.colorScheme.shadow,
+      shape: Border(
+        bottom: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
@@ -973,9 +1003,28 @@ class BrowserScreenState extends State<BrowserScreen> {
               : _titleForUrl(url);
     });
     await _refreshNavigationState(tab);
+    await _applyFlightDeckDisplayDefaults(tab, url);
     await _injectTabCapture(tab);
     await _injectIfTrusted(tab);
     _schedulePersistTabs();
+  }
+
+  Future<void> _applyFlightDeckDisplayDefaults(
+    BrowserTab tab,
+    String url,
+  ) async {
+    final pageOrigin = SignerPolicy.normalizeOrigin(url);
+    final flightDeckOrigin =
+        SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
+    if (pageOrigin.isEmpty || pageOrigin != flightDeckOrigin) return;
+    await tab.controller.runJavaScript('''
+(() => {
+  const root = document.documentElement;
+  if (!root) return;
+  root.style.setProperty('-webkit-text-size-adjust', 'none');
+  root.style.setProperty('text-size-adjust', 'none');
+})();
+''');
   }
 
   String _homePageHtml({
@@ -2064,6 +2113,7 @@ class _BrowserAvatarMenu extends StatelessWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.onLogOut,
   });
 
   final String deviceNpub;
@@ -2072,6 +2122,7 @@ class _BrowserAvatarMenu extends StatelessWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final VoidCallback? onLogOut;
 
   @override
   Widget build(BuildContext context) {
@@ -2096,6 +2147,8 @@ class _BrowserAvatarMenu extends StatelessWidget {
             onOpenSigner();
           case _BrowserAvatarAction.status:
             onOpenStatus();
+          case _BrowserAvatarAction.logOut:
+            onLogOut?.call();
         }
       },
       itemBuilder: (context) => [
@@ -2143,6 +2196,16 @@ class _BrowserAvatarMenu extends StatelessWidget {
             title: Text('Status'),
           ),
         ),
+        if (onLogOut != null) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: _BrowserAvatarAction.logOut,
+            child: ListTile(
+              leading: Icon(Icons.logout),
+              title: Text('Log out'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -2183,6 +2246,7 @@ enum _BrowserAvatarAction {
   setup,
   signer,
   status,
+  logOut,
 }
 
 class _ProfileAvatar extends StatelessWidget {
