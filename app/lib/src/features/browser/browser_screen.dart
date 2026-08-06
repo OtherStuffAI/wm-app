@@ -48,6 +48,8 @@ class BrowserScreenState extends State<BrowserScreen> {
     const Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
   };
   final List<BrowserTab> _tabs = [];
+  final ScrollController _tabStripController = ScrollController();
+  double _tabItemExtent = 194;
   int _activeTabId = 0;
   int _nextTabId = 1;
   Timer? _addressBarHideTimer;
@@ -96,6 +98,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     unawaited(_persistTabsNow());
     _persistTabsTimer?.cancel();
     _addressBarHideTimer?.cancel();
+    _tabStripController.dispose();
     for (final tab in _tabs) {
       tab.dispose();
     }
@@ -179,7 +182,11 @@ class BrowserScreenState extends State<BrowserScreen> {
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
-    final pinnedTabWidth = (availableWidth - 210).clamp(96.0, 190.0);
+    // Reserve enough room for the fixed actions and a usable user-tab viewport.
+    final pinnedTabWidth = (availableWidth - 292).clamp(96.0, 190.0);
+    final userTabWidth =
+        (availableWidth - pinnedTabWidth - 208).clamp(80.0, 190.0);
+    _tabItemExtent = userTabWidth + 4;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest,
@@ -213,8 +220,11 @@ class BrowserScreenState extends State<BrowserScreen> {
               ],
               Expanded(
                 child: ReorderableListView.builder(
-                  padding: const EdgeInsets.only(left: 4),
+                  key: const ValueKey('browser-tab-strip'),
+                  scrollController: _tabStripController,
+                  padding: const EdgeInsets.only(left: 4, right: 12),
                   scrollDirection: Axis.horizontal,
+                  itemExtent: _tabItemExtent,
                   buildDefaultDragHandles: false,
                   itemCount: _userTabCount,
                   onReorderItem: _reorderUserTabs,
@@ -232,12 +242,13 @@ class BrowserScreenState extends State<BrowserScreen> {
                     return Padding(
                       key: ValueKey('tab-${tab.id}'),
                       padding: const EdgeInsets.only(right: 4),
-                      child: ReorderableDragStartListener(
+                      child: _TabReorderHandle(
                         index: index,
                         child: _BrowserTabButton(
                           title: tab.label,
                           active: active,
                           closeable: true,
+                          width: userTabWidth,
                           onPressed: () => _activateTab(tab.id),
                           onClose: () => _closeTab(tab.id),
                         ),
@@ -426,6 +437,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _activeTabId = _tabs[normalizedIndex].id;
     });
+    _revealUserTab(_activeTabId);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
   }
@@ -468,6 +480,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     });
     if (activate) {
+      _revealUserTab(id);
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadAddressForTab(tab, url);
@@ -536,6 +549,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     });
     if (activate) {
+      _revealUserTab(id);
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadHomeForTab(tab);
@@ -550,9 +564,29 @@ class BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _activeTabId = id;
     });
+    _revealUserTab(id);
     _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
+  }
+
+  void _revealUserTab(int id) {
+    if (_tabs.isNotEmpty && _tabs.first.id == id) return;
+    final index = _tabs.indexWhere((tab) => tab.id == id) - 1;
+    if (index < 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_tabStripController.hasClients) return;
+      final position = _tabStripController.position;
+      final centeredOffset = index * _tabItemExtent -
+          (position.viewportDimension - _tabItemExtent)
+                  .clamp(0.0, double.infinity) /
+              2;
+      _tabStripController.animateTo(
+        centeredOffset.clamp(0.0, position.maxScrollExtent),
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   void _closeTab(int id) {
@@ -568,6 +602,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       _tabs.removeAt(index);
       _activeTabId = nextActiveId;
     });
+    _revealUserTab(nextActiveId);
     _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
     _schedulePersistTabs();
@@ -2018,6 +2053,34 @@ class BrowserScreenState extends State<BrowserScreen> {
   };
 })();
 ''';
+  }
+}
+
+class _TabReorderHandle extends StatelessWidget {
+  const _TabReorderHandle({
+    required this.index,
+    required this.child,
+  });
+
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final isTouchPlatform = switch (defaultTargetPlatform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      _ => false,
+    };
+    if (isTouchPlatform) {
+      return ReorderableDelayedDragStartListener(
+        index: index,
+        child: child,
+      );
+    }
+    return ReorderableDragStartListener(
+      index: index,
+      child: child,
+    );
   }
 }
 
