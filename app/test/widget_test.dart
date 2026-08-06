@@ -550,26 +550,33 @@ void main() {
     await tester.pump();
 
     expect(activeBrowserStackIndex(tester), 1);
-    expect(find.byTooltip('Exit Focus Mode'), findsOneWidget);
+    expect(find.byTooltip('Exit Focus Mode'), findsNothing);
     expect(find.byTooltip('Enter Focus Mode'), findsNothing);
     expect(find.byTooltip('Open menu'), findsNothing);
     expect(find.byTooltip('New tab'), findsNothing);
     expect(find.byTooltip('Profile'), findsNothing);
-    expect(find.bySemanticsLabel('Exit Focus Mode'), findsOneWidget);
+    expect(find.bySemanticsLabel('Exit Focus Mode'), findsNothing);
     expect(find.text('Flight Deck'), findsNothing);
     expect(find.text('Wingman Home'), findsNothing);
     expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
 
-    final restoreButton = tester.widget<IconButton>(
-      find.byKey(const ValueKey('exit-focus-mode-button')),
-    );
-    expect(restoreButton.icon, isA<Icon>());
-    expect((restoreButton.icon as Icon).icon, Icons.fullscreen);
-    expect(tester.getSize(find.byType(IconButton).last).width,
-        greaterThanOrEqualTo(48));
+    expect(find.byKey(const ValueKey('exit-focus-mode-button')), findsNothing);
 
-    await tester.tap(find.byTooltip('Exit Focus Mode'));
-    await tester.pump();
+    await tester.dragFrom(const Offset(0, 320), const Offset(280, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Show controls'), findsOneWidget);
+    expect(find.byKey(const ValueKey('show-controls-drawer-action')),
+        findsOneWidget);
+    expect(find.bySemanticsLabel('Show controls'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('show-controls-drawer-action')))
+          .height,
+      greaterThanOrEqualTo(48),
+    );
+
+    await tester.tap(find.text('Show controls'));
+    await tester.pumpAndSettle();
 
     expect(activeBrowserStackIndex(tester), 1);
     expect(find.byTooltip('Exit Focus Mode'), findsNothing);
@@ -584,7 +591,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Enter Focus Mode'));
     await tester.pump();
-    expect(find.byTooltip('Exit Focus Mode'), findsOneWidget);
+    expect(find.byTooltip('Exit Focus Mode'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -639,9 +646,11 @@ void main() {
     expect(webViewRect.left, safePadding.left);
     expect(
       webViewRect.bottom,
-      tester.view.physicalSize.height / tester.view.devicePixelRatio -
-          safePadding.bottom,
+      tester.view.physicalSize.height / tester.view.devicePixelRatio,
     );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('Wingman browser edits and persists local Nostr profile',

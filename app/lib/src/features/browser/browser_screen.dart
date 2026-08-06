@@ -25,6 +25,7 @@ class BrowserScreen extends StatefulWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.onFocusModeChanged,
     this.onLogOut,
     super.key,
   });
@@ -36,6 +37,7 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final ValueChanged<bool>? onFocusModeChanged;
   final VoidCallback? onLogOut;
 
   @override
@@ -133,29 +135,6 @@ class BrowserScreenState extends State<BrowserScreen> {
             ),
           ],
         ),
-        if (_focusMode)
-          SafeArea(
-            minimum: const EdgeInsets.all(12),
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Material(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                elevation: 4,
-                shape: const CircleBorder(),
-                child: Semantics(
-                  label: 'Exit Focus Mode',
-                  button: true,
-                  excludeSemantics: true,
-                  child: IconButton(
-                    key: const ValueKey('exit-focus-mode-button'),
-                    tooltip: 'Exit Focus Mode',
-                    onPressed: _exitFocusMode,
-                    icon: const Icon(Icons.fullscreen),
-                  ),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -175,7 +154,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       ],
     );
     if (!_focusMode) return stack;
-    return SafeArea(child: stack);
+    return SafeArea(bottom: false, child: stack);
   }
 
   Widget _buildTabBar(BuildContext context) {
@@ -354,12 +333,15 @@ class BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _focusMode = true;
     });
+    widget.onFocusModeChanged?.call(true);
   }
 
-  void _exitFocusMode() {
+  void exitFocusMode() {
+    if (!_focusMode) return;
     setState(() {
       _focusMode = false;
     });
+    widget.onFocusModeChanged?.call(false);
   }
 
   Future<void> _loadProfile() async {
