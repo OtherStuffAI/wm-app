@@ -55,6 +55,42 @@ The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status 
 
 The current desktop build can register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a `window.nostr` bridge into WebView pages. Device key generation/import, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart so they work in the Flutter app on desktop and mobile without shelling out to Rust.
 
+## Where your Nostr private key is stored
+
+WM-App does **not** put your raw `nsec` directly in Keychain, Android
+Keystore, or a Linux keyring. Instead, it uses a two-part local vault:
+
+- Your raw `nsec` is encrypted with AES-256-GCM. The ciphertext and public
+  information such as your `npub`, together with the salt, nonce, and other
+  data needed to unlock the vault, are stored in the app's normal preferences.
+- A 256-bit vault key is derived with PBKDF2-HMAC-SHA256 from your PIN and a
+  random 32-byte per-install secret, using a separate random salt. The current
+  code uses 210,000 PBKDF2 iterations.
+- Only the random per-install secret is placed in the operating system's secure
+  storage. The PIN is never stored. Your clear `nsec` exists only in app memory
+  while the signer is unlocked.
+
+The secure-storage location for that random per-install secret depends on your
+device:
+
+- **iPhone and iPad:** Apple Keychain. WM-App uses the package defaults: the
+  item is accessible while the device is unlocked and iCloud Keychain
+  synchronisation is off.
+- **Android:** AES-GCM encrypted storage. Under the package defaults, its data
+  encryption key is wrapped with RSA-OAEP using a wrapping key protected by
+  Android Keystore. This is the extra protection for the random per-install
+  secret, not storage of the raw `nsec` itself.
+- **macOS:** Apple Keychain. WM-App explicitly selects traditional Keychain
+  mode (`usesDataProtectionKeychain: false`).
+- **Linux:** `libsecret`, which talks to the desktop Secret Service—normally
+  GNOME Keyring or KDE KWallet.
+
+These are the settings in the current app. WM-App does not currently request
+Secure Enclave protection or native biometric/user-presence enforcement. It
+also does not promise that vault data will survive uninstalling and
+reinstalling the app, or that secure-storage keys are hardware-backed on every
+device.
+
 The browser prototype has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
 prompt-backed `signEvent`, empty `getRelays`, and prompt-backed
@@ -75,14 +111,8 @@ with Flight Deck and Rick Autopilot bookmarks:
 - Rick Autopilot URL: `https://rick.runwingman.com`
 - Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, `near-tea-crab.rick.runwingman.com`, and `rick.runwingman.com`
 
-On first launch, the app asks for the nsec to sign with and a local PIN. The
-nsec is encrypted into the local signer vault and is only held in memory after
-unlocking the app session. The vault stores AES-GCM ciphertext in the local app
-store and derives the encryption key from:
-
-- the PIN;
-- a random per-install device/session secret stored in platform secure storage;
-- a random vault salt.
+On first launch, the app asks for the `nsec` to sign with and a local PIN, then
+creates the local signer vault described above.
 
 Do not put signer nsecs in `.env.local` anymore. That file is only for local
 development overrides such as `WMAPP_CORE_BIN`:
