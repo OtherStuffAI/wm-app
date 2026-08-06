@@ -29,17 +29,46 @@ flutter devices
 flutter run -d <simulator-id>
 ```
 
-## Fastest Physical iPhone Path
+## Standalone Physical iPhone Install
 
-Prepare the Flutter build artifact:
+An app that Pete can reopen from the Home Screen must be a release build. Flutter
+debug builds on physical iPhones are development artifacts that expect a Flutter
+tool or Xcode debugger connection; do not install a debug build as a standalone
+test build.
+
+Build the signed release artifact using the existing Xcode signing configuration:
 
 ```bash
 cd ~/code/wm-app
 git pull --ff-only
-./build_ios_debug.sh device
+./build_ios_release.sh
 ```
 
-Then open the Xcode workspace:
+Install and launch it on the connected phone:
+
+```bash
+xcrun devicectl device install app \
+  --device <physical-iphone-udid> \
+  app/build/ios/Release-iphoneos/Runner.app
+xcrun devicectl device process launch \
+  --device <physical-iphone-udid> \
+  com.wingmanbefree.wingmanApp
+```
+
+Keep the phone unlocked during installation and launch. Verify that the Runner
+process remains present and visually confirm that the first Flutter screen
+renders; installation by itself is not launch verification.
+
+## Interactive Debugging On A Physical iPhone
+
+Use Xcode or `flutter run` when an attached debugger is intended:
+
+```bash
+cd ~/code/wm-app/app
+flutter run -d <physical-iphone-udid>
+```
+
+Alternatively, open the Xcode workspace and press Run:
 
 ```bash
 open app/ios/Runner.xcworkspace
@@ -91,7 +120,8 @@ Choose the developer profile and trust it.
 
 - Browser and signer flows are the main mobile test target right now.
 - Desktop-only process-backed features should report unavailable on iPhone until those paths are made native.
-- The physical-device helper builds with `--no-codesign`; Xcode handles signing when you run to the phone.
+- `build_ios_release.sh` uses the existing Xcode project signing configuration and produces the standalone device artifact.
+- `build_ios_debug.sh device` remains available only for debugger-attached development; it builds with `--no-codesign` and Xcode handles signing when you run to the phone.
 - If dependencies fail, run:
 
 ```bash
@@ -111,4 +141,3 @@ For a build other people can install without Xcode:
 3. Archive from Xcode: `Product -> Archive`.
 4. Upload through Xcode Organizer.
 5. Add testers in App Store Connect TestFlight.
-
