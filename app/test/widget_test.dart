@@ -220,75 +220,90 @@ void main() {
     expect(fakeClearCookieCalls, 1);
   });
 
-  testWidgets('iPhone-width tab strip scrolls fully to and selects Autopilot',
+  testWidgets('iPhone-width strip scrolls Flight Deck away and keeps it first',
       (tester) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(393, 852);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: BrowserScreen(
-            config: AppConfig.defaults(),
-            bridge: NativeCoreBridge(),
-            signerStore: SignerStore(),
-            onOpenDrawer: () {},
-            onOpenSetup: () {},
-            onOpenSigner: () {},
-            onOpenStatus: () {},
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BrowserScreen(
+              config: AppConfig.defaults(),
+              bridge: NativeCoreBridge(),
+              signerStore: SignerStore(),
+              onOpenDrawer: () {},
+              onOpenSetup: () {},
+              onOpenSigner: () {},
+              onOpenStatus: () {},
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(activeBrowserStackIndex(tester), 0);
-    await tester.tap(find.byTooltip('New tab'));
-    await tester.pump();
-
-    for (final entry in <(String, String)>[
-      ('docs', 'https://docs.example'),
-      ('files', 'https://files.example'),
-      ('autopilot', 'https://rick.runwingman.com'),
-    ]) {
-      submitFakeJavaScriptMessage(
-        controllerIndex: 1,
-        channel: 'WingmanSigner',
-        message:
-            '{"id":"${entry.$1}","method":"openTab","params":{"url":"${entry.$2}"}}',
       );
       await tester.pumpAndSettle();
+
+      const flightDeckKey = ValueKey('tab-1');
+      expect(activeBrowserStackIndex(tester), 0);
+      expect(find.byKey(flightDeckKey), findsOneWidget);
+      await tester.tap(find.byTooltip('New tab'));
+      await tester.pump();
+
+      for (final entry in <(String, String)>[
+        ('docs', 'https://docs.example'),
+        ('files', 'https://files.example'),
+        ('autopilot', 'https://rick.runwingman.com'),
+      ]) {
+        submitFakeJavaScriptMessage(
+          controllerIndex: 1,
+          channel: 'WingmanSigner',
+          message:
+              '{"id":"${entry.$1}","method":"openTab","params":{"url":"${entry.$2}"}}',
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final strip = find.byKey(const ValueKey('browser-tab-strip'));
+      final autopilot = find.byKey(const ValueKey('tab-5'));
+      final stripRect = tester.getRect(strip);
+
+      await tester.dragUntilVisible(
+        autopilot,
+        strip,
+        const Offset(-100, 0),
+      );
+      await tester.drag(strip, const Offset(-200, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(flightDeckKey), findsNothing);
+      final autopilotRect = tester.getRect(autopilot);
+      expect(autopilotRect.left, greaterThanOrEqualTo(stripRect.left));
+      expect(autopilotRect.right, lessThanOrEqualTo(stripRect.right));
+      expect(autopilotRect.width, greaterThanOrEqualTo(96));
+
+      await tester.tap(find.text('rick.runwingman.com'));
+      await tester.pump();
+      expect(activeBrowserStackIndex(tester), 4);
+
+      tester.widget<ReorderableListView>(strip).onReorderItem!.call(4, 3);
+      await tester.pumpAndSettle();
+      expect(activeBrowserStackIndex(tester), 3);
+
+      await tester.drag(strip, const Offset(1000, 0));
+      await tester.pumpAndSettle();
+      expect(find.byKey(flightDeckKey), findsOneWidget);
+      expect(
+          tester.getRect(find.byKey(flightDeckKey)).left, stripRect.left + 4);
+      await tester.tap(find.text('Flight Deck'));
+      await tester.pumpAndSettle();
+      expect(activeBrowserStackIndex(tester), 0);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      debugDefaultTargetPlatformOverride = null;
     }
-
-    final strip = find.byKey(const ValueKey('browser-tab-strip'));
-    final autopilot = find.byKey(const ValueKey('tab-5'));
-    final stripRect = tester.getRect(strip);
-
-    await tester.tap(find.byKey(const ValueKey('tab-1')));
-    await tester.pump();
-    await tester.drag(strip, const Offset(600, 0));
-    await tester.pumpAndSettle();
-    expect(autopilot, findsNothing);
-
-    await tester.dragUntilVisible(
-      autopilot,
-      strip,
-      const Offset(-100, 0),
-    );
-    await tester.drag(strip, const Offset(-200, 0));
-    await tester.pumpAndSettle();
-    final autopilotRect = tester.getRect(autopilot);
-    expect(autopilotRect.left, greaterThanOrEqualTo(stripRect.left));
-    expect(autopilotRect.right, lessThanOrEqualTo(stripRect.right));
-    expect(autopilotRect.width, greaterThanOrEqualTo(80));
-
-    await tester.tap(find.text('rick.runwingman.com'));
-    await tester.pump();
-    expect(activeBrowserStackIndex(tester), 4);
-    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('Wingman shell clears browser web state when signer changes',

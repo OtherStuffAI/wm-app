@@ -182,11 +182,10 @@ class BrowserScreenState extends State<BrowserScreen> {
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
-    // Reserve enough room for the fixed actions and a usable user-tab viewport.
-    final pinnedTabWidth = (availableWidth - 292).clamp(96.0, 190.0);
-    final userTabWidth =
-        (availableWidth - pinnedTabWidth - 208).clamp(80.0, 190.0);
-    _tabItemExtent = userTabWidth + 4;
+    // Keep every tab in one viewport. Flight Deck is pinned in the model at
+    // index zero, but scrolls with the rest of the strip.
+    final tabWidth = (availableWidth - 200).clamp(96.0, 190.0);
+    _tabItemExtent = tabWidth + 4;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest,
@@ -205,19 +204,6 @@ class BrowserScreenState extends State<BrowserScreen> {
                 onPressed: widget.onOpenDrawer,
                 icon: const Icon(Icons.menu),
               ),
-              if (_tabs.isNotEmpty) ...[
-                const SizedBox(width: 4),
-                _BrowserTabButton(
-                  key: ValueKey('tab-${_tabs.first.id}'),
-                  title: _tabs.first.label,
-                  active: _tabs.first.id == _activeTabId,
-                  closeable: false,
-                  pinned: true,
-                  width: pinnedTabWidth,
-                  onPressed: () => _activateTab(_tabs.first.id),
-                  onClose: () {},
-                ),
-              ],
               Expanded(
                 child: ReorderableListView.builder(
                   key: const ValueKey('browser-tab-strip'),
@@ -226,8 +212,8 @@ class BrowserScreenState extends State<BrowserScreen> {
                   scrollDirection: Axis.horizontal,
                   itemExtent: _tabItemExtent,
                   buildDefaultDragHandles: false,
-                  itemCount: _userTabCount,
-                  onReorderItem: _reorderUserTabs,
+                  itemCount: _tabs.length,
+                  onReorderItem: _reorderTabs,
                   proxyDecorator: (child, index, animation) {
                     return FadeTransition(
                       opacity: animation.drive(
@@ -237,22 +223,23 @@ class BrowserScreenState extends State<BrowserScreen> {
                     );
                   },
                   itemBuilder: (context, index) {
-                    final tab = _tabs[index + 1];
+                    final tab = _tabs[index];
                     final active = tab.id == _activeTabId;
+                    final button = _BrowserTabButton(
+                      title: tab.label,
+                      active: active,
+                      closeable: !tab.pinned,
+                      pinned: tab.pinned,
+                      width: tabWidth,
+                      onPressed: () => _activateTab(tab.id),
+                      onClose: () => _closeTab(tab.id),
+                    );
                     return Padding(
                       key: ValueKey('tab-${tab.id}'),
                       padding: const EdgeInsets.only(right: 4),
-                      child: _TabReorderHandle(
-                        index: index,
-                        child: _BrowserTabButton(
-                          title: tab.label,
-                          active: active,
-                          closeable: true,
-                          width: userTabWidth,
-                          onPressed: () => _activateTab(tab.id),
-                          onClose: () => _closeTab(tab.id),
-                        ),
-                      ),
+                      child: tab.pinned
+                          ? button
+                          : _TabReorderHandle(index: index, child: button),
                     );
                   },
                 ),
@@ -356,8 +343,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     return index < 0 ? 0 : index;
   }
 
-  int get _userTabCount => _tabs.length > 1 ? _tabs.length - 1 : 0;
-
   BrowserTab? _tabById(int id) {
     for (final tab in _tabs) {
       if (tab.id == id) return tab;
@@ -437,7 +422,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     setState(() {
       _activeTabId = _tabs[normalizedIndex].id;
     });
-    _revealUserTab(_activeTabId);
+    _revealTab(_activeTabId);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
   }
@@ -480,7 +465,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     });
     if (activate) {
-      _revealUserTab(id);
+      _revealTab(id);
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadAddressForTab(tab, url);
@@ -549,7 +534,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     });
     if (activate) {
-      _revealUserTab(id);
+      _revealTab(id);
       _revealAddressBar(_newTabAddressReveal);
     }
     _loadHomeForTab(tab);
@@ -558,21 +543,21 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   void _activateTab(int id) {
     if (_activeTabId == id) {
+      _revealTab(id);
       _revealAddressBar(_tabClickAddressReveal);
       return;
     }
     setState(() {
       _activeTabId = id;
     });
-    _revealUserTab(id);
+    _revealTab(id);
     _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
   }
 
-  void _revealUserTab(int id) {
-    if (_tabs.isNotEmpty && _tabs.first.id == id) return;
-    final index = _tabs.indexWhere((tab) => tab.id == id) - 1;
+  void _revealTab(int id) {
+    final index = _tabs.indexWhere((tab) => tab.id == id);
     if (index < 0) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_tabStripController.hasClients) return;
@@ -602,7 +587,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       _tabs.removeAt(index);
       _activeTabId = nextActiveId;
     });
-    _revealUserTab(nextActiveId);
+    _revealTab(nextActiveId);
     _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
     _schedulePersistTabs();
@@ -916,20 +901,18 @@ class BrowserScreenState extends State<BrowserScreen> {
     _loadAddressForTab(_tabs.first, widget.config.flightDeckUrl);
   }
 
-  void _reorderUserTabs(int oldIndex, int newIndex) {
+  void _reorderTabs(int oldIndex, int newIndex) {
     if (_tabs.length <= 2) return;
-    final oldActualIndex = oldIndex + 1;
-    final newActualIndex = newIndex + 1;
-    if (oldActualIndex == newActualIndex ||
-        oldActualIndex <= 0 ||
-        oldActualIndex >= _tabs.length ||
-        newActualIndex <= 0 ||
-        newActualIndex > _tabs.length) {
+    if (oldIndex <= 0 || oldIndex >= _tabs.length) {
       return;
     }
+    var destination = newIndex;
+    if (oldIndex < destination) destination -= 1;
+    destination = destination.clamp(1, _tabs.length - 1);
+    if (oldIndex == destination) return;
     setState(() {
-      final tab = _tabs.removeAt(oldActualIndex);
-      _tabs.insert(newActualIndex, tab);
+      final tab = _tabs.removeAt(oldIndex);
+      _tabs.insert(destination, tab);
     });
     _schedulePersistTabs();
   }
@@ -2093,7 +2076,6 @@ class _BrowserTabButton extends StatelessWidget {
     required this.onClose,
     this.pinned = false,
     this.width = 190,
-    super.key,
   });
 
   final String title;
