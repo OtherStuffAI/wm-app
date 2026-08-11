@@ -38,6 +38,18 @@ void main() {
     installFakeWebViewPlatform();
   });
 
+  test('default configuration has no packaged service destinations', () {
+    final config = AppConfig.defaults();
+
+    expect(config.towerUrl, isEmpty);
+    expect(config.flightDeckUrl, isEmpty);
+    expect(config.appNpub, isEmpty);
+    expect(config.workspaceId, isEmpty);
+    expect(config.workspaceServiceNpub, isEmpty);
+    expect(config.channelId, isEmpty);
+    expect(config.trustedOrigins, isEmpty);
+  });
+
   testWidgets('Android sends touch gestures directly to embedded web views',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -103,6 +115,8 @@ void main() {
       await tester.pumpAndSettle();
 
       final hiddenViewport = browserContentViewportRect(tester);
+      expect(find.byTooltip('Back'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 6));
       expect(find.byTooltip('Back'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('tab-1')));
@@ -135,7 +149,8 @@ void main() {
     }
   });
 
-  testWidgets('Wingman shell renders browser-first navigation', (tester) async {
+  testWidgets('clean launch renders a neutral browser signer new tab',
+      (tester) async {
     await tester.pumpWidget(
       const WingmanApp(useSignerVault: false),
     );
@@ -143,23 +158,21 @@ void main() {
 
     expect(find.byTooltip('New tab'), findsOneWidget);
     expect(find.byTooltip('Profile'), findsOneWidget);
-    expect(find.byTooltip('Back'), findsNothing);
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(
-      fakeLoadedRequestUrls,
-      contains('https://near-tea-crab.rick.runwingman.com'),
-    );
-    expect(
-      fakeExecutedJavaScripts.any(
-        (script) => script.contains("'-webkit-text-size-adjust', 'none'"),
-      ),
-      isTrue,
-    );
+    expect(find.byTooltip('Back'), findsOneWidget);
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(fakeLoadedHtmlStrings.single,
+        contains('Browser and Nostr signer ready'));
+    expect(fakeLoadedHtmlStrings.single, isNot(contains('Flight Deck')));
+    expect(fakeLoadedHtmlStrings.single, isNot(contains('Tower')));
+    expect(fakeLoadedHtmlStrings.single, isNot(contains('Autopilot')));
+    expect(fakeLoadedHtmlStrings.single, isNot(contains('runwingman.com')));
+    expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
 
     await tester.pump(const Duration(seconds: 6));
     expect(find.byTooltip('Back'), findsNothing);
 
-    await tester.tap(find.text('Flight Deck'));
+    await tester.tap(find.text('New Tab'));
     await tester.pump();
     expect(find.byTooltip('Back'), findsOneWidget);
 
@@ -168,14 +181,8 @@ void main() {
 
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump();
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(find.text('Wingman Home'), findsOneWidget);
-    expect(fakeLoadedHtmlStrings.single, contains('Rick Autopilot'));
-    expect(
-      fakeLoadedHtmlStrings.single,
-      contains('data-wingman-tab-url="https://rick.runwingman.com"'),
-    );
-    expect(fakeLoadedHtmlStrings.single, contains("'openTab'"));
+    expect(find.text('New Tab'), findsNWidgets(2));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains('data-wingman-tab-url')));
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();
@@ -187,8 +194,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Browser').last);
     await tester.pumpAndSettle();
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(find.text('New Tab'), findsNWidgets(2));
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();
@@ -220,7 +226,7 @@ void main() {
     expect(fakeClearCookieCalls, 1);
   });
 
-  testWidgets('iPhone-width strip scrolls Flight Deck away and keeps it first',
+  testWidgets('iPhone-width strip scrolls and reorders ordinary tabs',
       (tester) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -245,9 +251,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      const flightDeckKey = ValueKey('tab-1');
+      const firstTabKey = ValueKey('tab-1');
       expect(activeBrowserStackIndex(tester), 0);
-      expect(find.byKey(flightDeckKey), findsOneWidget);
+      expect(find.byKey(firstTabKey), findsOneWidget);
       await tester.tap(find.byTooltip('New tab'));
       await tester.pump();
 
@@ -277,7 +283,7 @@ void main() {
       await tester.drag(strip, const Offset(-200, 0));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(flightDeckKey), findsNothing);
+      expect(find.byKey(firstTabKey), findsNothing);
       final autopilotRect = tester.getRect(autopilot);
       expect(autopilotRect.left, greaterThanOrEqualTo(stripRect.left));
       expect(autopilotRect.right, lessThanOrEqualTo(stripRect.right));
@@ -293,12 +299,8 @@ void main() {
 
       await tester.drag(strip, const Offset(1000, 0));
       await tester.pumpAndSettle();
-      expect(find.byKey(flightDeckKey), findsOneWidget);
-      expect(
-          tester.getRect(find.byKey(flightDeckKey)).left, stripRect.left + 4);
-      await tester.tap(find.text('Flight Deck'));
-      await tester.pumpAndSettle();
-      expect(activeBrowserStackIndex(tester), 0);
+      expect(find.byKey(firstTabKey), findsOneWidget);
+      expect(tester.getRect(find.byKey(firstTabKey)).left, stripRect.left + 4);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -362,8 +364,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump(const Duration(milliseconds: 200));
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(find.text('New Tab'), findsNWidgets(2));
     expect(find.text('rick.runwingman.com'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -382,10 +383,44 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(find.text('Wingman Home'), findsOneWidget);
+    expect(find.text('New Tab'), findsNWidgets(2));
     expect(find.text('rick.runwingman.com'), findsOneWidget);
     expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+  });
+
+  testWidgets('legacy pinned snapshots retain URLs as ordinary tabs',
+      (tester) async {
+    const signer = 'npub-legacy-tabs';
+    final preferences = SharedPreferencesAsync();
+    await preferences.setString('wingman.browser.last_signer_npub.v1', signer);
+    await preferences.setString(
+      'wingman.browser.tabs.v1.$signer',
+      '{"version":1,"active_index":1,"tabs":['
+          '{"title":"Flight Deck","url":"https://user-flightdeck.example","is_home":false,"pinned":true},'
+          '{"title":"My site","url":"https://user-site.example","is_home":false,"pinned":false}'
+          ']}',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            deviceSecret: 'nsec-placeholder',
+            deviceNpub: signer,
+            devicePublicKeyHex: 'abcdef',
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fakeLoadedRequestUrls, contains('https://user-flightdeck.example'));
+    expect(fakeLoadedRequestUrls, contains('https://user-site.example'));
+    expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    expect(find.byTooltip('Close tab'), findsNWidgets(2));
   });
 
   testWidgets('browser bookmarks add, reload, open in the home tab, and remove',
@@ -667,7 +702,7 @@ void main() {
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump();
     expect(activeBrowserStackIndex(tester), 1);
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('New Tab'), findsNWidgets(2));
     expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
     final controllerCountBeforeFocus = fakeWebViewControllerCreationCount;
@@ -682,8 +717,7 @@ void main() {
     expect(find.byTooltip('New tab'), findsNothing);
     expect(find.byTooltip('Profile'), findsNothing);
     expect(find.bySemanticsLabel('Exit Focus Mode'), findsNothing);
-    expect(find.text('Flight Deck'), findsNothing);
-    expect(find.text('Wingman Home'), findsNothing);
+    expect(find.text('New Tab'), findsNothing);
     expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
 
     expect(find.byKey(const ValueKey('exit-focus-mode-button')), findsNothing);
@@ -710,7 +744,7 @@ void main() {
     expect(find.byTooltip('Open menu'), findsOneWidget);
     expect(find.byTooltip('Profile'), findsOneWidget);
     expect(find.bySemanticsLabel('Enter Focus Mode'), findsOneWidget);
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('New Tab'), findsNWidgets(2));
     expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
     expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
@@ -863,6 +897,13 @@ void main() {
     );
     expect(flightDeckField, findsOneWidget);
 
+    final towerField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Tower URL',
+    );
+    expect(towerField, findsOneWidget);
+
+    await tester.enterText(towerField, 'https://tower.example');
     await tester.enterText(flightDeckField, 'https://example.com/flightdeck');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
@@ -880,8 +921,28 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Flight Deck'), findsOneWidget);
-    expect(fakeLoadedRequestUrls, contains('https://example.com/flightdeck'));
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+
+    final restoredField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Flight Deck URL',
+      ),
+    );
+    final restoredTowerField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Tower URL',
+      ),
+    );
+    expect(restoredField.controller?.text, 'https://example.com/flightdeck');
+    expect(restoredTowerField.controller?.text, 'https://tower.example');
+    expect(fakeLoadedRequestUrls,
+        isNot(contains('https://example.com/flightdeck')));
   });
 
   testWidgets('Wingman app prompts for signer vault on first launch',

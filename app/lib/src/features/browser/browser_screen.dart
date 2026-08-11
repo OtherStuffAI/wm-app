@@ -63,8 +63,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   static const _nip44PolicyTarget = '*';
   static const _newTabAddressReveal = Duration(seconds: 5);
   static const _tabClickAddressReveal = Duration(seconds: 3);
-  static const _homeTitle = 'Wingman Home';
-  static const _rickAutopilotUrl = 'https://rick.runwingman.com';
+  static const _homeTitle = 'New Tab';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
@@ -82,7 +81,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
-    _createFlightDeckTab(activate: true, loadAfterFrame: true);
+    _createHomeTab(activate: true);
     unawaited(_loadProfile());
     _syncWebStateToSigner(resetTabsOnChange: false);
   }
@@ -93,9 +92,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
       unawaited(_loadProfile());
       unawaited(_switchSignerTabs(oldWidget.config.deviceNpub));
-    }
-    if (oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
-      _loadConfiguredUrl();
     }
   }
 
@@ -166,8 +162,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
-    // Keep every tab in one viewport. Flight Deck is pinned in the model at
-    // index zero, but scrolls with the rest of the strip.
+    // Keep every tab in one viewport while allowing the strip to scroll.
     final tabWidth = (availableWidth - 200).clamp(96.0, 190.0);
     _tabItemExtent = tabWidth + 4;
     return DecoratedBox(
@@ -212,8 +207,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                     final button = _BrowserTabButton(
                       title: tab.label,
                       active: active,
-                      closeable: !tab.pinned,
-                      pinned: tab.pinned,
+                      closeable: true,
                       width: tabWidth,
                       onPressed: () => _activateTab(tab.id),
                       onClose: () => _closeTab(tab.id),
@@ -221,9 +215,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                     return Padding(
                       key: ValueKey('tab-${tab.id}'),
                       padding: const EdgeInsets.only(right: 4),
-                      child: tab.pinned
-                          ? button
-                          : _TabReorderHandle(index: index, child: button),
+                      child: _TabReorderHandle(index: index, child: button),
                     );
                   },
                 ),
@@ -534,45 +526,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (persistState) _schedulePersistTabs();
   }
 
-  void _createFlightDeckTab({
-    bool activate = true,
-    bool persistState = true,
-    bool loadAfterFrame = false,
-  }) {
-    final id = _nextTabId++;
-    late final BrowserTab tab;
-    final controller = _createWebViewController(id);
-    final url = widget.config.flightDeckUrl.trim();
-    tab = BrowserTab(
-      id: id,
-      controller: controller,
-      addressController: TextEditingController(text: url),
-      addressFocusNode: FocusNode(),
-      title: 'Flight Deck',
-      pinned: true,
-    );
-    tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
-    setState(() {
-      _tabs.insert(0, tab);
-      if (activate) {
-        _activeTabId = id;
-      }
-    });
-    if (loadAfterFrame) {
-      _loadAddressForTabAfterFrame(tab, url);
-    } else {
-      _loadAddressForTab(tab, url);
-    }
-    if (persistState) _schedulePersistTabs();
-  }
-
-  void _loadAddressForTabAfterFrame(BrowserTab tab, String url) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _tabById(tab.id) != tab) return;
-      _loadAddressForTab(tab, url);
-    });
-  }
-
   void _createHomeTab({
     bool activate = true,
     bool persistState = true,
@@ -640,7 +593,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   void _closeTab(int id) {
     final target = _tabById(id);
-    if (target == null || target.pinned || _tabs.length == 1) return;
+    if (target == null || _tabs.length == 1) return;
     final index = _tabs.indexWhere((tab) => tab.id == id);
     if (index < 0) return;
     final removed = _tabs[index];
@@ -655,19 +608,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
     _schedulePersistTabs();
-  }
-
-  void _loadConfiguredUrl() {
-    if (_tabs.isEmpty) {
-      _createFlightDeckTab(activate: true);
-      return;
-    }
-    final flightDeckTab = _tabs.first;
-    if (!flightDeckTab.pinned) {
-      _ensurePinnedFlightDeckTab();
-      return;
-    }
-    _loadAddressForTab(flightDeckTab, widget.config.flightDeckUrl);
   }
 
   Future<void> clearBrowserData() {
@@ -731,10 +671,10 @@ class BrowserScreenState extends State<BrowserScreen> {
       _clearingWebState = false;
     }
     if (!mounted || !resetTabs) return;
-    _resetTabsToFlightDeck(persistState: false);
+    _resetTabsToHome(persistState: false);
   }
 
-  void _resetTabsToFlightDeck({required bool persistState}) {
+  void _resetTabsToHome({required bool persistState}) {
     final tabs = List<BrowserTab>.from(_tabs);
     for (final tab in tabs) {
       tab.dispose();
@@ -748,7 +688,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
     final wasRestoringTabs = _restoringTabs;
     if (!persistState) _restoringTabs = true;
-    _createFlightDeckTab(activate: true, persistState: persistState);
+    _createHomeTab(activate: true, persistState: persistState);
     _restoringTabs = wasRestoringTabs;
   }
 
@@ -759,7 +699,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final key = _tabsStorageKey(signerNpub);
     if (key == null) {
       if (resetToHomeWhenMissing) {
-        _resetTabsToFlightDeck(persistState: true);
+        _resetTabsToHome(persistState: true);
       }
       return;
     }
@@ -768,7 +708,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final snapshot = _BrowserTabsSnapshot.tryParse(raw);
     if (snapshot == null || snapshot.tabs.isEmpty) {
       if (resetToHomeWhenMissing) {
-        _resetTabsToFlightDeck(persistState: true);
+        _resetTabsToHome(persistState: true);
       }
       return;
     }
@@ -786,9 +726,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       _addressBarHideTimer?.cancel();
     });
 
-    _createFlightDeckTab(activate: false, persistState: false);
     for (final tab in snapshot.tabs) {
-      if (tab.pinned) continue;
       if (tab.isHome || tab.url == null || tab.url!.isEmpty) {
         _createHomeTab(activate: false, persistState: false);
       } else {
@@ -833,7 +771,6 @@ class BrowserScreenState extends State<BrowserScreen> {
                 ? null
                 : (tab.currentUrl ?? tab.addressController.text).trim(),
             isHome: tab.isHome,
-            pinned: tab.pinned,
           ),
       ],
     );
@@ -879,10 +816,6 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   void _loadAddress(String value) {
     final tab = _activeTab;
-    if (tab.pinned) {
-      _createTab(value);
-      return;
-    }
     _loadAddressForTab(tab, value, hideAddressBarAfterLoad: true);
   }
 
@@ -903,7 +836,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome = false;
       tab.currentUrl = uri.toString();
       tab.addressController.text = tab.currentUrl!;
-      tab.title = tab.pinned ? 'Flight Deck' : _titleForUrl(tab.currentUrl!);
+      tab.title = _titleForUrl(tab.currentUrl!);
       tab.message = null;
       if (hideAddressBarAfterLoad) {
         _addressBarHideTimer?.cancel();
@@ -917,10 +850,6 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _loadHomeForTab(BrowserTab tab) {
-    if (tab.pinned) {
-      _loadAddressForTab(tab, widget.config.flightDeckUrl);
-      return;
-    }
     setState(() {
       tab.isHome = true;
       tab.currentUrl = null;
@@ -929,55 +858,21 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.message = null;
     });
     tab.controller.loadHtmlString(
-      _homePageHtml(
-        flightDeckUrl: widget.config.flightDeckUrl,
-        rickAutopilotUrl: _rickAutopilotUrl,
-        savedBookmarks: _bookmarks,
-      ),
+      _homePageHtml(savedBookmarks: _bookmarks),
       baseUrl: 'https://wingman.local/',
     );
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
 
-  void _ensurePinnedFlightDeckTab() {
-    final pinnedIndex = _tabs.indexWhere((tab) => tab.pinned);
-    if (pinnedIndex == 0) {
-      _loadConfiguredUrl();
-      return;
-    }
-    setState(() {
-      if (pinnedIndex > 0) {
-        final pinned = _tabs.removeAt(pinnedIndex);
-        _tabs.insert(0, pinned);
-      } else {
-        final id = _nextTabId++;
-        final controller = _createWebViewController(id);
-        final tab = BrowserTab(
-          id: id,
-          controller: controller,
-          addressController:
-              TextEditingController(text: widget.config.flightDeckUrl.trim()),
-          addressFocusNode: FocusNode(),
-          title: 'Flight Deck',
-          pinned: true,
-        );
-        tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
-        _tabs.insert(0, tab);
-        if (_activeTabId == 0) _activeTabId = id;
-      }
-    });
-    _loadAddressForTab(_tabs.first, widget.config.flightDeckUrl);
-  }
-
   void _reorderTabs(int oldIndex, int newIndex) {
-    if (_tabs.length <= 2) return;
-    if (oldIndex <= 0 || oldIndex >= _tabs.length) {
+    if (_tabs.length <= 1) return;
+    if (oldIndex < 0 || oldIndex >= _tabs.length) {
       return;
     }
     var destination = newIndex;
     if (oldIndex < destination) destination -= 1;
-    destination = destination.clamp(1, _tabs.length - 1);
+    destination = destination.clamp(0, _tabs.length - 1);
     if (oldIndex == destination) return;
     setState(() {
       final tab = _tabs.removeAt(oldIndex);
@@ -1083,11 +978,8 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome = false;
       tab.currentUrl = url;
       tab.addressController.text = url;
-      tab.title = tab.pinned
-          ? 'Flight Deck'
-          : title?.trim().isNotEmpty == true
-              ? title!.trim()
-              : _titleForUrl(url);
+      tab.title =
+          title?.trim().isNotEmpty == true ? title!.trim() : _titleForUrl(url);
     });
     await _refreshNavigationState(tab);
     await _applyFlightDeckDisplayDefaults(tab, url);
@@ -1115,32 +1007,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 ''');
   }
 
-  String _homePageHtml({
-    required String flightDeckUrl,
-    required String rickAutopilotUrl,
-    required List<BrowserBookmark> savedBookmarks,
-  }) {
-    final shortcuts = [
-      _HomeBookmark(
-        label: 'Flight Deck',
-        url: flightDeckUrl,
-        description: 'Workspace, tasks, chats, files, and WApps.',
-      ),
-      const _HomeBookmark(
-        label: 'Rick Autopilot',
-        url: _rickAutopilotUrl,
-        description: 'Sessions, apps, pipelines, and Wingman runtime.',
-      ),
-    ];
-    final shortcutCards = shortcuts.map((bookmark) {
-      return '''
-        <a class="bookmark" href="${_escapeHtml(bookmark.url)}" data-wingman-tab-url="${_escapeHtml(bookmark.url)}">
-          <span class="bookmark-title">${_escapeHtml(bookmark.label)}</span>
-          <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
-          <span class="bookmark-description">${_escapeHtml(bookmark.description)}</span>
-        </a>
-      ''';
-    }).join('\n');
+  String _homePageHtml({required List<BrowserBookmark> savedBookmarks}) {
     final bookmarkCards = savedBookmarks.map((bookmark) {
       return '''
         <article class="bookmark saved-bookmark">
@@ -1161,7 +1028,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wingman Home</title>
+  <title>Wingman New Tab</title>
   <style>
     :root {
       color-scheme: light;
@@ -1263,36 +1130,29 @@ class BrowserScreenState extends State<BrowserScreen> {
 <body>
   <main>
     <h1>Wingman</h1>
+    <p class="empty-bookmarks">Browser and Nostr signer ready. Enter a website in the address bar to begin.</p>
     <h2>Bookmarks</h2>
     $savedSection
-    <h2>Wingman shortcuts</h2>
-    <section class="grid">
-      $shortcutCards
-    </section>
   </main>
   <script>
     (() => {
       let seq = 0;
       document.addEventListener('click', (event) => {
         const target = event.target;
-        const anchor = target && target.closest
-          ? target.closest('a[data-wingman-tab-url]')
-          : null;
         const openBookmark = target && target.closest
           ? target.closest('[data-wingman-bookmark-url]')
           : null;
         const removeBookmark = target && target.closest
           ? target.closest('[data-wingman-remove-bookmark-url]')
           : null;
-        const action = removeBookmark || openBookmark || anchor;
+        const action = removeBookmark || openBookmark;
         if (!action || !window.WingmanSigner) return;
         event.preventDefault();
         let href;
         try {
           href = new URL(
             removeBookmark?.dataset.wingmanRemoveBookmarkUrl ||
-            openBookmark?.dataset.wingmanBookmarkUrl ||
-            anchor.dataset.wingmanTabUrl,
+            openBookmark?.dataset.wingmanBookmarkUrl,
             window.location.href,
           ).href;
         } catch (_) {
@@ -1302,7 +1162,7 @@ class BrowserScreenState extends State<BrowserScreen> {
           id: `home-tab-\${++seq}`,
           method: removeBookmark
             ? 'removeBookmark'
-            : openBookmark ? 'navigateTab' : 'openTab',
+            : 'navigateTab',
           params: { url: href },
         }));
       }, true);
@@ -2235,7 +2095,6 @@ class _BrowserTabButton extends StatelessWidget {
     required this.closeable,
     required this.onPressed,
     required this.onClose,
-    this.pinned = false,
     this.width = 190,
   });
 
@@ -2244,7 +2103,6 @@ class _BrowserTabButton extends StatelessWidget {
   final bool closeable;
   final VoidCallback onPressed;
   final VoidCallback onClose;
-  final bool pinned;
   final double width;
 
   @override
@@ -2274,7 +2132,7 @@ class _BrowserTabButton extends StatelessWidget {
             child: Row(
               children: [
                 Icon(
-                  pinned ? Icons.push_pin_outlined : Icons.public,
+                  Icons.public,
                   size: 16,
                   color: active ? colors.onSurface : colors.onSurfaceVariant,
                 ),
@@ -2687,18 +2545,6 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
   }
 }
 
-class _HomeBookmark {
-  const _HomeBookmark({
-    required this.label,
-    required this.url,
-    required this.description,
-  });
-
-  final String label;
-  final String url;
-  final String description;
-}
-
 class _BrowserTabsSnapshot {
   const _BrowserTabsSnapshot({
     required this.activeIndex,
@@ -2745,20 +2591,17 @@ class _BrowserTabSnapshot {
     required this.title,
     required this.url,
     required this.isHome,
-    required this.pinned,
   });
 
   final String? title;
   final String? url;
   final bool isHome;
-  final bool pinned;
 
   Map<String, dynamic> toJson() {
     return {
       'title': title,
       'url': url,
       'is_home': isHome,
-      'pinned': pinned,
     };
   }
 
@@ -2770,7 +2613,6 @@ class _BrowserTabSnapshot {
       title: value['title']?.toString(),
       url: url == null || url.isEmpty ? null : url,
       isHome: isHome,
-      pinned: value['pinned'] == true,
     );
   }
 }
@@ -2783,7 +2625,6 @@ class BrowserTab {
     required this.addressFocusNode,
     required this.title,
     this.isHome = false,
-    this.pinned = false,
   });
 
   final int id;
@@ -2794,7 +2635,6 @@ class BrowserTab {
   String? currentUrl;
   String? message;
   bool isHome;
-  bool pinned;
   bool canGoBack = false;
   bool canGoForward = false;
 
