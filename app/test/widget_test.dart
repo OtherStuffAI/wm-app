@@ -423,7 +423,7 @@ void main() {
     expect(find.byTooltip('Close tab'), findsNWidgets(2));
   });
 
-  testWidgets('browser bookmarks add, reload, open in the home tab, and remove',
+  testWidgets('browser bookmarks add, rename, reload, open, and remove',
       (tester) async {
     final config = AppConfig.defaults().copyWith(
       deviceSecret: 'nsec-placeholder',
@@ -477,6 +477,33 @@ void main() {
       fakeLoadedHtmlStrings.last,
       contains('data-wingman-remove-bookmark-url'),
     );
+    expect(fakeLoadedHtmlStrings.last, contains('Edit bookmark name'));
+    expect(fakeLoadedHtmlStrings.last, contains('>Cancel</button>'));
+    expect(fakeLoadedHtmlStrings.last, contains('event.key !== \'Escape\''));
+    expect(
+      fakeLoadedHtmlStrings.last,
+      contains('if (!title) {\n          closeEditor(card);'),
+    );
+
+    final homeControllerIndex = fakeWebViewControllerCreationCount - 1;
+    submitFakeJavaScriptMessage(
+      controllerIndex: homeControllerIndex,
+      channel: 'WingmanSigner',
+      message:
+          '{"id":"bookmark-rename","method":"renameBookmark","params":{"url":"$canonicalUrl","title":"  Project board  "}}',
+    );
+    await tester.pumpAndSettle();
+    expect(fakeLoadedHtmlStrings.last, contains('Project board'));
+    expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
+
+    submitFakeJavaScriptMessage(
+      controllerIndex: homeControllerIndex,
+      channel: 'WingmanSigner',
+      message:
+          '{"id":"bookmark-blank","method":"renameBookmark","params":{"url":"$canonicalUrl","title":"   "}}',
+    );
+    await tester.pumpAndSettle();
+    expect(fakeLoadedHtmlStrings.last, contains('Project board'));
 
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -486,6 +513,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
+    expect(fakeLoadedHtmlStrings.last, contains('Project board'));
     final controllerCount = fakeWebViewControllerCreationCount;
     submitFakeJavaScriptMessage(
       controllerIndex: controllerCount - 1,
@@ -499,9 +527,9 @@ void main() {
 
     await tester.tap(find.byTooltip('New tab'));
     await tester.pumpAndSettle();
-    final homeControllerIndex = fakeWebViewControllerCreationCount - 1;
+    final removalHomeControllerIndex = fakeWebViewControllerCreationCount - 1;
     submitFakeJavaScriptMessage(
-      controllerIndex: homeControllerIndex,
+      controllerIndex: removalHomeControllerIndex,
       channel: 'WingmanSigner',
       message:
           '{"id":"bookmark-remove","method":"removeBookmark","params":{"url":"$canonicalUrl"}}',

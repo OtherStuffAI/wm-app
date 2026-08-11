@@ -380,6 +380,21 @@ class BrowserScreenState extends State<BrowserScreen> {
     _notifyBookmarkMenuState();
   }
 
+  Future<bool> _renameBookmark(String url, String title) async {
+    final canonicalUrl = canonicalBrowserBookmarkUrl(url);
+    final normalizedTitle = title.trim();
+    final index = canonicalUrl == null
+        ? -1
+        : _bookmarks.indexWhere((bookmark) => bookmark.url == canonicalUrl);
+    if (index < 0 || normalizedTitle.isEmpty) return false;
+    _bookmarks = List<BrowserBookmark>.from(_bookmarks)
+      ..[index] = _bookmarks[index].renamed(normalizedTitle);
+    await _persistBookmarks();
+    if (!mounted) return true;
+    _reloadHomeTabs();
+    return true;
+  }
+
   Future<void> _loadBookmarksForSigner(String signerNpub) async {
     final bookmarks = await _bookmarkStore.load(signerNpub);
     if (!mounted || widget.config.deviceNpub.trim() != signerNpub.trim()) {
@@ -1015,7 +1030,18 @@ class BrowserScreenState extends State<BrowserScreen> {
             <span class="bookmark-title">${_escapeHtml(bookmark.title)}</span>
             <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
           </button>
-          <button class="bookmark-remove" type="button" data-wingman-remove-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Remove ${_escapeHtml(bookmark.title)} bookmark" title="Remove bookmark">Remove</button>
+          <form class="bookmark-editor" data-wingman-bookmark-editor hidden>
+            <label>
+              <span class="visually-hidden">Bookmark display name</span>
+              <input class="bookmark-title-input" value="${_escapeHtml(bookmark.title)}" data-wingman-original-title="${_escapeHtml(bookmark.title)}" aria-label="Bookmark display name">
+            </label>
+            <button type="submit">Save</button>
+            <button type="button" data-wingman-cancel-bookmark-edit>Cancel</button>
+          </form>
+          <div class="bookmark-actions">
+            <button class="bookmark-edit" type="button" data-wingman-edit-bookmark aria-label="Edit ${_escapeHtml(bookmark.title)} bookmark name" title="Edit bookmark name">Edit</button>
+            <button class="bookmark-remove" type="button" data-wingman-remove-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Remove ${_escapeHtml(bookmark.title)} bookmark" title="Remove bookmark">Remove</button>
+          </div>
         </article>
       ''';
     }).join('\n');
@@ -1109,17 +1135,51 @@ class BrowserScreenState extends State<BrowserScreen> {
       cursor: pointer;
     }
     .bookmark-open:focus-visible,
+    .bookmark-edit:focus-visible,
     .bookmark-remove:focus-visible {
       outline: 2px solid #286a5a;
       outline-offset: -2px;
     }
+    .bookmark-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-top: 1px solid #d8ddd4;
+    }
+    .bookmark-edit,
     .bookmark-remove {
       min-height: 44px;
       border: 0;
-      border-top: 1px solid #d8ddd4;
       background: #f7f8f5;
-      color: #7a2e2e;
       cursor: pointer;
+    }
+    .bookmark-edit {
+      color: #286a5a;
+      border-right: 1px solid #d8ddd4;
+    }
+    .bookmark-remove { color: #7a2e2e; }
+    .bookmark-editor {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      padding: 10px;
+      border-top: 1px solid #d8ddd4;
+    }
+    .bookmark-editor:not([hidden]) { display: grid; }
+    .bookmark-title-input {
+      width: 100%;
+      min-width: 0;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     .empty-bookmarks {
       color: #535b55;
@@ -1137,8 +1197,36 @@ class BrowserScreenState extends State<BrowserScreen> {
   <script>
     (() => {
       let seq = 0;
+      const closeEditor = (card) => {
+        const editor = card.querySelector('[data-wingman-bookmark-editor]');
+        const actions = card.querySelector('.bookmark-actions');
+        const input = card.querySelector('.bookmark-title-input');
+        input.value = input.dataset.wingmanOriginalTitle;
+        editor.hidden = true;
+        actions.hidden = false;
+      };
       document.addEventListener('click', (event) => {
         const target = event.target;
+        const editBookmark = target && target.closest
+          ? target.closest('[data-wingman-edit-bookmark]')
+          : null;
+        const cancelEdit = target && target.closest
+          ? target.closest('[data-wingman-cancel-bookmark-edit]')
+          : null;
+        if (editBookmark || cancelEdit) {
+          event.preventDefault();
+          const card = (editBookmark || cancelEdit).closest('.saved-bookmark');
+          if (cancelEdit) {
+            closeEditor(card);
+          } else {
+            card.querySelector('[data-wingman-bookmark-editor]').hidden = false;
+            card.querySelector('.bookmark-actions').hidden = true;
+            const input = card.querySelector('.bookmark-title-input');
+            input.focus();
+            input.select();
+          }
+          return;
+        }
         const openBookmark = target && target.closest
           ? target.closest('[data-wingman-bookmark-url]')
           : null;
@@ -1166,6 +1254,33 @@ class BrowserScreenState extends State<BrowserScreen> {
           params: { url: href },
         }));
       }, true);
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const editor = event.target.closest?.('[data-wingman-bookmark-editor]');
+        if (!editor) return;
+        event.preventDefault();
+        closeEditor(editor.closest('.saved-bookmark'));
+      });
+      document.addEventListener('submit', (event) => {
+        const editor = event.target.closest?.('[data-wingman-bookmark-editor]');
+        if (!editor) return;
+        event.preventDefault();
+        const card = editor.closest('.saved-bookmark');
+        const input = editor.querySelector('.bookmark-title-input');
+        const title = input.value.trim();
+        if (!title) {
+          closeEditor(card);
+          return;
+        }
+        const url = card.querySelector('[data-wingman-bookmark-url]')
+          ?.dataset.wingmanBookmarkUrl;
+        if (!url || !window.WingmanSigner) return;
+        window.WingmanSigner.postMessage(JSON.stringify({
+          id: `home-tab-\${++seq}`,
+          method: 'renameBookmark',
+          params: { url, title },
+        }));
+      });
     })();
   </script>
 </body>
@@ -1230,7 +1345,9 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
 
-    if (method == 'navigateTab' || method == 'removeBookmark') {
+    if (method == 'navigateTab' ||
+        method == 'removeBookmark' ||
+        method == 'renameBookmark') {
       final params = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
           : <String, dynamic>{};
@@ -1243,7 +1360,26 @@ class BrowserScreenState extends State<BrowserScreen> {
         );
         return;
       }
-      if (method == 'removeBookmark') {
+      if (method == 'renameBookmark') {
+        final title = params['title'];
+        if (title is! String || title.trim().isEmpty) {
+          await _resolveSignerRequest(
+            tab,
+            requestId,
+            {'error': 'invalid bookmark title'},
+          );
+          return;
+        }
+        final renamed = await _renameBookmark(url, title);
+        if (!renamed) {
+          await _resolveSignerRequest(
+            tab,
+            requestId,
+            {'error': 'bookmark not found'},
+          );
+          return;
+        }
+      } else if (method == 'removeBookmark') {
         await _removeBookmark(url);
       } else {
         _loadAddressForTab(tab, url, hideAddressBarAfterLoad: true);

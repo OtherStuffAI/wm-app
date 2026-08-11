@@ -8,6 +8,14 @@ class BrowserBookmark {
   final String title;
   final String url;
 
+  BrowserBookmark renamed(String value) {
+    final normalized = value.trim();
+    return BrowserBookmark(
+      title: normalized.isEmpty ? title : normalized,
+      url: url,
+    );
+  }
+
   Map<String, dynamic> toJson() => {'title': title, 'url': url};
 
   static BrowserBookmark? tryParse(Object? value) {

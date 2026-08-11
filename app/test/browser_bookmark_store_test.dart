@@ -43,6 +43,24 @@ void main() {
     expect(await store.load('npub-someone-else'), isEmpty);
   });
 
+  test('renaming trims the title while preserving bookmark identity', () async {
+    final store = BrowserBookmarkStore();
+    const original = BrowserBookmark(
+      title: 'Original title',
+      url: 'https://example.com/page',
+    );
+    final renamed = original.renamed('  Better title  ');
+
+    expect(renamed.title, 'Better title');
+    expect(renamed.url, original.url);
+    expect(original.renamed('   ').title, original.title);
+
+    await store.save('npub-pete', [renamed]);
+    final restored = (await BrowserBookmarkStore().load('npub-pete')).single;
+    expect(restored.title, 'Better title');
+    expect(restored.url, original.url);
+  });
+
   test('corrupt and stale entries are ignored and duplicates are removed',
       () async {
     final preferences = SharedPreferencesAsync();
