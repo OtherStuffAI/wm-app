@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
+import 'browser_bookmark_store.dart';
 import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
@@ -25,6 +26,7 @@ class BrowserScreen extends StatefulWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.onBookmarkMenuStateChanged,
     this.onFocusModeChanged,
     this.onLogOut,
     super.key,
@@ -37,6 +39,7 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final ValueChanged<BrowserBookmarkMenuState>? onBookmarkMenuStateChanged;
   final ValueChanged<bool>? onFocusModeChanged;
   final VoidCallback? onLogOut;
 
@@ -67,6 +70,8 @@ class BrowserScreenState extends State<BrowserScreen> {
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final NostrProfileStore _profileStore = NostrProfileStore();
   final NostrProfileRelayClient _profileRelayClient = NostrProfileRelayClient();
+  final BrowserBookmarkStore _bookmarkStore = BrowserBookmarkStore();
+  List<BrowserBookmark> _bookmarks = const [];
   String? _lastWebStateSignerNpub;
   NostrProfile _profile = const NostrProfile();
   Timer? _persistTabsTimer;
@@ -329,6 +334,80 @@ class BrowserScreenState extends State<BrowserScreen> {
     return null;
   }
 
+  BrowserBookmarkMenuState get _bookmarkMenuState {
+    if (_tabs.isEmpty) return const BrowserBookmarkMenuState.unavailable();
+    final tab = _activeTab;
+    final url = canonicalBrowserBookmarkUrl(
+      tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
+    );
+    if (url == null) return const BrowserBookmarkMenuState.unavailable();
+    return BrowserBookmarkMenuState(
+      available: true,
+      bookmarked: _bookmarks.any((bookmark) => bookmark.url == url),
+    );
+  }
+
+  void _notifyBookmarkMenuState() {
+    widget.onBookmarkMenuStateChanged?.call(_bookmarkMenuState);
+  }
+
+  Future<void> toggleActivePageBookmark() async {
+    final tab = _activeTab;
+    final url = canonicalBrowserBookmarkUrl(
+      tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
+    );
+    if (url == null) return;
+    final existing = _bookmarks.indexWhere((bookmark) => bookmark.url == url);
+    if (existing >= 0) {
+      _bookmarks = List<BrowserBookmark>.from(_bookmarks)..removeAt(existing);
+    } else {
+      _bookmarks = [
+        ..._bookmarks,
+        BrowserBookmark(title: tab.label, url: url),
+      ];
+    }
+    await _persistBookmarks();
+    if (!mounted) return;
+    _reloadHomeTabs();
+    _notifyBookmarkMenuState();
+  }
+
+  Future<void> _removeBookmark(String url) async {
+    final canonicalUrl = canonicalBrowserBookmarkUrl(url);
+    if (canonicalUrl == null ||
+        !_bookmarks.any((bookmark) => bookmark.url == canonicalUrl)) {
+      return;
+    }
+    _bookmarks = [
+      for (final bookmark in _bookmarks)
+        if (bookmark.url != canonicalUrl) bookmark,
+    ];
+    await _persistBookmarks();
+    if (!mounted) return;
+    _reloadHomeTabs();
+    _notifyBookmarkMenuState();
+  }
+
+  Future<void> _loadBookmarksForSigner(String signerNpub) async {
+    final bookmarks = await _bookmarkStore.load(signerNpub);
+    if (!mounted || widget.config.deviceNpub.trim() != signerNpub.trim()) {
+      return;
+    }
+    _bookmarks = bookmarks;
+    _reloadHomeTabs();
+    _notifyBookmarkMenuState();
+  }
+
+  Future<void> _persistBookmarks() {
+    return _bookmarkStore.save(widget.config.deviceNpub, _bookmarks);
+  }
+
+  void _reloadHomeTabs() {
+    for (final tab in _tabs.where((tab) => tab.isHome)) {
+      _loadHomeForTab(tab);
+    }
+  }
+
   void _enterFocusMode() {
     setState(() {
       _focusMode = true;
@@ -407,6 +486,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     _revealTab(_activeTabId);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
+    _notifyBookmarkMenuState();
   }
 
   WebViewController _createWebViewController(int id) {
@@ -527,6 +607,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (_activeTabId == id) {
       _revealTab(id);
       _revealAddressBar(_tabClickAddressReveal);
+      _notifyBookmarkMenuState();
       return;
     }
     setState(() {
@@ -536,6 +617,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
+    _notifyBookmarkMenuState();
   }
 
   void _revealTab(int id) {
@@ -609,6 +691,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final previousSignerNpub = await preferences.getString(_browserSignerKey);
     if (!mounted) return;
     if (previousSignerNpub == signerNpub) {
+      await _loadBookmarksForSigner(signerNpub);
       await _restoreTabsForSigner(signerNpub);
       return;
     }
@@ -619,6 +702,7 @@ class BrowserScreenState extends State<BrowserScreen> {
           previousSignerNpub.isNotEmpty,
     );
     await preferences.setString(_browserSignerKey, signerNpub);
+    await _loadBookmarksForSigner(signerNpub);
     await _restoreTabsForSigner(
       signerNpub,
       resetToHomeWhenMissing: previousSignerNpub != null &&
@@ -829,6 +913,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
     tab.controller.loadRequest(uri);
     _schedulePersistTabs();
+    if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
 
   void _loadHomeForTab(BrowserTab tab) {
@@ -847,10 +932,12 @@ class BrowserScreenState extends State<BrowserScreen> {
       _homePageHtml(
         flightDeckUrl: widget.config.flightDeckUrl,
         rickAutopilotUrl: _rickAutopilotUrl,
+        savedBookmarks: _bookmarks,
       ),
       baseUrl: 'https://wingman.local/',
     );
     _schedulePersistTabs();
+    if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
 
   void _ensurePinnedFlightDeckTab() {
@@ -1007,6 +1094,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     await _injectTabCapture(tab);
     await _injectIfTrusted(tab);
     _schedulePersistTabs();
+    if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
 
   Future<void> _applyFlightDeckDisplayDefaults(
@@ -1030,8 +1118,9 @@ class BrowserScreenState extends State<BrowserScreen> {
   String _homePageHtml({
     required String flightDeckUrl,
     required String rickAutopilotUrl,
+    required List<BrowserBookmark> savedBookmarks,
   }) {
-    final bookmarks = [
+    final shortcuts = [
       _HomeBookmark(
         label: 'Flight Deck',
         url: flightDeckUrl,
@@ -1043,7 +1132,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         description: 'Sessions, apps, pipelines, and Wingman runtime.',
       ),
     ];
-    final cards = bookmarks.map((bookmark) {
+    final shortcutCards = shortcuts.map((bookmark) {
       return '''
         <a class="bookmark" href="${_escapeHtml(bookmark.url)}" data-wingman-tab-url="${_escapeHtml(bookmark.url)}">
           <span class="bookmark-title">${_escapeHtml(bookmark.label)}</span>
@@ -1052,6 +1141,20 @@ class BrowserScreenState extends State<BrowserScreen> {
         </a>
       ''';
     }).join('\n');
+    final bookmarkCards = savedBookmarks.map((bookmark) {
+      return '''
+        <article class="bookmark saved-bookmark">
+          <button class="bookmark-open" type="button" data-wingman-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Open ${_escapeHtml(bookmark.title)}">
+            <span class="bookmark-title">${_escapeHtml(bookmark.title)}</span>
+            <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
+          </button>
+          <button class="bookmark-remove" type="button" data-wingman-remove-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Remove ${_escapeHtml(bookmark.title)} bookmark" title="Remove bookmark">Remove</button>
+        </article>
+      ''';
+    }).join('\n');
+    final savedSection = savedBookmarks.isEmpty
+        ? '<p class="empty-bookmarks">No saved bookmarks yet. Swipe from the left on a page and choose Add bookmark.</p>'
+        : '<section class="grid">$bookmarkCards</section>';
     return '''
 <!doctype html>
 <html>
@@ -1082,6 +1185,10 @@ class BrowserScreenState extends State<BrowserScreen> {
       font-size: 28px;
       font-weight: 650;
     }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 18px;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1107,6 +1214,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     .bookmark-title {
       font-size: 18px;
       font-weight: 650;
+      overflow-wrap: anywhere;
     }
     .bookmark-url {
       color: #286a5a;
@@ -1118,13 +1226,48 @@ class BrowserScreenState extends State<BrowserScreen> {
       font-size: 14px;
       line-height: 1.35;
     }
+    .saved-bookmark {
+      padding: 0;
+      overflow: hidden;
+    }
+    .bookmark-open {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 18px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .bookmark-open:focus-visible,
+    .bookmark-remove:focus-visible {
+      outline: 2px solid #286a5a;
+      outline-offset: -2px;
+    }
+    .bookmark-remove {
+      min-height: 44px;
+      border: 0;
+      border-top: 1px solid #d8ddd4;
+      background: #f7f8f5;
+      color: #7a2e2e;
+      cursor: pointer;
+    }
+    .empty-bookmarks {
+      color: #535b55;
+      line-height: 1.45;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Wingman</h1>
+    <h2>Bookmarks</h2>
+    $savedSection
+    <h2>Wingman shortcuts</h2>
     <section class="grid">
-      $cards
+      $shortcutCards
     </section>
   </main>
   <script>
@@ -1135,17 +1278,31 @@ class BrowserScreenState extends State<BrowserScreen> {
         const anchor = target && target.closest
           ? target.closest('a[data-wingman-tab-url]')
           : null;
-        if (!anchor || !window.WingmanSigner) return;
+        const openBookmark = target && target.closest
+          ? target.closest('[data-wingman-bookmark-url]')
+          : null;
+        const removeBookmark = target && target.closest
+          ? target.closest('[data-wingman-remove-bookmark-url]')
+          : null;
+        const action = removeBookmark || openBookmark || anchor;
+        if (!action || !window.WingmanSigner) return;
         event.preventDefault();
         let href;
         try {
-          href = new URL(anchor.dataset.wingmanTabUrl, window.location.href).href;
+          href = new URL(
+            removeBookmark?.dataset.wingmanRemoveBookmarkUrl ||
+            openBookmark?.dataset.wingmanBookmarkUrl ||
+            anchor.dataset.wingmanTabUrl,
+            window.location.href,
+          ).href;
         } catch (_) {
           return;
         }
         window.WingmanSigner.postMessage(JSON.stringify({
           id: `home-tab-\${++seq}`,
-          method: 'openTab',
+          method: removeBookmark
+            ? 'removeBookmark'
+            : openBookmark ? 'navigateTab' : 'openTab',
           params: { url: href },
         }));
       }, true);
@@ -1209,6 +1366,28 @@ class BrowserScreenState extends State<BrowserScreen> {
         return;
       }
       _createTab(normalized);
+      await _resolveSignerRequest(tab, requestId, {'result': true});
+      return;
+    }
+
+    if (method == 'navigateTab' || method == 'removeBookmark') {
+      final params = payload['params'] is Map<String, dynamic>
+          ? payload['params'] as Map<String, dynamic>
+          : <String, dynamic>{};
+      final url = canonicalBrowserBookmarkUrl(params['url']?.toString());
+      if (url == null) {
+        await _resolveSignerRequest(
+          tab,
+          requestId,
+          {'error': 'invalid bookmark URL'},
+        );
+        return;
+      }
+      if (method == 'removeBookmark') {
+        await _removeBookmark(url);
+      } else {
+        _loadAddressForTab(tab, url, hideAddressBarAfterLoad: true);
+      }
       await _resolveSignerRequest(tab, requestId, {'result': true});
       return;
     }
@@ -2631,6 +2810,30 @@ class BrowserTab {
     addressController.dispose();
     addressFocusNode.dispose();
   }
+}
+
+class BrowserBookmarkMenuState {
+  const BrowserBookmarkMenuState({
+    required this.available,
+    required this.bookmarked,
+  });
+
+  const BrowserBookmarkMenuState.unavailable()
+      : available = false,
+        bookmarked = false;
+
+  final bool available;
+  final bool bookmarked;
+
+  @override
+  bool operator ==(Object other) {
+    return other is BrowserBookmarkMenuState &&
+        other.available == available &&
+        other.bookmarked == bookmarked;
+  }
+
+  @override
+  int get hashCode => Object.hash(available, bookmarked);
 }
 
 class SignerPromptResult {

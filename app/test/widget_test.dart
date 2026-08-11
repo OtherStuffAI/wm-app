@@ -175,7 +175,7 @@ void main() {
       fakeLoadedHtmlStrings.single,
       contains('data-wingman-tab-url="https://rick.runwingman.com"'),
     );
-    expect(fakeLoadedHtmlStrings.single, contains("method: 'openTab'"));
+    expect(fakeLoadedHtmlStrings.single, contains("'openTab'"));
 
     await tester.tap(find.byTooltip('Open menu'));
     await tester.pumpAndSettle();
@@ -386,6 +386,132 @@ void main() {
     expect(find.text('Wingman Home'), findsOneWidget);
     expect(find.text('rick.runwingman.com'), findsOneWidget);
     expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+  });
+
+  testWidgets('browser bookmarks add, reload, open in the home tab, and remove',
+      (tester) async {
+    final config = AppConfig.defaults().copyWith(
+      deviceSecret: 'nsec-placeholder',
+      deviceNpub: 'npub-bookmarks',
+      devicePublicKeyHex: 'abcdef',
+    );
+
+    Widget shell() => MaterialApp(
+          home: ShellHome(
+            config: config,
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onConfigChanged: (_) {},
+          ),
+        );
+
+    await tester.pumpWidget(shell());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    await tester.enterText(
+      find.byType(TextField),
+      'HTTPS://Example.COM/projects/one?view=board#today',
+    );
+    await tester.tap(find.byTooltip('Go'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open menu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add bookmark'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel('Add bookmark for current page'), findsOneWidget);
+    await tester.tap(find.text('Add bookmark'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open menu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove bookmark'), findsOneWidget);
+    expect(find.bySemanticsLabel('Remove bookmark for current page'),
+        findsOneWidget);
+    await tester.tapAt(const Offset(500, 300));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pumpAndSettle();
+    const canonicalUrl = 'https://example.com/projects/one?view=board#today';
+    expect(fakeLoadedHtmlStrings.last, contains('example.com'));
+    expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
+    expect(fakeLoadedHtmlStrings.last, contains('data-wingman-bookmark-url'));
+    expect(
+      fakeLoadedHtmlStrings.last,
+      contains('data-wingman-remove-bookmark-url'),
+    );
+
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 200));
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(shell());
+    await tester.pumpAndSettle();
+
+    expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
+    final controllerCount = fakeWebViewControllerCreationCount;
+    submitFakeJavaScriptMessage(
+      controllerIndex: controllerCount - 1,
+      channel: 'WingmanSigner',
+      message:
+          '{"id":"bookmark-open","method":"navigateTab","params":{"url":"$canonicalUrl"}}',
+    );
+    await tester.pumpAndSettle();
+    expect(fakeWebViewControllerCreationCount, controllerCount);
+    expect(fakeLoadedRequestUrls.last, canonicalUrl);
+
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pumpAndSettle();
+    final homeControllerIndex = fakeWebViewControllerCreationCount - 1;
+    submitFakeJavaScriptMessage(
+      controllerIndex: homeControllerIndex,
+      channel: 'WingmanSigner',
+      message:
+          '{"id":"bookmark-remove","method":"removeBookmark","params":{"url":"$canonicalUrl"}}',
+    );
+    await tester.pumpAndSettle();
+    expect(fakeLoadedHtmlStrings.last, contains('No saved bookmarks yet'));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains(canonicalUrl)));
+  });
+
+  testWidgets('new-tab bookmark layout wraps long labels at narrow width',
+      (tester) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(360, 640);
+    final preferences = SharedPreferencesAsync();
+    const signer = 'npub-long-bookmark';
+    final longTitle = List.filled(40, 'VeryLongTitle').join();
+    await preferences.setString(
+      'wingman.browser.bookmarks.v1.$signer',
+      '{"version":1,"bookmarks":[{"title":"$longTitle","url":"https://example.com/a/very/long/path?with=query"}]}',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            deviceSecret: 'nsec-placeholder',
+            deviceNpub: signer,
+            devicePublicKeyHex: 'abcdef',
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(fakeLoadedHtmlStrings.last, contains(longTitle));
+    expect(fakeLoadedHtmlStrings.last, contains('overflow-wrap: anywhere'));
+    expect(fakeLoadedHtmlStrings.last, contains('min-width: 0'));
   });
 
   testWidgets('Wingman browser cycles tabs with Ctrl+Tab', (tester) async {

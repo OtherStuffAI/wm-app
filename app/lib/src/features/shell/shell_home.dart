@@ -35,10 +35,13 @@ class _ShellHomeState extends State<ShellHome> {
       GlobalKey<BrowserScreenState>();
   ShellSurface _selectedSurface = ShellSurface.browser;
   final ValueNotifier<bool> _browserFocusMode = ValueNotifier(false);
+  final ValueNotifier<BrowserBookmarkMenuState> _bookmarkMenuState =
+      ValueNotifier(const BrowserBookmarkMenuState.unavailable());
 
   @override
   void dispose() {
     _browserFocusMode.dispose();
+    _bookmarkMenuState.dispose();
     super.dispose();
   }
 
@@ -90,52 +93,78 @@ class _ShellHomeState extends State<ShellHome> {
     return ValueListenableBuilder<bool>(
       valueListenable: _browserFocusMode,
       builder: (context, browserFocused, _) {
-        return NavigationDrawer(
-          selectedIndex: _drawerIndexForSurface(_selectedSurface),
-          onDestinationSelected: (index) {
-            Navigator.of(context).pop();
-            final surface = _surfaceForDrawerIndex(index);
-            if (surface == null) return;
-            _selectSurface(surface);
-          },
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(28, 24, 16, 16),
-              child: Text('Wingman'),
-            ),
-            if (_selectedSurface == ShellSurface.browser && browserFocused)
-              Semantics(
-                label: 'Show controls',
-                button: true,
-                excludeSemantics: true,
-                child: ListTile(
-                  key: const ValueKey('show-controls-drawer-action'),
-                  leading: const Icon(Icons.fullscreen_exit),
-                  title: const Text('Show controls'),
-                  onTap: _showBrowserControls,
-                ),
+        return ValueListenableBuilder<BrowserBookmarkMenuState>(
+          valueListenable: _bookmarkMenuState,
+          builder: (context, bookmarkState, _) => NavigationDrawer(
+            selectedIndex: _drawerIndexForSurface(_selectedSurface),
+            onDestinationSelected: (index) {
+              Navigator.of(context).pop();
+              final surface = _surfaceForDrawerIndex(index);
+              if (surface == null) return;
+              _selectSurface(surface);
+            },
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(28, 24, 16, 16),
+                child: Text('Wingman'),
               ),
-            const NavigationDrawerDestination(
-              icon: Icon(Icons.public),
-              selectedIcon: Icon(Icons.public),
-              label: Text('Browser'),
-            ),
-            const NavigationDrawerDestination(
-              icon: Icon(Icons.folder_outlined),
-              selectedIcon: Icon(Icons.folder),
-              label: Text('Drive'),
-            ),
-            const NavigationDrawerDestination(
-              icon: Icon(Icons.shield_outlined),
-              selectedIcon: Icon(Icons.shield),
-              label: Text('Signer'),
-            ),
-            const NavigationDrawerDestination(
-              icon: Icon(Icons.monitor_heart_outlined),
-              selectedIcon: Icon(Icons.monitor_heart),
-              label: Text('Status'),
-            ),
-          ],
+              if (_selectedSurface == ShellSurface.browser && browserFocused)
+                Semantics(
+                  label: 'Show controls',
+                  button: true,
+                  excludeSemantics: true,
+                  child: ListTile(
+                    key: const ValueKey('show-controls-drawer-action'),
+                    leading: const Icon(Icons.fullscreen_exit),
+                    title: const Text('Show controls'),
+                    onTap: _showBrowserControls,
+                  ),
+                ),
+              if (_selectedSurface == ShellSurface.browser &&
+                  bookmarkState.available)
+                Semantics(
+                  label: bookmarkState.bookmarked
+                      ? 'Remove bookmark for current page'
+                      : 'Add bookmark for current page',
+                  button: true,
+                  excludeSemantics: true,
+                  child: ListTile(
+                    key: const ValueKey('toggle-bookmark-drawer-action'),
+                    leading: Icon(
+                      bookmarkState.bookmarked
+                          ? Icons.bookmark_remove
+                          : Icons.bookmark_add_outlined,
+                    ),
+                    title: Text(
+                      bookmarkState.bookmarked
+                          ? 'Remove bookmark'
+                          : 'Add bookmark',
+                    ),
+                    onTap: _toggleActivePageBookmark,
+                  ),
+                ),
+              const NavigationDrawerDestination(
+                icon: Icon(Icons.public),
+                selectedIcon: Icon(Icons.public),
+                label: Text('Browser'),
+              ),
+              const NavigationDrawerDestination(
+                icon: Icon(Icons.folder_outlined),
+                selectedIcon: Icon(Icons.folder),
+                label: Text('Drive'),
+              ),
+              const NavigationDrawerDestination(
+                icon: Icon(Icons.shield_outlined),
+                selectedIcon: Icon(Icons.shield),
+                label: Text('Signer'),
+              ),
+              const NavigationDrawerDestination(
+                icon: Icon(Icons.monitor_heart_outlined),
+                selectedIcon: Icon(Icons.monitor_heart),
+                label: Text('Status'),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -197,6 +226,7 @@ class _ShellHomeState extends State<ShellHome> {
       onOpenSigner: () => _selectSurface(ShellSurface.signer),
       onOpenStatus: () => _selectSurface(ShellSurface.status),
       onFocusModeChanged: (focused) => _browserFocusMode.value = focused,
+      onBookmarkMenuStateChanged: (state) => _bookmarkMenuState.value = state,
       onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );
   }
@@ -238,6 +268,11 @@ class _ShellHomeState extends State<ShellHome> {
   void _showBrowserControls() {
     Navigator.of(context).pop();
     _browserKey.currentState?.exitFocusMode();
+  }
+
+  void _toggleActivePageBookmark() {
+    Navigator.of(context).pop();
+    _browserKey.currentState?.toggleActivePageBookmark();
   }
 
   void _selectSurface(ShellSurface surface) {
