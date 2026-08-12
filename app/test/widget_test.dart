@@ -48,6 +48,7 @@ void main() {
     expect(config.workspaceServiceNpub, isEmpty);
     expect(config.channelId, isEmpty);
     expect(config.trustedOrigins, isEmpty);
+    expect(config.displayExperimentalFlightDeckDriveSync, isFalse);
   });
 
   testWidgets('Android sends touch gestures directly to embedded web views',
@@ -200,7 +201,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Browser'), findsOneWidget);
-    expect(find.text('Drive'), findsAtLeastNWidgets(1));
+    expect(find.text('Drive'), findsNothing);
     expect(find.text('Signer'), findsAtLeastNWidgets(1));
     expect(find.text('Status'), findsAtLeastNWidgets(1));
 
@@ -906,8 +907,20 @@ void main() {
     expect(find.text('Pete Winn'), findsOneWidget);
   });
 
-  testWidgets('Wingman app persists the Flight Deck URL setting',
+  testWidgets('experimental Drive UI defaults off and persists opt-in',
       (tester) async {
+    const experimentLabel =
+        'Display experimental future Flight Deck Drive sync';
+    Future<Finder> findExperimentCheckbox() async {
+      await tester.drag(
+        find.byType(ListView).last,
+        const Offset(0, -3000),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      return find.widgetWithText(CheckboxListTile, experimentLabel);
+    }
+
     await tester.pumpWidget(
       const WingmanApp(useSignerVault: false),
     );
@@ -916,6 +929,28 @@ void main() {
     await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+
+    final experimentCheckbox = await findExperimentCheckbox();
+    expect(experimentCheckbox, findsOneWidget);
+    expect(
+      tester.widget<CheckboxListTile>(experimentCheckbox).value,
+      isFalse,
+    );
+    expect(find.text('Trusted origins'), findsOneWidget);
+    expect(find.text('Remember NIP-98 approvals'), findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
+    expect(find.text('Flight Deck App npub'), findsNothing);
+    expect(find.text('Flight Deck URL'), findsNothing);
+    expect(find.text('Workspace ID'), findsNothing);
+    expect(find.text('Workspace service npub'), findsNothing);
+    expect(find.text('Default Channel ID'), findsNothing);
+    expect(find.text('Registration signer key'), findsNothing);
+    expect(find.text('Register device'), findsNothing);
+    expect(find.text('Validate channel'), findsNothing);
+
+    await tester.ensureVisible(experimentCheckbox);
+    await tester.tap(experimentCheckbox);
     await tester.pumpAndSettle();
 
     final flightDeckField = find.byWidgetPredicate(
@@ -969,8 +1004,129 @@ void main() {
     );
     expect(restoredField.controller?.text, 'https://example.com/flightdeck');
     expect(restoredTowerField.controller?.text, 'https://tower.example');
+    final restoredExperimentCheckbox = await findExperimentCheckbox();
+    expect(
+      tester.widget<CheckboxListTile>(restoredExperimentCheckbox).value,
+      isTrue,
+    );
     expect(fakeLoadedRequestUrls,
         isNot(contains('https://example.com/flightdeck')));
+
+    await tester.ensureVisible(restoredExperimentCheckbox);
+    await tester.tap(restoredExperimentCheckbox);
+    await tester.pumpAndSettle();
+    expect(find.text('Tower URL'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(
+      const WingmanApp(useSignerVault: false),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+
+    final disabledExperimentCheckbox = await findExperimentCheckbox();
+    expect(
+      tester.widget<CheckboxListTile>(disabledExperimentCheckbox).value,
+      isFalse,
+    );
+    await tester.ensureVisible(disabledExperimentCheckbox);
+    await tester.tap(disabledExperimentCheckbox);
+    await tester.pumpAndSettle();
+
+    final preservedFlightDeckField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Flight Deck URL',
+      ),
+    );
+    final preservedTowerField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Tower URL',
+      ),
+    );
+    expect(
+      preservedFlightDeckField.controller?.text,
+      'https://example.com/flightdeck',
+    );
+    expect(preservedTowerField.controller?.text, 'https://tower.example');
+  });
+
+  testWidgets('legacy saved configuration keeps experimental Drive UI off',
+      (tester) async {
+    await SharedPreferencesAsync().setString(
+      'wingman.app.config.v1',
+      '{"version":1,"tower_url":"https://legacy-tower.example"}',
+    );
+
+    await tester.pumpWidget(const WingmanApp(useSignerVault: false));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byType(ListView).last,
+      const Offset(0, -3000),
+    );
+    await tester.pumpAndSettle();
+
+    final experimentCheckbox = find.widgetWithText(
+      CheckboxListTile,
+      'Display experimental future Flight Deck Drive sync',
+    );
+    expect(
+      tester.widget<CheckboxListTile>(experimentCheckbox).value,
+      isFalse,
+    );
+    expect(find.text('Tower URL'), findsNothing);
+  });
+
+  testWidgets('Drive navigation follows the experimental setting',
+      (tester) async {
+    Future<void> openDrawer() async {
+      await tester.tap(find.byTooltip('Open menu'));
+      await tester.pumpAndSettle();
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults(),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openDrawer();
+    expect(find.text('Drive'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults().copyWith(
+            displayExperimentalFlightDeckDriveSync: true,
+          ),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openDrawer();
+    expect(find.text('Drive'), findsOneWidget);
   });
 
   testWidgets('Wingman app prompts for signer vault on first launch',

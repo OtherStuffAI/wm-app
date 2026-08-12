@@ -33,6 +33,7 @@ class _SetupScreenState extends State<SetupScreen> {
   late final TextEditingController _devicePublicKeyHexController;
   late final TextEditingController _trustedOriginsController;
   late bool _rememberNip98Approvals;
+  late bool _displayExperimentalFlightDeckDriveSync;
   String? _message;
   bool _busy = false;
 
@@ -58,6 +59,8 @@ class _SetupScreenState extends State<SetupScreen> {
       text: widget.config.trustedOrigins.join('\n'),
     );
     _rememberNip98Approvals = widget.config.rememberNip98Approvals;
+    _displayExperimentalFlightDeckDriveSync =
+        widget.config.displayExperimentalFlightDeckDriveSync;
   }
 
   @override
@@ -93,36 +96,38 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        _field(
-          controller: _towerController,
-          label: 'Tower URL',
-          icon: Icons.dns_outlined,
-        ),
-        _field(
-          controller: _appNpubController,
-          label: 'Flight Deck App npub',
-          icon: Icons.apps,
-        ),
-        _field(
-          controller: _flightDeckController,
-          label: 'Flight Deck URL',
-          icon: Icons.public,
-        ),
-        _field(
-          controller: _workspaceController,
-          label: 'Workspace ID',
-          icon: Icons.workspaces_outline,
-        ),
-        _field(
-          controller: _workspaceServiceController,
-          label: 'Workspace service npub',
-          icon: Icons.badge_outlined,
-        ),
-        _field(
-          controller: _channelController,
-          label: 'Default Channel ID',
-          icon: Icons.tag,
-        ),
+        if (_displayExperimentalFlightDeckDriveSync) ...[
+          _field(
+            controller: _towerController,
+            label: 'Tower URL',
+            icon: Icons.dns_outlined,
+          ),
+          _field(
+            controller: _appNpubController,
+            label: 'Flight Deck App npub',
+            icon: Icons.apps,
+          ),
+          _field(
+            controller: _flightDeckController,
+            label: 'Flight Deck URL',
+            icon: Icons.public,
+          ),
+          _field(
+            controller: _workspaceController,
+            label: 'Workspace ID',
+            icon: Icons.workspaces_outline,
+          ),
+          _field(
+            controller: _workspaceServiceController,
+            label: 'Workspace service npub',
+            icon: Icons.badge_outlined,
+          ),
+          _field(
+            controller: _channelController,
+            label: 'Default Channel ID',
+            icon: Icons.tag,
+          ),
+        ],
         _field(
           controller: _deviceNpubController,
           label: 'Device npub',
@@ -147,12 +152,13 @@ class _SetupScreenState extends State<SetupScreen> {
                 : 'Locked. Restart the app and unlock the signer vault.',
           ),
         ),
-        _field(
-          controller: _registrationSecretController,
-          label: 'Registration signer key',
-          icon: Icons.admin_panel_settings_outlined,
-          obscureText: true,
-        ),
+        if (_displayExperimentalFlightDeckDriveSync)
+          _field(
+            controller: _registrationSecretController,
+            label: 'Registration signer key',
+            icon: Icons.admin_panel_settings_outlined,
+            obscureText: true,
+          ),
         _field(
           controller: _trustedOriginsController,
           label: 'Trusted origins',
@@ -180,22 +186,44 @@ class _SetupScreenState extends State<SetupScreen> {
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save'),
             ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _registerDevice,
-              icon: const Icon(Icons.how_to_reg_outlined),
-              label: const Text('Register device'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _validateChannel,
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Text('Validate channel'),
-            ),
+            if (_displayExperimentalFlightDeckDriveSync) ...[
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _registerDevice,
+                icon: const Icon(Icons.how_to_reg_outlined),
+                label: const Text('Register device'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _validateChannel,
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Validate channel'),
+              ),
+            ],
           ],
         ),
         if (_message != null) ...[
           const SizedBox(height: 16),
           Text(_message!),
         ],
+        const SizedBox(height: 16),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _displayExperimentalFlightDeckDriveSync,
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _displayExperimentalFlightDeckDriveSync = value;
+            });
+            widget.onConfigChanged(
+              _currentConfig().copyWith(
+                displayExperimentalFlightDeckDriveSync: value,
+              ),
+            );
+          },
+          title: const Text(
+            'Display experimental future Flight Deck Drive sync',
+          ),
+          controlAffinity: ListTileControlAffinity.leading,
+        ),
       ],
     );
   }
@@ -247,6 +275,8 @@ class _SetupScreenState extends State<SetupScreen> {
       registrationSecret: _registrationSecretController.text.trim(),
       rememberNip98Approvals: _rememberNip98Approvals,
       devicePublicKeyHex: _devicePublicKeyHexController.text.trim(),
+      displayExperimentalFlightDeckDriveSync:
+          _displayExperimentalFlightDeckDriveSync,
     );
   }
 

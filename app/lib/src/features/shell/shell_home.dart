@@ -148,11 +148,12 @@ class _ShellHomeState extends State<ShellHome> {
                 selectedIcon: Icon(Icons.public),
                 label: Text('Browser'),
               ),
-              const NavigationDrawerDestination(
-                icon: Icon(Icons.folder_outlined),
-                selectedIcon: Icon(Icons.folder),
-                label: Text('Drive'),
-              ),
+              if (widget.config.displayExperimentalFlightDeckDriveSync)
+                const NavigationDrawerDestination(
+                  icon: Icon(Icons.folder_outlined),
+                  selectedIcon: Icon(Icons.folder),
+                  label: Text('Drive'),
+                ),
               const NavigationDrawerDestination(
                 icon: Icon(Icons.shield_outlined),
                 selectedIcon: Icon(Icons.shield),
@@ -242,16 +243,26 @@ class _ShellHomeState extends State<ShellHome> {
   }
 
   int? _drawerIndexForSurface(ShellSurface surface) {
+    final driveVisible = widget.config.displayExperimentalFlightDeckDriveSync;
     return switch (surface) {
       ShellSurface.browser => 0,
-      ShellSurface.drive => 1,
-      ShellSurface.signer => 2,
-      ShellSurface.status => 3,
+      ShellSurface.drive => driveVisible ? 1 : null,
+      ShellSurface.signer => driveVisible ? 2 : 1,
+      ShellSurface.status => driveVisible ? 3 : 2,
       ShellSurface.setup => null,
     };
   }
 
   ShellSurface? _surfaceForDrawerIndex(int index) {
+    final driveVisible = widget.config.displayExperimentalFlightDeckDriveSync;
+    if (!driveVisible) {
+      return switch (index) {
+        0 => ShellSurface.browser,
+        1 => ShellSurface.signer,
+        2 => ShellSurface.status,
+        _ => null,
+      };
+    }
     return switch (index) {
       0 => ShellSurface.browser,
       1 => ShellSurface.drive,

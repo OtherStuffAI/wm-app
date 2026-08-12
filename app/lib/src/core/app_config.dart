@@ -12,6 +12,7 @@ class AppConfig {
     required this.devicePublicKeyHex,
     required this.trustedOrigins,
     required this.rememberNip98Approvals,
+    required this.displayExperimentalFlightDeckDriveSync,
   });
 
   factory AppConfig.defaults() {
@@ -28,6 +29,7 @@ class AppConfig {
       devicePublicKeyHex: '',
       trustedOrigins: [],
       rememberNip98Approvals: true,
+      displayExperimentalFlightDeckDriveSync: false,
     );
   }
 
@@ -43,6 +45,7 @@ class AppConfig {
   final String devicePublicKeyHex;
   final List<String> trustedOrigins;
   final bool rememberNip98Approvals;
+  final bool displayExperimentalFlightDeckDriveSync;
 
   bool get hasTower => towerUrl.trim().isNotEmpty;
   bool get hasAppNpub => appNpub.trim().isNotEmpty;
@@ -71,6 +74,7 @@ class AppConfig {
     String? devicePublicKeyHex,
     List<String>? trustedOrigins,
     bool? rememberNip98Approvals,
+    bool? displayExperimentalFlightDeckDriveSync,
   }) {
     return AppConfig(
       towerUrl: towerUrl ?? this.towerUrl,
@@ -86,6 +90,9 @@ class AppConfig {
       trustedOrigins: trustedOrigins ?? this.trustedOrigins,
       rememberNip98Approvals:
           rememberNip98Approvals ?? this.rememberNip98Approvals,
+      displayExperimentalFlightDeckDriveSync:
+          displayExperimentalFlightDeckDriveSync ??
+              this.displayExperimentalFlightDeckDriveSync,
     );
   }
 

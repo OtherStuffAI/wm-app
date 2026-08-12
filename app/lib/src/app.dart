@@ -88,6 +88,10 @@ class _WingmanAppState extends State<WingmanApp> {
         rememberNip98Approvals: decoded['remember_nip98_approvals'] is bool
             ? decoded['remember_nip98_approvals'] as bool
             : defaults.rememberNip98Approvals,
+        displayExperimentalFlightDeckDriveSync:
+            decoded['display_experimental_flight_deck_drive_sync'] is bool
+                ? decoded['display_experimental_flight_deck_drive_sync'] as bool
+                : defaults.displayExperimentalFlightDeckDriveSync,
       );
     } catch (_) {
       return defaults;
@@ -105,6 +109,8 @@ class _WingmanAppState extends State<WingmanApp> {
       'channel_id': config.channelId,
       'trusted_origins': config.trustedOrigins,
       'remember_nip98_approvals': config.rememberNip98Approvals,
+      'display_experimental_flight_deck_drive_sync':
+          config.displayExperimentalFlightDeckDriveSync,
     };
     await SharedPreferencesAsync()
         .setString(_appConfigKey, jsonEncode(payload));
