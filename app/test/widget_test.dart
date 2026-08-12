@@ -14,6 +14,7 @@ import 'package:wingman_app/src/core/signer_vault.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
 import 'package:wingman_app/src/features/shell/shell_home.dart';
+import 'package:wingman_app/src/features/shell/macos_menu_bridge.dart';
 
 import 'fake_webview_platform.dart';
 
@@ -800,6 +801,60 @@ void main() {
     expect(find.byTooltip('Enter Focus Mode'), findsOneWidget);
     expect(find.byTooltip('Exit Focus Mode'), findsNothing);
     semantics.dispose();
+  });
+
+  testWidgets(
+      'macOS menu command opens the existing drawer without resetting browser state',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ShellHome(
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onConfigChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('New tab'));
+      await tester.pump();
+      expect(activeBrowserStackIndex(tester), 1);
+      expect(fakeWebViewControllerCreationCount, 2);
+
+      await tester.tap(find.byTooltip('Enter Focus Mode'));
+      await tester.pump();
+      expect(find.byTooltip('Open menu'), findsNothing);
+
+      Future<void> invokeNativeMenuCommand() async {
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          macOSMenuChannelName,
+          const StandardMethodCodec().encodeMethodCall(
+            const MethodCall(showWingmanMenuMethod),
+          ),
+          (_) {},
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await invokeNativeMenuCommand();
+      expect(find.text('Wingman'), findsOneWidget);
+      expect(find.text('Show controls'), findsOneWidget);
+      expect(activeBrowserStackIndex(tester), 1);
+      expect(fakeWebViewControllerCreationCount, 2);
+
+      await invokeNativeMenuCommand();
+      expect(find.text('Wingman'), findsOneWidget);
+      expect(activeBrowserStackIndex(tester), 1);
+      expect(fakeWebViewControllerCreationCount, 2);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('Focus Mode keeps web content inside device safe areas',

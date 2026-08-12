@@ -8,6 +8,7 @@ import '../drive/drive_screen.dart';
 import '../signer/signer_screen.dart';
 import '../setup/setup_screen.dart';
 import '../status/status_screen.dart';
+import 'macos_menu_bridge.dart';
 
 class ShellHome extends StatefulWidget {
   const ShellHome({
@@ -37,9 +38,17 @@ class _ShellHomeState extends State<ShellHome> {
   final ValueNotifier<bool> _browserFocusMode = ValueNotifier(false);
   final ValueNotifier<BrowserBookmarkMenuState> _bookmarkMenuState =
       ValueNotifier(const BrowserBookmarkMenuState.unavailable());
+  final MacOSMenuBridge _macOSMenuBridge = MacOSMenuBridge();
+
+  @override
+  void initState() {
+    super.initState();
+    _macOSMenuBridge.listen(_openDrawer);
+  }
 
   @override
   void dispose() {
+    _macOSMenuBridge.dispose();
     _browserFocusMode.dispose();
     _bookmarkMenuState.dispose();
     super.dispose();
