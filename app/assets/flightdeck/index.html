@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260814-0600-18-1798">
+  <meta name="flightdeck-build-id" content="20260814-0749-20-1800">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -46,7 +46,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-C3kIAhCB.js"></script>
+  <script type="module" crossorigin src="/assets/index-BM6dKxIi.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-BKLasNgQ.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -345,7 +345,7 @@
           <li
             class="board-picker-typeahead-option"
             :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board) }"
-            @click="$store.chat.selectDeckScope(board.id, $event); open = false"
+            @click="$store.chat.selectWorkContextScope(board.id, $event); open = false"
             x-text="board.label"
           ></li>
         </template>
@@ -1173,7 +1173,7 @@
                     @keydown.escape="open = false; query = ''; $el.blur()"
                     @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
                     @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
-                    @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectDeckScope($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+                    @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectWorkContextScope($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id, $event); open = false; query = ''; $el.blur() }"
                     aria-label="Current scope"
                   />
                   <ul class="board-picker-typeahead-results channel-row-scope-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
@@ -1181,7 +1181,7 @@
                       <li
                         class="board-picker-typeahead-option"
                         :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board), 'board-picker-typeahead-highlight': idx === bpIdx }"
-                        @click="$store.chat.selectDeckScope(board.id, $event); open = false; query = ''"
+                        @click="$store.chat.selectWorkContextScope(board.id, $event); open = false; query = ''"
                         @mouseenter="bpIdx = idx"
                         x-text="board.label"
                       ></li>
@@ -1201,7 +1201,7 @@
                     class="chat-channel-tab chat-channel-home-tab"
                     role="tab"
                     :aria-selected="$store.chat.pgContextHomeSelected"
-                    @click="$store.chat.openDeckScopeHome()"
+                    @click="$store.chat.openWorkContextHome($event)"
                     title="Scope home"
                     aria-label="Scope home"
                   >
@@ -1233,7 +1233,7 @@
                       class="chat-channel-tab"
                       role="tab"
                       :aria-selected="$store.chat.pgContextSelectedChannelId === channel.record_id && !$store.chat.pgContextSelectedThreadId"
-                      @click="$store.chat.selectDeckChannel(channel.record_id)"
+                      @click="$store.chat.selectWorkContextChannel(channel.record_id, $event)"
                     >
                       <span class="channel-hash">#</span>
                       <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(channel)"></span>
@@ -3437,7 +3437,7 @@
                     @keydown.escape="open = false; query = ''; $el.blur()"
                     @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
                     @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
-                    @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectDeckScope($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+                    @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectWorkContextScope($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id, $event); open = false; query = ''; $el.blur() }"
                     aria-label="Current scope"
                   />
                   <ul class="board-picker-typeahead-results channel-row-scope-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
@@ -3445,7 +3445,7 @@
                       <li
                         class="board-picker-typeahead-option"
                         :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board), 'board-picker-typeahead-highlight': idx === bpIdx }"
-                        @click="$store.chat.selectDeckScope(board.id, $event); open = false; query = ''"
+                        @click="$store.chat.selectWorkContextScope(board.id, $event); open = false; query = ''"
                         @mouseenter="bpIdx = idx"
                         x-text="board.label"
                       ></li>
@@ -3465,7 +3465,7 @@
                     class="chat-channel-tab chat-channel-home-tab"
                     role="tab"
                     :aria-selected="$store.chat.pgContextHomeSelected"
-                    @click="$store.chat.openPgScopeHome($event)"
+                    @click="$store.chat.openWorkContextHome($event)"
                     title="Scope home"
                     aria-label="Scope home"
                   >
@@ -3497,7 +3497,7 @@
                       class="chat-channel-tab"
                       role="tab"
                       :aria-selected="$store.chat.pgContextSelectedChannelId === ch.record_id"
-                      @click="$store.chat.selectChannel(ch.record_id, { inputEvent: $event })"
+                      @click="$store.chat.selectWorkContextChannel(ch.record_id, $event)"
                     >
                       <span class="channel-hash">#</span>
                       <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(ch)"></span>
@@ -3526,7 +3526,6 @@
                   <path d="M12 5v14M5 12h14"/>
                 </svg>
               </button>
-              <button type="button" class="chat-channel-tab-add" @click="$store.chat.copyNavigationTimings()" title="Copy recent navigation timing" aria-label="Copy recent navigation timing">⏱</button>
               <div class="chat-channel-header-actions">
                 <button
                   type="button"
