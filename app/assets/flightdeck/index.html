@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260814-0450-16-1796">
+  <meta name="flightdeck-build-id" content="20260814-0551-17-1797">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -46,7 +46,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B8U7OIcJ.js"></script>
+  <script type="module" crossorigin src="/assets/index-X0cA0v5N.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-BKLasNgQ.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -345,7 +345,7 @@
           <li
             class="board-picker-typeahead-option"
             :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board) }"
-            @click="$store.chat.selectDeckScope(board.id); open = false"
+            @click="$store.chat.selectDeckScope(board.id, $event); open = false"
             x-text="board.label"
           ></li>
         </template>
@@ -1181,7 +1181,7 @@
                       <li
                         class="board-picker-typeahead-option"
                         :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board), 'board-picker-typeahead-highlight': idx === bpIdx }"
-                        @click="$store.chat.selectDeckScope(board.id); open = false; query = ''"
+                        @click="$store.chat.selectDeckScope(board.id, $event); open = false; query = ''"
                         @mouseenter="bpIdx = idx"
                         x-text="board.label"
                       ></li>
@@ -3445,7 +3445,7 @@
                       <li
                         class="board-picker-typeahead-option"
                         :class="{ 'board-picker-typeahead-active': $store.chat.isFlightDeckScopeOptionActive(board), 'board-picker-typeahead-highlight': idx === bpIdx }"
-                        @click="$store.chat.selectDeckScope(board.id); open = false; query = ''"
+                        @click="$store.chat.selectDeckScope(board.id, $event); open = false; query = ''"
                         @mouseenter="bpIdx = idx"
                         x-text="board.label"
                       ></li>
@@ -3465,7 +3465,7 @@
                     class="chat-channel-tab chat-channel-home-tab"
                     role="tab"
                     :aria-selected="$store.chat.pgContextHomeSelected"
-                    @click="$store.chat.openPgScopeHome()"
+                    @click="$store.chat.openPgScopeHome($event)"
                     title="Scope home"
                     aria-label="Scope home"
                   >
@@ -3497,7 +3497,7 @@
                       class="chat-channel-tab"
                       role="tab"
                       :aria-selected="$store.chat.pgContextSelectedChannelId === ch.record_id"
-                      @click="$store.chat.selectChannel(ch.record_id)"
+                      @click="$store.chat.selectChannel(ch.record_id, { inputEvent: $event })"
                     >
                       <span class="channel-hash">#</span>
                       <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(ch)"></span>
@@ -3526,6 +3526,7 @@
                   <path d="M12 5v14M5 12h14"/>
                 </svg>
               </button>
+              <button type="button" class="chat-channel-tab-add" @click="$store.chat.copyNavigationTimings()" title="Copy recent navigation timing" aria-label="Copy recent navigation timing">⏱</button>
               <div class="chat-channel-header-actions">
                 <button
                   type="button"
