@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260814-0326-10-1790">
+  <meta name="flightdeck-build-id" content="20260814-0450-16-1796">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -46,8 +46,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-Chy8kpoT.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DPYcQgrR.css">
+  <script type="module" crossorigin src="/assets/index-B8U7OIcJ.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BKLasNgQ.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <div
@@ -3558,11 +3558,14 @@
                 <a x-show="$store.chat.workroomCreationAnnouncementHref" :href="$store.chat.workroomCreationAnnouncementHref" target="_blank" rel="noreferrer" x-text="$store.chat.workroomCreationAnnouncementHref"></a>
               </div>
               <div class="chat-feed" data-chat-feed @scroll.passive="$store.chat.updateChatFeedLoadMoreVisibility($event.target)">
+                <div class="chat-channel-switch-overlay" x-show="$store.chat.pendingChannelSelectionId" x-cloak aria-live="polite">
+                  Loading channel…
+                </div>
                 <template x-if="!$store.chat.selectedChannelId">
                   <div class="chat-empty">Select or create a channel to start chatting.</div>
                 </template>
 
-                <template x-if="$store.chat.selectedChannelId && $store.chat.mainFeedMessages.length === 0">
+                <template x-if="$store.chat.selectedChannelId && !$store.chat.pendingChannelSelectionId && $store.chat.mainFeedMessages.length === 0">
                   <div class="chat-empty">No messages yet. Start a conversation!</div>
                 </template>
 
