@@ -26,6 +26,7 @@ class BrowserScreen extends StatefulWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
+    this.localFlightDeckUrl = '',
     this.onBookmarkMenuStateChanged,
     this.onFocusModeChanged,
     this.onLogOut,
@@ -39,6 +40,7 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
+  final String localFlightDeckUrl;
   final ValueChanged<BrowserBookmarkMenuState>? onBookmarkMenuStateChanged;
   final ValueChanged<bool>? onFocusModeChanged;
   final VoidCallback? onLogOut;
@@ -64,6 +66,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   static const _newTabAddressReveal = Duration(seconds: 5);
   static const _tabClickAddressReveal = Duration(seconds: 3);
   static const _homeTitle = 'New Tab';
+  static const _flightDeckTitle = 'Flight Deck';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
@@ -81,7 +84,15 @@ class BrowserScreenState extends State<BrowserScreen> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
-    _createHomeTab(activate: true);
+    if (_hasLocalFlightDeck) {
+      _createTab(
+        widget.localFlightDeckUrl,
+        activate: true,
+        title: _flightDeckTitle,
+      );
+    } else {
+      _createHomeTab(activate: true);
+    }
     unawaited(_loadProfile());
     _syncWebStateToSigner(resetTabsOnChange: false);
   }
@@ -335,9 +346,42 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (url == null) return const BrowserBookmarkMenuState.unavailable();
     return BrowserBookmarkMenuState(
       available: true,
-      bookmarked: _bookmarks.any((bookmark) => bookmark.url == url),
+      bookmarked: _isLocalFlightDeckUrl(url) ||
+          _bookmarks.any((bookmark) => bookmark.url == url),
     );
   }
+
+  bool get _hasLocalFlightDeck =>
+      canonicalBrowserBookmarkUrl(widget.localFlightDeckUrl) != null;
+
+  BrowserBookmark? get _localFlightDeckBookmark {
+    final url = canonicalBrowserBookmarkUrl(widget.localFlightDeckUrl);
+    if (url == null) return null;
+    return BrowserBookmark(title: _flightDeckTitle, url: url);
+  }
+
+  List<BrowserBookmark> get _visibleBookmarks {
+    final flightDeck = _localFlightDeckBookmark;
+    if (flightDeck == null) return _bookmarks;
+    return [
+      flightDeck,
+      for (final bookmark in _bookmarks)
+        if (!_isLocalFlightDeckUrl(bookmark.url)) bookmark,
+    ];
+  }
+
+  bool _isLocalFlightDeckUrl(String? value) {
+    final localOrigin = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    return localOrigin.isNotEmpty &&
+        SignerPolicy.normalizeOrigin(value ?? '') == localOrigin;
+  }
+
+  SignerPolicy get _signerPolicy => SignerPolicy(
+        trustedOrigins: [
+          ...widget.config.effectiveTrustedOrigins(),
+          if (_hasLocalFlightDeck) widget.localFlightDeckUrl,
+        ],
+      );
 
   void _notifyBookmarkMenuState() {
     widget.onBookmarkMenuStateChanged?.call(_bookmarkMenuState);
@@ -349,6 +393,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
     );
     if (url == null) return;
+    if (_isLocalFlightDeckUrl(url)) return;
     final existing = _bookmarks.indexWhere((bookmark) => bookmark.url == url);
     if (existing >= 0) {
       _bookmarks = List<BrowserBookmark>.from(_bookmarks)..removeAt(existing);
@@ -366,6 +411,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   Future<void> _removeBookmark(String url) async {
     final canonicalUrl = canonicalBrowserBookmarkUrl(url);
+    if (_isLocalFlightDeckUrl(canonicalUrl)) return;
     if (canonicalUrl == null ||
         !_bookmarks.any((bookmark) => bookmark.url == canonicalUrl)) {
       return;
@@ -382,6 +428,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   Future<bool> _renameBookmark(String url, String title) async {
     final canonicalUrl = canonicalBrowserBookmarkUrl(url);
+    if (_isLocalFlightDeckUrl(canonicalUrl)) return false;
     final normalizedTitle = title.trim();
     final index = canonicalUrl == null
         ? -1
@@ -515,6 +562,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     String url, {
     bool activate = true,
     bool persistState = true,
+    String? title,
   }) {
     final id = _nextTabId++;
     late final BrowserTab tab;
@@ -524,7 +572,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       controller: controller,
       addressController: TextEditingController(text: url),
       addressFocusNode: FocusNode(),
-      title: 'New tab',
+      title: title ?? 'New tab',
     );
     tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
     setState(() {
@@ -608,7 +656,16 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   void _closeTab(int id) {
     final target = _tabById(id);
-    if (target == null || _tabs.length == 1) return;
+    if (target == null) return;
+    if (_tabs.length == 1) {
+      setState(() {
+        _tabs.clear();
+        _activeTabId = 0;
+      });
+      target.dispose();
+      _createHomeTab();
+      return;
+    }
     final index = _tabs.indexWhere((tab) => tab.id == id);
     if (index < 0) return;
     final removed = _tabs[index];
@@ -686,10 +743,10 @@ class BrowserScreenState extends State<BrowserScreen> {
       _clearingWebState = false;
     }
     if (!mounted || !resetTabs) return;
-    _resetTabsToHome(persistState: false);
+    _resetTabsToDefault(persistState: false);
   }
 
-  void _resetTabsToHome({required bool persistState}) {
+  void _resetTabsToDefault({required bool persistState}) {
     final tabs = List<BrowserTab>.from(_tabs);
     for (final tab in tabs) {
       tab.dispose();
@@ -703,7 +760,16 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
     final wasRestoringTabs = _restoringTabs;
     if (!persistState) _restoringTabs = true;
-    _createHomeTab(activate: true, persistState: persistState);
+    if (_hasLocalFlightDeck) {
+      _createTab(
+        widget.localFlightDeckUrl,
+        activate: true,
+        persistState: persistState,
+        title: _flightDeckTitle,
+      );
+    } else {
+      _createHomeTab(activate: true, persistState: persistState);
+    }
     _restoringTabs = wasRestoringTabs;
   }
 
@@ -714,7 +780,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final key = _tabsStorageKey(signerNpub);
     if (key == null) {
       if (resetToHomeWhenMissing) {
-        _resetTabsToHome(persistState: true);
+        _resetTabsToDefault(persistState: true);
       }
       return;
     }
@@ -723,7 +789,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final snapshot = _BrowserTabsSnapshot.tryParse(raw);
     if (snapshot == null || snapshot.tabs.isEmpty) {
       if (resetToHomeWhenMissing) {
-        _resetTabsToHome(persistState: true);
+        _resetTabsToDefault(persistState: true);
       }
       return;
     }
@@ -742,6 +808,19 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
 
     for (final tab in snapshot.tabs) {
+      // Version 1 snapshots predate the packaged Flight Deck. Seed it once on
+      // upgrade, then version 2 persistence remembers if the user closes it.
+      if (_tabs.isEmpty &&
+          snapshot.version < 2 &&
+          _hasLocalFlightDeck &&
+          !snapshot.tabs.any((saved) => _isLocalFlightDeckUrl(saved.url))) {
+        _createTab(
+          widget.localFlightDeckUrl,
+          activate: false,
+          persistState: false,
+          title: _flightDeckTitle,
+        );
+      }
       if (tab.isHome || tab.url == null || tab.url!.isEmpty) {
         _createHomeTab(activate: false, persistState: false);
       } else {
@@ -753,7 +832,14 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     }
 
-    final activeIndex = snapshot.activeIndex.clamp(0, _tabs.length - 1).toInt();
+    final seededFlightDeck = snapshot.version < 2 &&
+        _hasLocalFlightDeck &&
+        _tabs.isNotEmpty &&
+        _isLocalFlightDeckUrl(_tabs.first.currentUrl) &&
+        !snapshot.tabs.any((saved) => _isLocalFlightDeckUrl(saved.url));
+    final activeIndex = seededFlightDeck
+        ? 0
+        : snapshot.activeIndex.clamp(0, _tabs.length - 1).toInt();
     setState(() {
       _activeTabId = _tabs[activeIndex].id;
     });
@@ -777,6 +863,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     final key = _tabsStorageKey(signerNpub);
     if (key == null || _tabs.isEmpty) return;
     final snapshot = _BrowserTabsSnapshot(
+      version: 2,
       activeIndex: _activeTabIndex,
       tabs: [
         for (final tab in _tabs)
@@ -873,7 +960,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.message = null;
     });
     tab.controller.loadHtmlString(
-      _homePageHtml(savedBookmarks: _bookmarks),
+      _homePageHtml(savedBookmarks: _visibleBookmarks),
       baseUrl: 'https://wingman.local/',
     );
     _schedulePersistTabs();
@@ -993,8 +1080,11 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome = false;
       tab.currentUrl = url;
       tab.addressController.text = url;
-      tab.title =
-          title?.trim().isNotEmpty == true ? title!.trim() : _titleForUrl(url);
+      tab.title = _isLocalFlightDeckUrl(url)
+          ? _flightDeckTitle
+          : title?.trim().isNotEmpty == true
+              ? title!.trim()
+              : _titleForUrl(url);
     });
     await _refreshNavigationState(tab);
     await _applyFlightDeckDisplayDefaults(tab, url);
@@ -1011,7 +1101,13 @@ class BrowserScreenState extends State<BrowserScreen> {
     final pageOrigin = SignerPolicy.normalizeOrigin(url);
     final flightDeckOrigin =
         SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
-    if (pageOrigin.isEmpty || pageOrigin != flightDeckOrigin) return;
+    final localFlightDeckOrigin =
+        SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    if (pageOrigin.isEmpty ||
+        (pageOrigin != flightDeckOrigin &&
+            pageOrigin != localFlightDeckOrigin)) {
+      return;
+    }
     await tab.controller.runJavaScript('''
 (() => {
   const root = document.documentElement;
@@ -1024,12 +1120,10 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   String _homePageHtml({required List<BrowserBookmark> savedBookmarks}) {
     final bookmarkCards = savedBookmarks.map((bookmark) {
-      return '''
-        <article class="bookmark saved-bookmark">
-          <button class="bookmark-open" type="button" data-wingman-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Open ${_escapeHtml(bookmark.title)}">
-            <span class="bookmark-title">${_escapeHtml(bookmark.title)}</span>
-            <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
-          </button>
+      final builtInFlightDeck = _isLocalFlightDeckUrl(bookmark.url);
+      final bookmarkEditor = builtInFlightDeck
+          ? ''
+          : '''
           <form class="bookmark-editor" data-wingman-bookmark-editor hidden>
             <label>
               <span class="visually-hidden">Bookmark display name</span>
@@ -1042,6 +1136,14 @@ class BrowserScreenState extends State<BrowserScreen> {
             <button class="bookmark-edit" type="button" data-wingman-edit-bookmark aria-label="Edit ${_escapeHtml(bookmark.title)} bookmark name" title="Edit bookmark name">Edit</button>
             <button class="bookmark-remove" type="button" data-wingman-remove-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Remove ${_escapeHtml(bookmark.title)} bookmark" title="Remove bookmark">Remove</button>
           </div>
+''';
+      return '''
+        <article class="bookmark saved-bookmark">
+          <button class="bookmark-open" type="button" data-wingman-bookmark-url="${_escapeHtml(bookmark.url)}" aria-label="Open ${_escapeHtml(bookmark.title)}">
+            <span class="bookmark-title">${_escapeHtml(bookmark.title)}</span>
+            <span class="bookmark-url">${_escapeHtml(bookmark.url)}</span>
+          </button>
+          $bookmarkEditor
         </article>
       ''';
     }).join('\n');
@@ -1299,7 +1401,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   Future<void> _injectIfTrusted(BrowserTab tab) async {
     final url = tab.currentUrl ?? widget.config.flightDeckUrl;
     final origin = SignerPolicy.normalizeOrigin(url);
-    final policy = SignerPolicy.fromConfig(widget.config);
+    final policy = _signerPolicy;
     if (!policy.canInject(url)) {
       setState(() {
         tab.message = 'Signer withheld for unsupported page: $url';
@@ -1403,7 +1505,7 @@ class BrowserScreenState extends State<BrowserScreen> {
           : <String, dynamic>{};
       final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
       final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
-      if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
+      if (!_signerPolicy.canSignNip07(pageUrl)) {
         final reason = 'unsupported NIP-07 page origin: $pageOrigin';
         setState(() {
           tab.message = 'Signer denied: $reason';
@@ -1521,7 +1623,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       final requestMethod = request['httpMethod']?.toString() ?? 'GET';
       final requestUrl = request['url']?.toString() ?? '';
       final requestBody = request['body']?.toString();
-      final decision = SignerPolicy.fromConfig(widget.config).validateNip98(
+      final decision = _signerPolicy.validateNip98(
         pageUrl: tab.currentUrl ?? widget.config.flightDeckUrl,
         targetUrl: requestUrl,
         method: requestMethod,
@@ -1827,7 +1929,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   }) async {
     final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
     final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
-    if (!SignerPolicy.fromConfig(widget.config).canSignNip07(pageUrl)) {
+    if (!_signerPolicy.canSignNip07(pageUrl)) {
       final reason = 'unsupported NIP-44 page origin: $pageOrigin';
       setState(() {
         tab.message = 'Signer denied: $reason';
@@ -2683,16 +2785,18 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
 
 class _BrowserTabsSnapshot {
   const _BrowserTabsSnapshot({
+    required this.version,
     required this.activeIndex,
     required this.tabs,
   });
 
+  final int version;
   final int activeIndex;
   final List<_BrowserTabSnapshot> tabs;
 
   Map<String, dynamic> toJson() {
     return {
-      'version': 1,
+      'version': version,
       'active_index': activeIndex,
       'tabs': [for (final tab in tabs) tab.toJson()],
     };
@@ -2712,6 +2816,7 @@ class _BrowserTabsSnapshot {
       ].whereType<_BrowserTabSnapshot>().toList(growable: false);
       if (tabs.isEmpty) return null;
       return _BrowserTabsSnapshot(
+        version: decoded['version'] is int ? decoded['version'] as int : 1,
         activeIndex:
             decoded['active_index'] is int ? decoded['active_index'] as int : 0,
         tabs: tabs,

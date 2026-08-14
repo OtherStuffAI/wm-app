@@ -15,11 +15,13 @@ class WingmanApp extends StatefulWidget {
   const WingmanApp({
     this.useSignerVault = true,
     this.signerVault,
+    this.localFlightDeckUrl = '',
     super.key,
   });
 
   final bool useSignerVault;
   final SignerVault? signerVault;
+  final String localFlightDeckUrl;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -179,6 +181,7 @@ class _WingmanAppState extends State<WingmanApp> {
     }
     return ShellHome(
       config: _config,
+      localFlightDeckUrl: widget.localFlightDeckUrl,
       bridge: _bridge,
       signerStore: _signerStore,
       onConfigChanged: _updateConfig,

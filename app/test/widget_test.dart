@@ -228,6 +228,94 @@ void main() {
     expect(fakeClearCookieCalls, 1);
   });
 
+  testWidgets('packaged Flight Deck opens first and reopens from its bookmark',
+      (tester) async {
+    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            config: AppConfig.defaults(),
+            localFlightDeckUrl: flightDeckUrl,
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(fakeLoadedRequestUrls.single, flightDeckUrl);
+    expect(find.text('Flight Deck'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close tab'));
+    await tester.pump();
+
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(fakeLoadedHtmlStrings.last, contains('Flight Deck'));
+    expect(fakeLoadedHtmlStrings.last, contains(flightDeckUrl));
+    expect(
+      fakeLoadedHtmlStrings.last,
+      isNot(contains('Remove Flight Deck bookmark')),
+    );
+
+    submitFakeJavaScriptMessage(
+      controllerIndex: 1,
+      channel: 'WingmanSigner',
+      message:
+          '{"id":"flight-deck-open","method":"navigateTab","params":{"url":"$flightDeckUrl"}}',
+    );
+    await tester.pump();
+
+    expect(fakeLoadedRequestUrls.last, flightDeckUrl);
+    expect(find.text('Flight Deck'), findsOneWidget);
+  });
+
+  testWidgets('existing browser state seeds packaged Flight Deck only once',
+      (tester) async {
+    const signer = 'npub-flight-deck-upgrade';
+    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    const tabsKey = 'wingman.browser.tabs.v1.$signer';
+    final preferences = SharedPreferencesAsync();
+    await preferences.setString(
+      tabsKey,
+      '{"version":1,"active_index":0,"tabs":[{"title":"New Tab","url":null,"is_home":true}]}',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            config: AppConfig.defaults().copyWith(deviceNpub: signer),
+            localFlightDeckUrl: flightDeckUrl,
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(activeBrowserStackIndex(tester), 0);
+
+    await tester.tap(find.byTooltip('Close tab').first);
+    await tester.pump(const Duration(milliseconds: 150));
+
+    final persisted = await preferences.getString(tabsKey);
+    expect(persisted, contains('"version":2'));
+    expect(persisted, isNot(contains(flightDeckUrl)));
+  });
+
   testWidgets('iPhone-width strip scrolls and reorders ordinary tabs',
       (tester) async {
     addTearDown(tester.view.resetPhysicalSize);

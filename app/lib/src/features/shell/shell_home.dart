@@ -13,6 +13,7 @@ import 'macos_menu_bridge.dart';
 class ShellHome extends StatefulWidget {
   const ShellHome({
     required this.config,
+    this.localFlightDeckUrl = '',
     required this.bridge,
     required this.signerStore,
     required this.onConfigChanged,
@@ -21,6 +22,7 @@ class ShellHome extends StatefulWidget {
   });
 
   final AppConfig config;
+  final String localFlightDeckUrl;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
@@ -229,6 +231,7 @@ class _ShellHomeState extends State<ShellHome> {
     return BrowserScreen(
       key: _browserKey,
       config: widget.config,
+      localFlightDeckUrl: widget.localFlightDeckUrl,
       bridge: widget.bridge,
       signerStore: widget.signerStore,
       onOpenDrawer: _openDrawer,
