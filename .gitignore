@@ -13,5 +13,8 @@ node_modules/
 *.sqlite-shm
 *.sqlite-wal
 *.db
+*.jks
+*.keystore
+key.properties
 cache/
 tmp/

@@ -66,13 +66,59 @@ The nsec is encrypted into the Android app's local secure storage backed vault.
 - Browser and signer flows are the main mobile test target right now.
 - Desktop-only process-backed features should report unavailable on Android until the Rust/core paths are made native.
 
-## Later: Shareable Release APK
+## Shareable Release APK
 
-For a non-debug APK, add proper Android signing config and build:
+Release builds use a durable keystore outside git. On the release Mac, create it
+once and store its randomly generated password in macOS Keychain:
 
 ```bash
-cd ~/code/wm/wmapp/app
-flutter build apk --release
+cd ~/code/wm/wmapp
+./tools/setup_android_release_signing.sh
 ```
 
-Do not use a release APK for shared testing until the signing key and package identity are intentionally set.
+The default keystore is `~/.config/wmapp/android-release.jks`, with mode `0600`.
+The password is held by the `wmapp-android-release` Keychain item and is never
+written into this repository. Back up both the keystore and its password using
+the operator's secret-backup process; losing either prevents compatible updates.
+
+Build and run the repository-native checks:
+
+```bash
+./build_android_release.sh
+```
+
+The script retrieves the password from Keychain, exports it only to the build
+process, runs dependency resolution, analysis, tests, and an arm64 release
+build, then prints the APK SHA-256. CI or non-macOS operators may instead set:
+
+```text
+WMAPP_ANDROID_KEYSTORE
+WMAPP_ANDROID_STORE_PASSWORD
+WMAPP_ANDROID_KEY_ALIAS
+WMAPP_ANDROID_KEY_PASSWORD
+```
+
+Missing release-signing values fail the Gradle release build explicitly. Debug
+builds remain separate and continue to use Android's debug certificate.
+
+The release APK is written to:
+
+```text
+app/build/app/outputs/flutter-apk/app-release.apk
+```
+
+Verify its metadata and certificate before publishing:
+
+```bash
+zsp utils extract-apk app/build/app/outputs/flutter-apk/app-release.apk
+zsp publish --check zapstore.yaml
+JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}" \
+  "${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}/build-tools/36.1.0/apksigner" \
+  verify --verbose --print-certs app/build/app/outputs/flutter-apk/app-release.apk
+```
+
+`zapstore.yaml` intentionally uses the APK-extracted launcher icon. No release
+screenshots are currently maintained, so the first listing has no screenshots.
+Zapstore publication uses `zsp` with Rick's npub to prepare unsigned events and
+assets. Sign and publish those events through the running agent session's Nostr
+MCP tools; never use a raw Nostr key, bunker, or browser Tier 2 fallback.

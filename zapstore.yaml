@@ -1,0 +1,17 @@
+repository: https://github.com/OtherStuffAI/wm-app
+release_source: ./app/build/app/outputs/flutter-apk/app-release.apk
+name: WMAPP
+summary: Native Wingman client for Flight Deck, WApps, Drive, and Nostr signing.
+description: >-
+  WMAPP is the native edge client for Wingman Be Free. It provides an embedded
+  browser for Flight Deck and WApps, local Nostr signer custody, and a mobile
+  workspace shell.
+tags:
+  - nostr
+  - productivity
+  - tools
+supported_nips:
+  - "07"
+  - "98"
+release_notes: ./docs/release-notes/0.1.2.md
+pubkey: npub1llwrq3rtah3rg3r2dyfyht55ek7aa0ey7z47ujju407pzfp38shqa7zcvr
