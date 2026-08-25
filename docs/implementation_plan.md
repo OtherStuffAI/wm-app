@@ -168,7 +168,7 @@ Status:
 
 Scope:
 
-- Keep `wm-app` as a standalone repo under `~/code/wingmanbefree/wm-app`.
+- Keep `wm-app` as a standalone repo at `~/code/wm/wmapp`, alongside the new suite checkouts.
 - Maintain the initial README, architecture, and implementation plan.
 - Capture the product boundary: Flutter shell, native core, Tower source of truth, per-platform adapters.
 
@@ -1599,26 +1599,26 @@ Milestone A: Tower Contract Audit
 
 Milestone B: Core CLI Prototype
 
-- Workdir: `~/code/wingmanbefree/wm-app`.
+- Workdir: `~/code/wm/wmapp`.
 - Deliverable: Rust CLI can sign NIP-98 and list Tower files.
 - No Flutter required.
 - Status: Complete. Device-key signing, Tower listing, SQLite persistence, local item listing, cache hydration, pinning, and eviction are implemented through `WP-02-05`.
 
 Milestone C: Flutter Signer Browser Prototype
 
-- Workdir: `~/code/wingmanbefree/wm-app`.
+- Workdir: `~/code/wm/wmapp`.
 - Deliverable: Flutter WebView injects `window.nostr` and signs a test NIP-98 request.
 - No filesystem required.
 
 Milestone D: Linux Read-Only Drive
 
-- Workdir: `~/code/wingmanbefree/wm-app`.
+- Workdir: `~/code/wm/wmapp`.
 - Deliverable: FUSE mount lists and lazily opens Tower files.
 - No write support required.
 
 Milestone E: macOS Read-Only Drive
 
-- Workdir: `~/code/wingmanbefree/wm-app`.
+- Workdir: `~/code/wm/wmapp`.
 - Deliverable: macFUSE or File Provider proof of the same read-only flow.
 
 ## Risks

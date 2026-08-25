@@ -5,7 +5,7 @@
 Build the debug APK from the repo root:
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 git pull --ff-only
 ./build_android_apk.sh
 ```
@@ -33,7 +33,7 @@ On the tablet, Android may ask you to allow installs from the app you used to op
 Enable Developer Options and USB debugging on the tablet, connect it by USB, then:
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter devices
 flutter run -d <android-device-id>
 ```
@@ -71,9 +71,8 @@ The nsec is encrypted into the Android app's local secure storage backed vault.
 For a non-debug APK, add proper Android signing config and build:
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter build apk --release
 ```
 
 Do not use a release APK for shared testing until the signing key and package identity are intentionally set.
-

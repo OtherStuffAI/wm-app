@@ -10,6 +10,16 @@ The initial product combines:
 
 Tower remains the source of truth for workspace identity, scopes, channels, groups, file metadata, and object storage.
 
+## Repository Checkout
+
+Active development uses the private repository
+`https://github.com/OtherStuffAI/wm-app` checked out at
+`~/code/wm/wmapp`. Its Flight Deck bundle updater defaults to the sibling
+`~/code/wm/flightdeck` checkout; set `FLIGHT_DECK_DIR` to use another source.
+
+The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
+should not be used for new changes.
+
 ## Current Status
 
 Phase 1 contracts and the Phase 2 headless native core are complete.
@@ -118,7 +128,7 @@ Do not put signer nsecs in `.env.local` anymore. That file is only for local
 development overrides such as `WMAPP_CORE_BIN`:
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 cp .env.local.example .env.local
 $EDITOR .env.local
 ```
@@ -141,7 +151,7 @@ The Rust core uses fuser's `macos-no-mount` build mode on macOS so NIP-07 and
 NIP-98 signing can compile on a normal laptop. The kernel Drive mount remains a
 separate packaging target.
 
-When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wingmanbefree/wm-app`, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
+When launching the macOS app from Finder, the Flutter bridge looks for the Rust workspace in `WMAPP_REPO_DIR`, the current directory parents, `~/code/wm/wmapp`, the legacy `~/code/wingmanbefree/wm-app` checkpoint, or `~/wm-app`. If the repo is cloned elsewhere, launch with `WMAPP_REPO_DIR=/path/to/wm-app open build/macos/Build/Products/Debug/wingman_app.app`.
 
 Flutter platform folders have been generated for macOS, Linux, web, Android,
 and iOS. To validate the shell locally:

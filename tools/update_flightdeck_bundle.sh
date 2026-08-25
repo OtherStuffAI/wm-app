@@ -2,8 +2,13 @@
 set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-FLIGHT_DECK_DIR="${FLIGHT_DECK_DIR:-$REPO_DIR/../wm-fd-2}"
+FLIGHT_DECK_DIR="${FLIGHT_DECK_DIR:-$REPO_DIR/../flightdeck}"
 TARGET_DIR="$REPO_DIR/app/assets/flightdeck"
+
+if [[ "${1:-}" == "--print-source" ]]; then
+  printf '%s\n' "$FLIGHT_DECK_DIR"
+  exit 0
+fi
 
 (
   cd "$FLIGHT_DECK_DIR"

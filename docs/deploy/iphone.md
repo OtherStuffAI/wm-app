@@ -16,7 +16,7 @@ For wider testing later, use TestFlight.
 This does not install on a physical phone, but it is the fastest iOS smoke test.
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 git pull --ff-only
 ./build_ios_debug.sh simulator
 ```
@@ -24,7 +24,7 @@ git pull --ff-only
 Then open a simulator from Xcode or run directly:
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter devices
 flutter run -d <simulator-id>
 ```
@@ -39,7 +39,7 @@ test build.
 Build the signed release artifact using the existing Xcode signing configuration:
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 git pull --ff-only
 ./build_ios_release.sh
 ```
@@ -64,7 +64,7 @@ renders; installation by itself is not launch verification.
 Use Xcode or `flutter run` when an attached debugger is intended:
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter run -d <physical-iphone-udid>
 ```
 
@@ -125,7 +125,7 @@ Choose the developer profile and trust it.
 - If dependencies fail, run:
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter clean
 flutter pub get
 cd ios

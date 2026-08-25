@@ -5,7 +5,7 @@
 Use the root helper script. It pulls the latest `main`, fetches Flutter dependencies, builds the macOS debug app, and launches it.
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 git pull --ff-only
 ./build_runapp.sh
 ```
@@ -13,7 +13,7 @@ git pull --ff-only
 After the first successful build, relaunch the existing app without rebuilding:
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 ./runapp.sh
 ```
 
@@ -40,7 +40,7 @@ If `flutter doctor` says CocoaPods is missing, install it before iOS work. macOS
 ## Manual Build
 
 ```bash
-cd ~/code/wm-app/app
+cd ~/code/wm/wmapp/app
 flutter pub get
 flutter build macos --debug
 open build/macos/Build/Products/Debug/wingman_app.app
@@ -58,7 +58,7 @@ The nsec is encrypted into the app's local signer vault. Do not put signer keys 
 ## Updating
 
 ```bash
-cd ~/code/wm-app
+cd ~/code/wm/wmapp
 git pull --ff-only
 ./build_runapp.sh
 ```
@@ -75,4 +75,3 @@ WMAPP_SKIP_CLEAN=1 ./build_runapp.sh
 - `runapp.sh` launches the built app executable directly and sources `.env.local` for development-only overrides.
 - Finder launch can work, but `runapp.sh` is the reliable path because it sets `WMAPP_REPO_DIR`.
 - macFUSE is only needed for the future live Drive mount path. Browser/signer testing does not require it.
-
