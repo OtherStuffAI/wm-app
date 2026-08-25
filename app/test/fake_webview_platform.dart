@@ -19,6 +19,13 @@ Future<NavigationDecision?> submitFakeNavigationRequest({
   );
 }
 
+void submitFakeUrlChange({
+  required int controllerIndex,
+  required String url,
+}) {
+  _fakeWebViewControllers[controllerIndex].changeUrl(url);
+}
+
 void submitFakeJavaScriptMessage({
   required int controllerIndex,
   required String channel,
@@ -159,6 +166,11 @@ class _FakePlatformWebViewController extends PlatformWebViewController
     return _navigationDelegate?.request(request);
   }
 
+  void changeUrl(String url) {
+    _currentUrl = url;
+    _navigationDelegate?.changeUrl(url);
+  }
+
   void postJavaScriptMessage(String channel, String message) {
     _javaScriptChannels[channel]?.call(JavaScriptMessage(message: message));
   }
@@ -170,6 +182,7 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
 
   NavigationRequestCallback? _onNavigationRequest;
   PageEventCallback? _onPageFinished;
+  UrlChangeCallback? _onUrlChange;
 
   @override
   Future<void> setOnNavigationRequest(
@@ -183,12 +196,21 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
     _onPageFinished = onPageFinished;
   }
 
+  @override
+  Future<void> setOnUrlChange(UrlChangeCallback onUrlChange) async {
+    _onUrlChange = onUrlChange;
+  }
+
   Future<NavigationDecision?> request(NavigationRequest request) async {
     return _onNavigationRequest?.call(request);
   }
 
   void finish(String url) {
     _onPageFinished?.call(url);
+  }
+
+  void changeUrl(String url) {
+    _onUrlChange?.call(UrlChange(url: url));
   }
 }
 

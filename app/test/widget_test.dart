@@ -151,6 +151,89 @@ void main() {
     }
   });
 
+  testWidgets(
+      'active tab collapses address bar without navigation and cancels its timer',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+
+    final controllerCount = fakeWebViewControllerCreationCount;
+    final requestCount = fakeLoadedRequestUrls.length;
+    final htmlLoadCount = fakeLoadedHtmlStrings.length;
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.byTooltip('Back'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
+    await tester.pump();
+    expect(find.byTooltip('Back'), findsNothing);
+    expect(fakeWebViewControllerCreationCount, controllerCount);
+    expect(fakeLoadedRequestUrls, hasLength(requestCount));
+    expect(fakeLoadedHtmlStrings, hasLength(htmlLoadCount));
+
+    await tester.tap(find.byKey(const ValueKey('tab-1')));
+    await tester.pump();
+    expect(find.byTooltip('Back'), findsOneWidget);
+
+    // The cancelled five-second timer from tab 2 would fire here if stale.
+    await tester.pump(const Duration(milliseconds: 1100));
+    expect(find.byTooltip('Back'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2000));
+    expect(find.byTooltip('Back'), findsNothing);
+  });
+
+  testWidgets('address bar tracks the complete current webview URL',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const initialUrl = 'https://rick.runwingman.com/';
+    await tester.enterText(find.byType(TextField), initialUrl);
+    await tester.tap(find.byTooltip('Go'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('tab-1')));
+    await tester.pump();
+
+    const navigatedUrl =
+        'https://rick.runwingman.com/live/example-session?view=full#activity';
+    submitFakeUrlChange(controllerIndex: 0, url: navigatedUrl);
+    await tester.pump();
+
+    final addressField = tester.widget<TextField>(find.byType(TextField));
+    expect(addressField.controller?.text, navigatedUrl);
+    expect(fakeLoadedRequestUrls, <String>[initialUrl]);
+    expect(fakeWebViewControllerCreationCount, 1);
+  });
+
   testWidgets('clean launch renders a neutral browser signer new tab',
       (tester) async {
     await tester.pumpWidget(

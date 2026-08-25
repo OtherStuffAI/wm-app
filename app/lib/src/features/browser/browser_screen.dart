@@ -60,6 +60,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   int _activeTabId = 0;
   int _nextTabId = 1;
   Timer? _addressBarHideTimer;
+  int _addressBarHideGeneration = 0;
   bool _addressBarVisible = false;
   bool _focusMode = false;
   static const _nip44PolicyTarget = '*';
@@ -553,6 +554,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: _onNavigationRequest,
+          onUrlChange: (change) => _onUrlChanged(id, change.url),
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
@@ -622,7 +624,11 @@ class BrowserScreenState extends State<BrowserScreen> {
   void _activateTab(int id) {
     if (_activeTabId == id) {
       _revealTab(id);
-      _revealAddressBar(_tabClickAddressReveal);
+      if (_addressBarVisible) {
+        _hideAddressBar();
+      } else {
+        _revealAddressBar(_tabClickAddressReveal);
+      }
       _notifyBookmarkMenuState();
       return;
     }
@@ -1001,7 +1007,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   void _revealAddressBar(Duration duration) {
-    _addressBarHideTimer?.cancel();
+    _cancelAddressBarHide();
     if (mounted) {
       setState(() {
         _addressBarVisible = true;
@@ -1012,10 +1018,35 @@ class BrowserScreenState extends State<BrowserScreen> {
     _scheduleAddressBarHide(duration);
   }
 
+  void _hideAddressBar() {
+    _cancelAddressBarHide();
+    final tab = _activeTab;
+    if (tab.addressFocusNode.hasFocus) {
+      tab.addressFocusNode.unfocus();
+      _cancelAddressBarHide();
+    }
+    if (!_addressBarVisible) return;
+    if (mounted) {
+      setState(() {
+        _addressBarVisible = false;
+      });
+    } else {
+      _addressBarVisible = false;
+    }
+  }
+
+  void _cancelAddressBarHide() {
+    _addressBarHideTimer?.cancel();
+    _addressBarHideTimer = null;
+    _addressBarHideGeneration += 1;
+  }
+
   void _scheduleAddressBarHide(Duration duration) {
     _addressBarHideTimer?.cancel();
+    final generation = ++_addressBarHideGeneration;
     _addressBarHideTimer = Timer(duration, () {
-      if (!mounted) return;
+      if (!mounted || generation != _addressBarHideGeneration) return;
+      _addressBarHideTimer = null;
       final tab = _activeTab;
       if (tab.addressFocusNode.hasFocus) return;
       setState(() {
@@ -1065,6 +1096,27 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
     return NavigationDecision.navigate;
+  }
+
+  void _onUrlChanged(int tabId, String? url) {
+    if (!mounted) return;
+    final tab = _tabById(tabId);
+    if (tab == null || url == null || url.isEmpty) return;
+    if (tab.isHome &&
+        (url == 'about:blank' || url == 'https://wingman.local/')) {
+      return;
+    }
+    if (tab.currentUrl == url && tab.addressController.text == url) return;
+    setState(() {
+      tab.isHome = false;
+      tab.currentUrl = url;
+      tab.addressController.text = url;
+      if (_isLocalFlightDeckUrl(url)) {
+        tab.title = _flightDeckTitle;
+      }
+    });
+    _schedulePersistTabs();
+    if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
 
   Future<void> _onPageFinished(int tabId, String url) async {
