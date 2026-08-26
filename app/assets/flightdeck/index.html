@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260825-1141-7-1821">
+  <meta name="flightdeck-build-id" content="20260826-0527-8-1841">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -46,8 +46,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B3KxbukF.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DkMOhq92.css">
+  <script type="module" crossorigin src="/assets/index-BJ4W92LX.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-C6EmSqbp.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <div
@@ -1042,11 +1042,6 @@
             <span class="sidebar-label">Setup</span>
           </li>
         </ul>
-        <hr
-          class="sidebar-workspace-navigation-divider"
-          x-cloak
-          x-show="(!$store.chat.navCollapsed || $store.chat.mobileNavOpen) && (!$store.chat.scopesLoaded || $store.chat.currentWorkspaceKey || $store.chat.activeWorkspaceOwnerNpub || $store.chat.sidebarScopeChannelGroups.length > 0)"
-        />
         <section
           class="sidebar-scope-navigation"
           aria-label="Workspace scopes and channels"
@@ -1854,7 +1849,7 @@
                     </template>
                     <template x-if="item.inboxKind === 'task'">
                       <div class="attention-card flightdeck-summary-card flightdeck-summary-card-task" :class="{ 'flightdeck-summary-card-inbox-unread': item.isUnread }" :style="{ '--task-status-color': $store.chat.resolveTaskBoardColumnColor(item) }" role="link" tabindex="0" @click="if ($store.chat.shouldOpenDeckCard($event)) $store.chat.openAutopilotOverviewTask(item)" @keydown.enter.prevent="if ($store.chat.shouldOpenDeckCard($event)) $store.chat.openAutopilotOverviewTask(item)" @keydown.space.prevent="if ($store.chat.shouldOpenDeckCard($event)) $store.chat.openAutopilotOverviewTask(item)" aria-label="Open selected task">
-                        <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg('task')"></span><span class="attention-card-content"><span class="attention-card-kicker" x-text="`Task · ${item.subtitle}`"></span><span class="attention-card-title deck-card-inline-title" x-html="$store.chat.renderDeckCardText(item.title)"></span><span class="attention-card-subtitle" x-text="item.reason"></span></span><span class="attention-card-meta"><span class="attention-card-time" x-text="$store.chat.formatRelativeTime(item.inboxActivityAt)"></span><button type="button" class="attention-card-mark-read" data-deck-card-action x-show="item.isUnread" x-cloak @click.stop.prevent="$store.chat.markDeckResourceRead('task', item.recordId)" @keydown.enter.stop @keydown.space.stop>Mark read</button><span class="attention-card-action">Open task</span></span>
+                        <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg('task')"></span><span class="attention-card-content"><span class="attention-card-kicker" x-text="`Task · ${item.subtitle}`"></span><span class="attention-card-title deck-card-inline-title" x-html="$store.chat.renderDeckCardText(item.title)"></span><span class="attention-card-subtitle" x-text="item.reason"></span></span><span class="attention-card-meta"><span class="attention-card-time" x-text="$store.chat.formatRelativeTime(item.inboxActivityAt)"></span><template x-if="item.taskState === 'review'"><button type="button" class="attention-card-mark-read" data-deck-card-action x-show="item.isUnread" x-cloak @click.stop.prevent="$store.chat.markDeckReviewTaskDone(item.recordId)" @keydown.enter.stop @keydown.space.stop>Mark done</button></template><template x-if="item.taskState !== 'review'"><button type="button" class="attention-card-mark-read" data-deck-card-action x-show="item.isUnread" x-cloak @click.stop.prevent="$store.chat.markDeckResourceRead('task', item.recordId)" @keydown.enter.stop @keydown.space.stop>Mark read</button></template><span class="attention-card-action">Open task</span></span>
                       </div>
                     </template>
                     <template x-if="item.inboxKind === 'document'">
@@ -1863,8 +1858,8 @@
                       </div>
                     </template>
                     <template x-if="item.inboxKind === 'file'">
-                      <button type="button" class="attention-card flightdeck-summary-card flightdeck-summary-card-file" @click="$store.chat.openFileBrowserSource(item)" aria-label="Open selected file">
-                        <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg('doc')"></span><span class="attention-card-content"><span class="attention-card-kicker" x-text="`File · ${item.source_label || 'Files'}`"></span><span class="attention-card-title" x-text="item.name"></span><span class="attention-card-subtitle" x-text="item.reason"></span></span><span class="attention-card-meta"><span class="attention-card-time" x-text="$store.chat.formatRelativeTime(item.inboxActivityAt)"></span><span class="attention-card-action">Open file</span></span>
+                      <button type="button" class="attention-card flightdeck-summary-card flightdeck-summary-card-file" @click="$store.chat.openFileBrowserSource(item)" :aria-label="item.sourceAriaLabel">
+                        <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg('doc')"></span><span class="attention-card-content"><span class="attention-card-kicker" x-text="`${item.sourceTypeLabel} · ${item.source_label || 'Files'}`"></span><span class="attention-card-title" x-text="item.name"></span><span class="attention-card-subtitle" x-text="item.reason"></span></span><span class="attention-card-meta"><span class="attention-card-time" x-text="$store.chat.formatRelativeTime(item.inboxActivityAt)"></span><span class="attention-card-action" x-text="item.sourceActionLabel"></span></span>
                       </button>
                     </template>
                   </div>
@@ -2148,10 +2143,10 @@
                   <div id="flightdeck-summary-files-body" x-show="!$store.chat.isSummaryPanelCollapsed('files')" x-cloak>
                   <div class="attention-card-list flightdeck-summary-card-list" x-show="$store.chat.autopilotOverviewFiles.length > 0">
                     <template x-for="file in $store.chat.pagedAutopilotOverviewFiles" :key="file.id">
-                      <button type="button" class="attention-card flightdeck-summary-card flightdeck-summary-card-file" @click="$store.chat.openFileBrowserSource(file)" aria-label="Open selected file">
+                      <button type="button" class="attention-card flightdeck-summary-card flightdeck-summary-card-file" @click="$store.chat.openFileBrowserSource(file)" :aria-label="file.sourceAriaLabel">
                         <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg('doc')"></span>
                         <span class="attention-card-content">
-                          <span class="attention-card-kicker" x-text="file.source_label"></span>
+                          <span class="attention-card-kicker" x-text="`${file.sourceTypeLabel} · ${file.source_label || 'Files'}`"></span>
                           <span class="attention-card-title" x-text="file.name"></span>
                           <span class="attention-card-subtitle" x-text="file.reason"></span>
                         </span>
@@ -2160,7 +2155,7 @@
                             <span x-text="$store.chat.fileUpdatedLabel(file)"></span>
                             <span x-text="file.object_id"></span>
                           </span>
-                          <span class="attention-card-action">Open file</span>
+                          <span class="attention-card-action" x-text="file.sourceActionLabel"></span>
                         </span>
                       </button>
                     </template>
@@ -4780,26 +4775,34 @@
                     <span class="doc-sync-indicator" :title="$store.chat.docSyncStatusLabel">
                       <span class="doc-sync-dot" :class="$store.chat.docSyncStatusClass"></span>
                     </span>
+                    <span
+                      class="doc-edit-status"
+                      :class="`doc-edit-status-${$store.chat.selectedDocEditStatusTone}`"
+                      role="status"
+                      aria-live="polite"
+                      x-show="$store.chat.selectedDocEditStatusLabel"
+                      x-text="$store.chat.selectedDocEditStatusLabel"
+                    ></span>
                     <div class="doc-mode-switcher">
                       <button
                         type="button"
                         class="doc-mode-chip"
-                        :class="{ 'doc-mode-chip-active': $store.chat.docEditorMode === 'preview' }"
-                        @click="$store.chat.setDocReadMode()"
-                      >Read</button>
-                      <button
-                        type="button"
-                        class="doc-mode-chip"
-                        :class="{ 'doc-mode-chip-active': $store.chat.docEditorMode !== 'preview' }"
-                        :disabled="$store.chat.docEditorMode === 'preview'
-                          ? (!$store.chat.canCurrentActorEditSelectedLockManagedRecord || $store.chat.selectedDocCheckoutSessionState?.acquireState === 'acquiring')
-                          : $store.chat.docRichImageUploadCount > 0"
-                        @click="$store.chat.docEditorMode === 'preview'
-                          ? $store.chat.enterSelectedDocEditMode('rich')
-                          : $store.chat.saveAndExitSelectedDocEditMode()"
-                        x-text="$store.chat.docEditorMode === 'preview'
-                          ? ($store.chat.selectedDocCheckoutSessionState?.acquireState === 'acquiring' ? 'Checking out…' : 'Edit')
-                          : ($store.chat.docRichImageUploadCount > 0 ? 'Uploading…' : 'Save')"
+                        :class="{ 'doc-mode-chip-active': $store.chat.docEditAccessState === 'editing' }"
+                        :disabled="$store.chat.docEditAccessState === 'acquiring'
+                          || $store.chat.docEditAccessState === 'conflict'
+                          || $store.chat.docRichImageUploadCount > 0"
+                        @click="$store.chat.docEditAccessState === 'editing'
+                          ? $store.chat.saveAndExitSelectedDocEditMode()
+                          : ($store.chat.docEditAccessState === 'blocked'
+                            ? $store.chat.retrySelectedDocEditAccess()
+                            : $store.chat.beginSelectedDocLeaseAcquisition())"
+                        x-text="$store.chat.docRichImageUploadCount > 0
+                          ? 'Uploading…'
+                          : ($store.chat.docEditAccessState === 'editing'
+                            ? 'Save'
+                            : ($store.chat.docEditAccessState === 'acquiring'
+                              ? 'Acquiring…'
+                              : ($store.chat.docEditAccessState === 'blocked' ? 'Retry' : 'Edit')))"
                       >Edit</button>
                     </div>
                     <button
@@ -4883,6 +4886,20 @@
                         <button type="button" class="doc-actions-delete" @click="$store.chat.deleteSelectedDocItem(); open = false">Delete document</button>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <div
+                  class="doc-edit-access-banner"
+                  :class="`doc-edit-access-banner-${$store.chat.selectedDocEditStatusTone}`"
+                  x-show="$store.chat.docEditAccessMessage || ['blocked', 'conflict'].includes($store.chat.docEditAccessState)"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span x-text="$store.chat.docEditAccessMessage || $store.chat.selectedDocEditStatusLabel"></span>
+                  <div class="doc-edit-access-actions" x-show="$store.chat.docEditDraftDirty">
+                    <button type="button" @click="$store.chat.copySelectedDocDraft()">Copy draft</button>
+                    <button type="button" @click="$store.chat.discardSelectedDocDraft()">Discard draft</button>
                   </div>
                 </div>
 
@@ -4977,7 +4994,7 @@
                         <div
                           class="doc-rich-editor"
                           x-init="$nextTick(() => $store.chat.mountDocRichEditor($el))"
-                          x-effect="$store.chat.docEditorMode; if ($store.chat.docEditorMode === 'rich') $nextTick(() => $store.chat.mountDocRichEditor($el))"
+                          x-effect="$store.chat.docEditorMode; $store.chat.selectedDocument?.version; $store.chat.observeSelectedDocAuthoritativeVersion(); if ($store.chat.docEditorMode === 'rich') $nextTick(() => $store.chat.mountDocRichEditor($el))"
                         ></div>
                       </template>
                       <template x-if="$store.chat.docEditorMode !== 'source' && $store.chat.docEditorMode !== 'rich'">
