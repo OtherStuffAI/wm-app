@@ -6,6 +6,8 @@ Publish the first shareable Android release of WMAPP to Zapstore under Rick's st
 
 Flight Deck tracking: @[Publish signed WMAPP Android release to Zapstore](mention:task:4cccad9c-82a0-4723-a6c5-66190cc51faf), originating from @[Message](mention:message:36efe0e7-9716-45cb-83bf-f0421cc01699) in @[features](mention:channel:d8d00881-ac84-41eb-ab0d-2c2afb77ddf3).
 
+Publication retry: @[Message](mention:message:142d5575-be72-4472-9b16-a7572dd23861) in thread `8633e75e-3a33-47d4-9e40-b19bb1aeac43`.
+
 ## Current evidence
 
 - Active repo: `/Users/mini/code/wm/wmapp`; the old `/Users/mini/code/wingmanbefree/wm-app` checkout is superseded.
@@ -32,9 +34,22 @@ Flight Deck tracking: @[Publish signed WMAPP Android release to Zapstore](mentio
 - `zsp` generated an unsigned kind 32267 application template (`0629d40724d17d12d37cc545a5a174509265b71c5f650cce3f84926a9dfcd046`), kind 30063 release template (`40586e258f3e7df0a53fdf7e435d70caa4966a9bdb9487571d5c225d144b12d4`), and kind 3063 asset template (`a14360e68f977407477969819277de124c3b9e5f3fa92c648a9c1124537c3706`). These are deterministic unsigned template IDs, not published event IDs.
 - The generated APK and icon Blossom URLs both returned public HTTP 404 and therefore require authenticated upload before their software events can be published.
 
-## Narrow publication blocker
+## Original signing-policy blocker (resolved)
 
-The running session's direct Nostr MCP signer correctly resolves to Rick's configured npub, but its policy denied every required non-note event kind with `Nostr event kind is not allowed`: Blossom upload authorization kind `24242`, software application kind `32267`, software release kind `30063`, and software asset kind `3063`. No asset or software event was published, and no catalog/install claim can be made. The safe next step is to grant this stable agent identity those four exact event kinds, then regenerate the time-sensitive Blossom authorization, upload the APK/icon, sign and publish the three existing software templates, and verify the public catalog.
+The earlier session denied Blossom authorization kind `24242` and software kinds `32267`, `30063`, and `3063`. After Autopilot was restarted with the corrected narrow policy, the 2026-08-26 retry successfully broker-signed kind `24242` and submitted kind `32267` as Rick's stable pubkey. No raw key, bunker, capability token, or Pete Tier 2 identity was used.
+
+## Publication retry evidence and current blocker
+
+- `main` and `origin/main` were both `3dac278` before the retry. The release APK remained 21,631,286 bytes with SHA-256 `79d0360a1c429459b5ac753f07441f3cb62f28aef7fed7c8835798ecd2353c2e`.
+- `apksigner verify --verbose --print-certs` again passed with certificate SHA-256 `6c0da09b9e2375d657645f197419be7b8227a7434e0225512fc760cedf383c8c`, subject `CN=WMAPP Android Release, O=Wingman Be Free`, and v2 signing. This is not the local debug certificate `a98dd3e317915e143f66f94d4b2513cb8dbba217a58e785581901e3e69f6f561`.
+- Official `zsp` v0.4.17 regenerated the application (`32267`), release (`30063`), and asset (`3063`) templates in offline npub mode. `--no-compress` was used because the default compressed-icon manifest named a hash that did not match the bytes left at its temporary upload path. With `--no-compress`, the icon bytes and manifest both use SHA-256 `07f70806879d675490e4650eaad8b4f92669ec9628b9b1d36f771256087f4468`.
+- Immediately before mutation, both the APK and icon Blossom URLs returned HTTP 404.
+- A short-lived, hash-scoped kind `24242` Blossom authorization was successfully broker-signed as Rick. `PUT /upload` and the BUD-06 `HEAD /upload` preflight were rejected by `cdn.zapstore.dev` with HTTP 403 and `x-reason: authenticated pubkey is not allowed. Visit https://zapstore.dev/docs/publish for more information.`
+- Zapstore's official publication documentation says first-publisher verification fetches the committed `zapstore.yaml` from the repository. `zapstore.yaml` is committed on `origin/main`, but unauthenticated retrieval from `https://raw.githubusercontent.com/OtherStuffAI/wm-app/main/zapstore.yaml` returns HTTP 404, so Zapstore cannot verify the repository while it is private.
+- The exact generated application template was submitted through the broker-backed publication tool. It returned event ID `54e51953fbc0a79628bd6139ca71415df1b59ac92c57fd8f53bcfbca49b4c0d9` and reported `OK` from `wss://relay.zapstore.dev`. Independent readback by exact event ID and by Rick/package returned no event, and Blossom continued to reject Rick. Treat this as an attempted/pending-or-rejected event, not accepted public publication.
+- The APK and icon URLs still return HTTP 404. The release and asset templates were deliberately not published because their referenced blob was absent and the application event was not publicly readable. There is no verified catalog listing, download path, or device-install proof.
+
+The remaining narrow blocker is Zapstore first-publisher verification for Rick against a repository that is not publicly fetchable. Resolution requires an operator decision to make `OtherStuffAI/wm-app` public or move the committed `zapstore.yaml` and repository metadata to a supported public repository, then rerun the broker-only upload/publication sequence. Changing repository visibility is outside this release worker's authority. Do not work around it with another identity or raw key.
 
 ## Authority and secret boundaries
 
