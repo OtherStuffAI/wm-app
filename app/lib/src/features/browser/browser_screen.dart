@@ -478,6 +478,14 @@ class BrowserScreenState extends State<BrowserScreen> {
     widget.onFocusModeChanged?.call(false);
   }
 
+  void reloadFlightDeck() {
+    for (final tab in _tabs) {
+      if (_isLocalFlightDeckUrl(tab.currentUrl ?? tab.addressController.text)) {
+        tab.controller.reload();
+      }
+    }
+  }
+
   Future<void> _loadProfile() async {
     final deviceNpub = widget.config.deviceNpub;
     final profile = await _profileStore.load(deviceNpub);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
+import '../../core/flight_deck_update_manager.dart';
 import '../../core/native_core_bridge.dart';
 import '../browser/browser_screen.dart';
 import '../browser/signer_store.dart';
@@ -14,6 +15,7 @@ class ShellHome extends StatefulWidget {
   const ShellHome({
     required this.config,
     this.localFlightDeckUrl = '',
+    this.flightDeckUpdates,
     required this.bridge,
     required this.signerStore,
     required this.onConfigChanged,
@@ -23,6 +25,7 @@ class ShellHome extends StatefulWidget {
 
   final AppConfig config;
   final String localFlightDeckUrl;
+  final FlightDeckUpdateController? flightDeckUpdates;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
@@ -84,6 +87,8 @@ class _ShellHomeState extends State<ShellHome> {
             child: StatusScreen(
               config: widget.config,
               bridge: widget.bridge,
+              flightDeckUpdates: widget.flightDeckUpdates,
+              onFlightDeckChanged: _reloadFlightDeck,
             ),
           ),
           _surfaceScaffold(
@@ -306,6 +311,10 @@ class _ShellHomeState extends State<ShellHome> {
 
   Future<void> _clearBrowserData() async {
     await _browserKey.currentState?.clearBrowserData();
+  }
+
+  void _reloadFlightDeck() {
+    _browserKey.currentState?.reloadFlightDeck();
   }
 
   Future<void> _confirmLogOut() async {

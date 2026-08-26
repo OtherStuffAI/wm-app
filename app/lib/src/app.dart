@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/app_config.dart';
+import 'core/flight_deck_update_manager.dart';
 import 'core/native_core_bridge.dart';
 import 'core/signer_vault.dart';
 import 'features/browser/signer_store.dart';
@@ -16,12 +17,14 @@ class WingmanApp extends StatefulWidget {
     this.useSignerVault = true,
     this.signerVault,
     this.localFlightDeckUrl = '',
+    this.flightDeckUpdates,
     super.key,
   });
 
   final bool useSignerVault;
   final SignerVault? signerVault;
   final String localFlightDeckUrl;
+  final FlightDeckUpdateController? flightDeckUpdates;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -182,6 +185,7 @@ class _WingmanAppState extends State<WingmanApp> {
     return ShellHome(
       config: _config,
       localFlightDeckUrl: widget.localFlightDeckUrl,
+      flightDeckUpdates: widget.flightDeckUpdates,
       bridge: _bridge,
       signerStore: _signerStore,
       onConfigChanged: _updateConfig,
