@@ -49,7 +49,33 @@ The earlier session denied Blossom authorization kind `24242` and software kinds
 - The exact generated application template was submitted through the broker-backed publication tool. It returned event ID `54e51953fbc0a79628bd6139ca71415df1b59ac92c57fd8f53bcfbca49b4c0d9` and reported `OK` from `wss://relay.zapstore.dev`. Independent readback by exact event ID and by Rick/package returned no event, and Blossom continued to reject Rick. Treat this as an attempted/pending-or-rejected event, not accepted public publication.
 - The APK and icon URLs still return HTTP 404. The release and asset templates were deliberately not published because their referenced blob was absent and the application event was not publicly readable. There is no verified catalog listing, download path, or device-install proof.
 
-The remaining narrow blocker is Zapstore first-publisher verification for Rick against a repository that is not publicly fetchable. Resolution requires an operator decision to make `OtherStuffAI/wm-app` public or move the committed `zapstore.yaml` and repository metadata to a supported public repository, then rerun the broker-only upload/publication sequence. Changing repository visibility is outside this release worker's authority. Do not work around it with another identity or raw key.
+At that retry, the narrow blocker was Zapstore first-publisher verification against a repository that was not publicly fetchable. Pete subsequently made `OtherStuffAI/wm-app` public; the result of that corrected retry is recorded below.
+
+## Public-repository retry evidence (2026-08-26)
+
+Pete made `OtherStuffAI/wm-app` public and accepted the already-audited author-email exposure. Before the retry, GitHub's public repository API reported `visibility: public`, the unauthenticated raw `zapstore.yaml` returned HTTP 200, and its SHA-256 matched the local file at `0fc04d2eb6accb6b96c55a5c24c2f51008aaa1eb09981b885883b92d8371fea2`. The checkout was clean on `main`; `HEAD` and `origin/main` were both `7e425cca2af801a47447e42281454f8924d92f38`.
+
+The existing release APK was revalidated without rebuilding or accessing keystore secrets:
+
+- `app-release.apk`: 21,631,286 bytes; SHA-256 `79d0360a1c429459b5ac753f07441f3cb62f28aef7fed7c8835798ecd2353c2e`.
+- Package/version: `com.wingmanbefree.wingman_app`, `0.1.2` (code `3`).
+- `apksigner verify --verbose --print-certs` passed with v2 signing and certificate SHA-256 `6c0da09b9e2375d657645f197419be7b8227a7434e0225512fc760cedf383c8c` (`CN=WMAPP Android Release, O=Wingman Be Free`).
+- `zsp` v0.4.17 extraction and `zsp publish --check zapstore.yaml` passed.
+- Fresh `--no-compress` extraction retained icon SHA-256 `07f70806879d675490e4650eaad8b4f92669ec9628b9b1d36f771256087f4468` (20,459 bytes).
+
+The fresh kind `32267` application submission, broker-signed as Rick, returned event ID `b23d6cd8ae9a1118c0bd39b0722926fbb1e4c06ce42f5ebd669510d5b385dd61` and an `OK` acknowledgement from `wss://relay.zapstore.dev`. Independent exact-ID and Rick/package-address queries returned no event. The prior application attempt `54e51953fbc0a79628bd6139ca71415df1b59ac92c57fd8f53bcfbca49b4c0d9` also remains absent.
+
+The dedicated broker upload helper denied `https://cdn.zapstore.dev` with `Blossom server is not allowed`. The approved generic broker event capability then produced short-lived, hash-scoped kind `24242` authorizations without exposing or persisting authorization material. After satisfying the server's current `Content-Digest` requirement, the corrected APK upload reached Zapstore and was rejected with HTTP 403 and exact `x-reason`: `authenticated pubkey is not allowed. Visit https://zapstore.dev/docs/publish for more information.` The one-corrected-retry limit was reached, so publication stopped. The icon was not uploaded, and kinds `3063` and `30063` were deliberately not emitted.
+
+Final independent readback:
+
+- APK URL `https://cdn.zapstore.dev/79d0360a1c429459b5ac753f07441f3cb62f28aef7fed7c8835798ecd2353c2e`: HTTP 404.
+- Icon URL `https://cdn.zapstore.dev/07f70806879d675490e4650eaad8b4f92669ec9628b9b1d36f771256087f4468`: HTTP 404.
+- Configured relay: neither exact application event ID nor the Rick/package address is readable.
+- Zapstore web search produced no indexed result for the package/name; the package detail route returns only the generic application shell, with no retrievable catalog record or download/install path.
+- No Android device install was attempted because there is no published catalog/download artifact. Once Zapstore admits Rick, deterministic tablet flow is: install/open Zapstore, refresh `wss://relay.zapstore.dev`, search the exact package `com.wingmanbefree.wingman_app` (or `WMAPP`), confirm version `0.1.2` and APK hash/certificate above, then install from the verified release.
+
+The remaining blocker is external and narrower than repository visibility: Zapstore still does not admit Rick after successful public repository/YAML verification, and its relay acknowledges but does not retain the application event. Contact Zapstore with the public repository URL, Rick's npub, application event ID, HTTP 403 `x-reason`, and raw YAML HTTP-200 evidence. Do not retry again, switch identity, or weaken broker policy until Zapstore resolves the publisher admission state.
 
 ## Authority and secret boundaries
 
