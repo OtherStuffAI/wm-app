@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260826-0527-8-1841">
+  <meta name="flightdeck-build-id" content="20260828-0230-1-1853">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -46,8 +46,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BJ4W92LX.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-C6EmSqbp.css">
+  <script type="module" crossorigin src="/assets/index-SNhqQfG5.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DZvog6Wn.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <div
@@ -76,7 +76,7 @@
   </template>
   <aside
     class="startup-sync-status"
-    x-show="$store.chat.startupSyncProgress.visible"
+    x-show="$store.chat.startupSyncProgress.visible && $store.chat.startupSyncProgress.stage === 'error'"
     x-cloak
     role="status"
     aria-live="polite"
@@ -184,7 +184,7 @@
         <button type="button" class="identity-card-close" @click="$store.chat.closeIdentityCard()" aria-label="Close profile card">&times;</button>
         <div class="identity-card-header">
           <template x-if="$store.chat.identityCardProfile.avatarUrl">
-            <img class="identity-card-avatar" :src="$store.chat.identityCardProfile.avatarUrl" alt="Profile picture" />
+            <img class="identity-card-avatar" :src="$store.chat.identityCardProfile.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
           </template>
           <template x-if="!$store.chat.identityCardProfile.avatarUrl">
             <span class="identity-card-avatar identity-card-avatar-fallback" x-text="$store.chat.getInitials($store.chat.identityCardProfile.name)"></span>
@@ -252,6 +252,7 @@
             'avatar-status-syncing': $store.chat.avatarConnectionStatus === 'syncing',
             'avatar-status-local-only': $store.chat.avatarConnectionStatus === 'local-only',
             'avatar-status-error': $store.chat.avatarConnectionStatus === 'error',
+            'avatar-status-receiving': $store.chat.startupSyncProgress.visible && $store.chat.startupSyncProgress.active,
             'sync-status-synced': !$store.chat.isTowerPgMode && $store.chat.syncStatus === 'synced',
             'sync-status-unsynced': !$store.chat.isTowerPgMode && $store.chat.syncStatus === 'unsynced',
             'sync-status-stale': !$store.chat.isTowerPgMode && $store.chat.syncStatus === 'stale',
@@ -262,18 +263,33 @@
           }"
           type="button"
           @click="$store.chat.showAvatarMenu = !$store.chat.showAvatarMenu"
-          :title="$store.chat.avatarConnectionTitle"
+          :title="$store.chat.avatarControlTitle"
+          :aria-label="$store.chat.avatarControlTitle"
+          aria-haspopup="true"
+          :aria-expanded="$store.chat.showAvatarMenu ? 'true' : 'false'"
+          aria-controls="profile-avatar-menu"
         >
           <template x-if="$store.chat.avatarUrl">
-            <img class="chat-post-avatar" :src="$store.chat.avatarUrl" alt="Your profile picture" />
+            <img class="chat-post-avatar" :src="$store.chat.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
           </template>
           <template x-if="!$store.chat.avatarUrl">
             <span class="avatar-fallback" x-text="$store.chat.avatarFallback"></span>
           </template>
         </button>
-        <div class="avatar-menu" x-show="$store.chat.showAvatarMenu" @click.outside="$store.chat.showAvatarMenu = false">
+        <div id="profile-avatar-menu" class="avatar-menu" x-show="$store.chat.showAvatarMenu" @click.outside="$store.chat.showAvatarMenu = false">
           <div class="avatar-menu-header">
             <span class="avatar-menu-name" x-text="$store.chat.displayName"></span>
+          </div>
+          <div class="avatar-menu-section startup-sync-progress-panel" x-show="$store.chat.startupSyncProgress.visible">
+            <span class="avatar-menu-label">Workspace updates</span>
+            <div class="startup-sync-progress-heading">
+              <span class="startup-sync-progress-indicator" :class="{ 'is-active': $store.chat.startupSyncProgress.active }" aria-hidden="true"></span>
+              <strong x-text="$store.chat.startupSyncProgressLabel()"></strong>
+            </div>
+            <span class="startup-sync-progress-meta" x-show="$store.chat.startupSyncProgressMeta()" x-text="$store.chat.startupSyncProgressMeta()"></span>
+            <span class="startup-sync-progress-copy" x-show="$store.chat.startupSyncProgress.active">Cached workspace remains available while Flight Deck updates.</span>
+            <span class="sync-error-text" x-show="$store.chat.startupSyncProgress.stage === 'error'" x-text="$store.chat.startupSyncProgress.error"></span>
+            <button class="startup-sync-retry" type="button" x-show="$store.chat.startupSyncProgress.stage === 'error'" @click="$store.chat.retryStartupSync()">Retry updates</button>
           </div>
           <div class="avatar-menu-section sync-status-panel">
             <span class="avatar-menu-label" x-text="$store.chat.isTowerPgMode ? 'Backend' : 'Sync Status'"></span>
@@ -1713,7 +1729,7 @@
                   >
                     <span class="launcher-avatar-ring autopilot-agent-avatar-ring">
                       <template x-if="$store.chat.previewPersonalAgents[0]?.npub && $store.chat.getSenderAvatar($store.chat.previewPersonalAgents[0].npub)">
-                        <img :src="$store.chat.getSenderAvatar($store.chat.previewPersonalAgents[0].npub)" alt="" />
+                        <img :src="$store.chat.getSenderAvatar($store.chat.previewPersonalAgents[0].npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.previewPersonalAgents[0]?.npub || !$store.chat.getSenderAvatar($store.chat.previewPersonalAgents[0].npub)">
                         <span x-text="$store.chat.getInitials($store.chat.previewPersonalAgents[0]?.title || 'Autopilot')"></span>
@@ -1728,7 +1744,7 @@
                     <button type="button" class="launcher-pill launcher-pill-stacked autopilot-agent-launcher" @click="$store.chat.personalAgentsOverlayOpen ? $store.chat.openPersonalAgent(agent) : $store.chat.openPersonalAgentsOverlay()" :disabled="!agent.launch_url" :title="agent.launch_url" aria-label="Dive deeper in Autopilot">
                       <span class="launcher-avatar-ring autopilot-agent-avatar-ring">
                         <template x-if="agent.npub && $store.chat.getSenderAvatar(agent.npub)">
-                          <img :src="$store.chat.getSenderAvatar(agent.npub)" alt="" />
+                          <img :src="$store.chat.getSenderAvatar(agent.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                         </template>
                         <template x-if="!agent.npub || !$store.chat.getSenderAvatar(agent.npub)">
                           <span x-text="$store.chat.getInitials(agent.title || 'Autopilot')"></span>
@@ -2460,7 +2476,8 @@
                 <img
                   class="filter-to-me-avatar"
                   :src="$store.chat.getSenderAvatar($store.chat.currentViewerNpub)"
-                  alt="Me"
+                  alt=""
+                  @error="$store.chat.handleAvatarImageError($event)"
                 />
               </template>
               <template x-if="!$store.chat.getSenderAvatar($store.chat.currentViewerNpub)">
@@ -2657,7 +2674,7 @@
                           <template x-if="$store.chat.getPrimaryTaskAssigneeNpub(task)">
                             <button type="button" class="kanban-card-assignee identity-avatar-button" :title="'Assigned to ' + $store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(task))" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPrimaryTaskAssigneeNpub(task))">
                               <template x-if="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))">
-                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))" alt="" />
+                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                               </template>
                               <template x-if="!$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))">
                                 <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(task)))"></span>
@@ -2740,7 +2757,7 @@
                           <template x-if="$store.chat.getPrimaryTaskAssigneeNpub(task)">
                             <button type="button" class="kanban-card-assignee identity-avatar-button" :title="'Assigned to ' + $store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(task))" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPrimaryTaskAssigneeNpub(task))">
                               <template x-if="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))">
-                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))" alt="" />
+                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                               </template>
                               <template x-if="!$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(task))">
                                 <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(task)))"></span>
@@ -2764,7 +2781,7 @@
                               <template x-if="$store.chat.getPrimaryTaskAssigneeNpub(sub)">
                                 <button type="button" class="kanban-card-assignee identity-avatar-button" :title="'Assigned to ' + $store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(sub))" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPrimaryTaskAssigneeNpub(sub))">
                                   <template x-if="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(sub))">
-                                    <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(sub))" alt="" />
+                                    <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(sub))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                                   </template>
                                   <template x-if="!$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub(sub))">
                                     <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub(sub)))"></span>
@@ -2919,7 +2936,7 @@
                       <template x-if="$store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask)">
                         <button type="button" class="task-detail-assignee-avatar identity-avatar-button" :title="$store.chat.getTaskAssigneeLabel($store.chat.editingTask)" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
                           <template x-if="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
-                            <img :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))" alt="" />
+                            <img :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                           </template>
                           <template x-if="!$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
                             <span x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask)))"></span>
@@ -3026,7 +3043,7 @@
                       <div class="new-channel-resolved-profile task-assignee-selected">
                         <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))" :title="$store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
                           <template x-if="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
-                            <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))" />
+                            <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                           </template>
                           <template x-if="!$store.chat.getSenderAvatar($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask))">
                             <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getPrimaryTaskAssigneeNpub($store.chat.editingTask)))"></div>
@@ -3050,10 +3067,10 @@
                       <template x-for="person in $store.chat.taskAssigneeSuggestions" :key="`task-assignee-${person.npub}`">
                         <li>
                           <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingTask(person.npub)">
-                            <template x-if="person.avatarUrl">
-                              <img class="new-channel-avatar" :src="person.avatarUrl" />
+                            <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                              <img class="new-channel-avatar" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                             </template>
-                            <template x-if="!person.avatarUrl">
+                            <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                               <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
                             </template>
                             <span class="docs-share-suggestion-copy">
@@ -3414,7 +3431,7 @@
                         <div class="task-comment-header">
                           <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, comment.sender_npub)" :title="$store.chat.getSenderName(comment.sender_npub)">
                             <template x-if="$store.chat.getSenderAvatar(comment.sender_npub)">
-                              <img class="task-comment-avatar" :src="$store.chat.getSenderAvatar(comment.sender_npub)" alt="Profile picture" />
+                              <img class="task-comment-avatar" :src="$store.chat.getSenderAvatar(comment.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                             </template>
                             <template x-if="!$store.chat.getSenderAvatar(comment.sender_npub)">
                               <span class="task-comment-avatar task-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(comment.sender_npub))"></span>
@@ -3496,7 +3513,7 @@
                           <div class="task-comment-header">
                             <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, comment.sender_npub)" :title="$store.chat.getSenderName(comment.sender_npub)">
                               <template x-if="$store.chat.getSenderAvatar(comment.sender_npub)">
-                                <img class="task-comment-avatar" :src="$store.chat.getSenderAvatar(comment.sender_npub)" alt="Profile picture" />
+                                <img class="task-comment-avatar" :src="$store.chat.getSenderAvatar(comment.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                               </template>
                               <template x-if="!$store.chat.getSenderAvatar(comment.sender_npub)">
                                 <span class="task-comment-avatar task-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(comment.sender_npub))"></span>
@@ -3751,7 +3768,7 @@
                     <div class="chat-post-header">
                       <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, msg.sender_npub)" :title="$store.chat.getSenderName(msg.sender_npub)">
                         <template x-if="$store.chat.getSenderAvatar(msg.sender_npub)">
-                          <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(msg.sender_npub)" alt="Profile picture" />
+                          <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(msg.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                         </template>
                         <template x-if="!$store.chat.getSenderAvatar(msg.sender_npub)">
                           <div class="chat-post-avatar chat-post-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(msg.sender_npub))"></div>
@@ -3867,10 +3884,10 @@
                           <div class="chat-thread-replier-stack" x-show="$store.chat.getThreadReplierAvatars(msg.record_id).length > 0">
                             <template x-for="person in $store.chat.getThreadReplierAvatars(msg.record_id)" :key="person.npub">
                               <span class="chat-thread-replier-avatar" :title="person.name">
-                                <template x-if="person.avatarUrl">
-                                  <img :src="person.avatarUrl" alt="" />
+                                <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                                  <img :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                                 </template>
-                                <template x-if="!person.avatarUrl">
+                                <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                                   <span class="chat-thread-replier-avatar-fallback" x-text="person.initials"></span>
                                 </template>
                               </span>
@@ -3899,8 +3916,8 @@
                   <template x-for="person in $store.chat.getRecentMentionChips('message')" :key="person.id">
                     <div class="recent-mention-chip-group">
                       <button type="button" class="recent-mention-chip" @click="$store.chat.insertRecentMention('message', person, $event)" :aria-label="'Mention ' + person.label">
-                        <img x-show="person.avatarUrl" :src="person.avatarUrl" alt="" />
-                        <span class="recent-mention-chip-avatar" x-show="!person.avatarUrl" aria-hidden="true" x-text="$store.chat.getInitials(person.label)"></span>
+                        <img x-show="$store.chat.canRenderAvatarImage(person.avatarUrl)" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
+                        <span class="recent-mention-chip-avatar" x-show="!$store.chat.canRenderAvatarImage(person.avatarUrl)" aria-hidden="true" x-text="$store.chat.getInitials(person.label)"></span>
                         <span x-text="person.label"></span>
                       </button>
                       <button type="button" class="recent-mention-chip recent-mention-update-chip" x-show="person.type === 'agent'" @click="$store.chat.insertRecentMention('message', person, $event, ' update please?')" :aria-label="'Ask ' + person.label + ' for an update'">
@@ -4087,7 +4104,7 @@
                     ></span>
                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getThreadParentMessage()?.sender_npub)" :title="$store.chat.getSenderName($store.chat.getThreadParentMessage()?.sender_npub)">
                       <template x-if="$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)">
-                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)" alt="Profile picture" />
+                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)">
                         <div class="thread-avatar thread-avatar-fallback"
@@ -4178,7 +4195,7 @@
                     ></span>
                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, reply.sender_npub)" :title="$store.chat.getSenderName(reply.sender_npub)">
                       <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
-                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
+                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
                         <div class="thread-avatar thread-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></div>
@@ -4242,7 +4259,7 @@
                   <div class="thread-response-activity" :class="{ 'thread-response-activity-error': activity.severity === 'error' || activity.status === 'failed' }" aria-live="polite">
                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, activity.actor_npub)" :title="$store.chat.getSenderName(activity.actor_npub)">
                       <template x-if="$store.chat.getSenderAvatar(activity.actor_npub)">
-                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar(activity.actor_npub)" alt="Profile picture" />
+                        <img class="thread-avatar" :src="$store.chat.getSenderAvatar(activity.actor_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.getSenderAvatar(activity.actor_npub)">
                         <div class="thread-avatar thread-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(activity.actor_npub))"></div>
@@ -4259,7 +4276,7 @@
                 <template x-for="activity in $store.chat.activeThreadAgentActivities" :key="activity.record_id">
                   <div class="thread-response-activity agent-activity-thread agent-activity-live" aria-live="polite">
                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, activity.agent_npub)" :title="$store.chat.getSenderName(activity.agent_npub)">
-                      <template x-if="$store.chat.getSenderAvatar(activity.agent_npub)"><img class="thread-avatar" :src="$store.chat.getSenderAvatar(activity.agent_npub)" alt="Profile picture" /></template>
+                      <template x-if="$store.chat.getSenderAvatar(activity.agent_npub)"><img class="thread-avatar" :src="$store.chat.getSenderAvatar(activity.agent_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" /></template>
                       <template x-if="!$store.chat.getSenderAvatar(activity.agent_npub)"><div class="thread-avatar thread-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(activity.agent_npub))"></div></template>
                     </button>
                     <div class="thread-response-activity-body">
@@ -4293,8 +4310,8 @@
                   <template x-for="person in $store.chat.getRecentMentionChips('thread')" :key="person.id">
                     <div class="recent-mention-chip-group">
                       <button type="button" class="recent-mention-chip" @click="$store.chat.insertRecentMention('thread', person, $event)" :aria-label="'Mention ' + person.label">
-                        <img x-show="person.avatarUrl" :src="person.avatarUrl" alt="" />
-                        <span class="recent-mention-chip-avatar" x-show="!person.avatarUrl" aria-hidden="true" x-text="$store.chat.getInitials(person.label)"></span>
+                        <img x-show="$store.chat.canRenderAvatarImage(person.avatarUrl)" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
+                        <span class="recent-mention-chip-avatar" x-show="!$store.chat.canRenderAvatarImage(person.avatarUrl)" aria-hidden="true" x-text="$store.chat.getInitials(person.label)"></span>
                         <span x-text="person.label"></span>
                       </button>
                       <button type="button" class="recent-mention-chip recent-mention-update-chip" x-show="person.type === 'agent'" @click="$store.chat.insertRecentMention('thread', person, $event, ' update please?')" :aria-label="'Ask ' + person.label + ' for an update'">
@@ -4789,20 +4806,23 @@
                         class="doc-mode-chip"
                         :class="{ 'doc-mode-chip-active': $store.chat.docEditAccessState === 'editing' }"
                         :disabled="$store.chat.docEditAccessState === 'acquiring'
-                          || $store.chat.docEditAccessState === 'conflict'
+                          || $store.chat.docEditAccessState === 'recovery_available'
+                          || !$store.chat.isSelectedDocDraftReadyForPersistence()
                           || $store.chat.docRichImageUploadCount > 0"
-                        @click="$store.chat.docEditAccessState === 'editing'
+                        @click="['editing', 'recovery'].includes($store.chat.docEditAccessState)
                           ? $store.chat.saveAndExitSelectedDocEditMode()
                           : ($store.chat.docEditAccessState === 'blocked'
                             ? $store.chat.retrySelectedDocEditAccess()
                             : $store.chat.beginSelectedDocLeaseAcquisition())"
                         x-text="$store.chat.docRichImageUploadCount > 0
                           ? 'Uploading…'
-                          : ($store.chat.docEditAccessState === 'editing'
+                          : (!$store.chat.isSelectedDocDraftReadyForPersistence()
+                            ? 'Loading…'
+                          : (['editing', 'recovery'].includes($store.chat.docEditAccessState)
                             ? 'Save'
                             : ($store.chat.docEditAccessState === 'acquiring'
                               ? 'Acquiring…'
-                              : ($store.chat.docEditAccessState === 'blocked' ? 'Retry' : 'Edit')))"
+                              : ($store.chat.docEditAccessState === 'blocked' ? 'Retry' : 'Edit'))))"
                       >Edit</button>
                     </div>
                     <button
@@ -4816,7 +4836,7 @@
                         <template x-for="agent in $store.chat.previewPersonalAgents" :key="agent.npub || agent.launch_url">
                           <span class="doc-invocation-avatar">
                             <template x-if="agent.npub && $store.chat.getSenderAvatar(agent.npub)">
-                              <img :src="$store.chat.getSenderAvatar(agent.npub)" alt="" />
+                              <img :src="$store.chat.getSenderAvatar(agent.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                             </template>
                             <template x-if="!agent.npub || !$store.chat.getSenderAvatar(agent.npub)">
                               <span x-text="$store.chat.getInitials(agent.title || agent.npub || 'Agent')"></span>
@@ -4892,14 +4912,24 @@
                 <div
                   class="doc-edit-access-banner"
                   :class="`doc-edit-access-banner-${$store.chat.selectedDocEditStatusTone}`"
-                  x-show="$store.chat.docEditAccessMessage || ['blocked', 'conflict'].includes($store.chat.docEditAccessState)"
+                  x-show="['blocked', 'conflict', 'recovery', 'recovery_available'].includes($store.chat.docEditAccessState)"
                   role="status"
                   aria-live="polite"
                 >
-                  <span x-text="$store.chat.docEditAccessMessage || $store.chat.selectedDocEditStatusLabel"></span>
-                  <div class="doc-edit-access-actions" x-show="$store.chat.docEditDraftDirty">
-                    <button type="button" @click="$store.chat.copySelectedDocDraft()">Copy draft</button>
-                    <button type="button" @click="$store.chat.discardSelectedDocDraft()">Discard draft</button>
+                  <div class="doc-edit-recovery-copy">
+                    <span x-text="$store.chat.docEditAccessMessage || $store.chat.selectedDocEditStatusLabel"></span>
+                    <span
+                      class="doc-edit-recovery-meta"
+                      x-show="$store.chat.docRecovery || $store.chat.docEditConflict"
+                      x-text="`Draft base v${$store.chat.docRecovery?.base?.row_version || $store.chat.docEditConflict?.baseVersion || 'unknown'} · Current head v${$store.chat.docEditConflict?.currentHead?.row_version || $store.chat.docRecovery?.head_at_creation?.row_version || $store.chat.docEditConflict?.currentVersion || 'unknown'}${$store.chat.docRecovery?.reason_code ? ` · ${$store.chat.docRecovery.reason_code.replaceAll('_', ' ')}` : ''}`"
+                    ></span>
+                  </div>
+                  <div class="doc-edit-access-actions">
+                    <button type="button" x-show="$store.chat.docEditAccessState === 'recovery_available'" @click="$store.chat.openSelectedDocRecoveryDraft()">Continue recovery</button>
+                    <button type="button" x-show="$store.chat.docRecovery?.resolution_state === 'open'" :disabled="$store.chat.docRecoveryActionState || $store.chat.docEditDraftDirty" title="Save current recovery edits before promoting" @click="$store.chat.promoteSelectedDocRecovery()" x-text="$store.chat.docRecoveryActionState === 'promoting' ? 'Promoting…' : 'Promote'">Promote</button>
+                    <button type="button" x-show="$store.chat.docRecovery?.resolution_state === 'open'" :disabled="$store.chat.docRecoveryActionState || $store.chat.docEditDraftDirty" title="Save or copy current recovery edits before discarding" @click="$store.chat.discardSelectedDocRecovery()" x-text="$store.chat.docRecoveryActionState === 'discarding' ? 'Discarding…' : 'Discard recovery'">Discard recovery</button>
+                    <button type="button" x-show="$store.chat.docEditDraftDirty || $store.chat.docRecovery" @click="$store.chat.copySelectedDocDraft()">Copy draft</button>
+                    <button type="button" x-show="$store.chat.docEditDraftDirty && !$store.chat.docRecovery" @click="$store.chat.discardSelectedDocDraft()">Discard local draft</button>
                   </div>
                 </div>
 
@@ -5182,7 +5212,7 @@
                                 <div class="doc-thread-entry-header" x-show="root.comment_status !== 'resolved' || root.record_id === $store.chat.selectedDocCommentId">
                                   <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, root.sender_npub)" :title="$store.chat.getSenderName(root.sender_npub)">
                                     <template x-if="$store.chat.getSenderAvatar(root.sender_npub)">
-                                      <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(root.sender_npub)" alt="Profile picture" />
+                                      <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(root.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                                     </template>
                                     <template x-if="!$store.chat.getSenderAvatar(root.sender_npub)">
                                       <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(root.sender_npub))"></span>
@@ -5244,7 +5274,7 @@
                                   <div class="doc-thread-entry-header">
                                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, reply.sender_npub)" :title="$store.chat.getSenderName(reply.sender_npub)">
                                       <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
-                                        <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
+                                        <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                                       </template>
                                       <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
                                         <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></span>
@@ -5464,10 +5494,10 @@
                 <template x-for="suggestion in $store.chat.docShareSuggestions" :key="suggestion.key">
                   <li>
                     <button type="button" class="docs-share-suggestion" @click="$store.chat.addDocShareFromSuggestion(suggestion)">
-                      <template x-if="suggestion.type === 'person' && suggestion.avatarUrl">
-                        <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="Profile picture" />
+                      <template x-if="suggestion.type === 'person' && $store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
+                        <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
-                      <template x-if="suggestion.type === 'person' && !suggestion.avatarUrl">
+                      <template x-if="suggestion.type === 'person' && !$store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
                         <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
                       </template>
                       <div class="docs-share-suggestion-copy">
@@ -5488,7 +5518,7 @@
                     <div class="docs-share-row-main">
                       <button type="button" class="identity-avatar-button" :class="{ 'identity-avatar-button-static': share.type !== 'person' }" @click.stop="if (share.type === 'person') $store.chat.openIdentityCard($event, share.person_npub)" :title="$store.chat.getDocShareTitle(share)">
                         <template x-if="$store.chat.getDocShareAvatar(share)">
-                          <img class="docs-share-row-avatar" :src="$store.chat.getDocShareAvatar(share)" alt="Profile picture" />
+                          <img class="docs-share-row-avatar" :src="$store.chat.getDocShareAvatar(share)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                         </template>
                         <template x-if="!$store.chat.getDocShareAvatar(share)">
                           <span class="docs-share-row-avatar docs-share-row-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getDocShareTitle(share))"></span>
@@ -5806,7 +5836,7 @@
                     <template x-for="message in $store.chat.selectedWorkroomThreadMessages" :key="message.record_id">
                       <article class="thread-message workroom-thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage(message.record_id) }" :data-thread-message-id="message.record_id">
                         <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, message.sender_npub)" :title="$store.chat.getSenderName(message.sender_npub)">
-                          <template x-if="$store.chat.getSenderAvatar(message.sender_npub)"><img class="thread-avatar" :src="$store.chat.getSenderAvatar(message.sender_npub)" alt="Profile picture" /></template>
+                          <template x-if="$store.chat.getSenderAvatar(message.sender_npub)"><img class="thread-avatar" :src="$store.chat.getSenderAvatar(message.sender_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" /></template>
                           <template x-if="!$store.chat.getSenderAvatar(message.sender_npub)"><div class="thread-avatar thread-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(message.sender_npub))"></div></template>
                         </button>
                         <div class="thread-msg-body">
@@ -6484,7 +6514,7 @@
                         <div class="new-channel-resolved-profile task-assignee-selected chat-get-it-done-selected">
                           <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.chatGetItDoneAssigneeNpub)" :title="$store.chat.chatGetItDoneAssigneeLabel">
                             <template x-if="$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)">
-                              <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)" />
+                              <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                             </template>
                             <template x-if="!$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)">
                               <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.chatGetItDoneAssigneeLabel)"></div>
@@ -6520,10 +6550,10 @@
                               @click="$store.chat.selectChatGetItDoneAssignee(person.npub)"
                               @mouseenter="assigneeIdx = idx"
                             >
-                              <template x-if="person.avatarUrl">
-                                <img class="new-channel-avatar" :src="person.avatarUrl" />
+                              <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                                <img class="new-channel-avatar" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                               </template>
-                              <template x-if="!person.avatarUrl">
+                              <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                                 <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
                               </template>
                               <span class="docs-share-suggestion-copy">
@@ -7141,7 +7171,7 @@
                   <div class="autopilot-agent-settings-profile">
                     <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, entry.agent_npub)" :title="$store.chat.getSenderName(entry.agent_npub)">
                       <template x-if="$store.chat.getSenderAvatar(entry.agent_npub)">
-                        <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar(entry.agent_npub)" alt="" />
+                        <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar(entry.agent_npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.getSenderAvatar(entry.agent_npub)">
                         <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(entry.agent_npub))"></div>
@@ -7187,7 +7217,7 @@
                 <div class="new-channel-resolved-profile settings-selected-agent">
                   <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.wingmanHarnessDraftAgentNpub)" :title="$store.chat.getSenderName($store.chat.wingmanHarnessDraftAgentNpub)">
                     <template x-if="$store.chat.getSenderAvatar($store.chat.wingmanHarnessDraftAgentNpub)">
-                      <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.wingmanHarnessDraftAgentNpub)" alt="" />
+                      <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.wingmanHarnessDraftAgentNpub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
                     <template x-if="!$store.chat.getSenderAvatar($store.chat.wingmanHarnessDraftAgentNpub)">
                       <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.wingmanHarnessDraftAgentNpub))"></div>
@@ -7212,10 +7242,10 @@
               <template x-for="person in $store.chat.harnessAgentSuggestions" :key="`harness-agent-${person.npub}`">
                 <li>
                   <button type="button" class="docs-share-suggestion" @click="$store.chat.selectHarnessAgent(person.npub)">
-                    <template x-if="person.avatarUrl">
-                      <img class="new-channel-avatar" :src="person.avatarUrl" />
+                    <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                      <img class="new-channel-avatar" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
-                    <template x-if="!person.avatarUrl">
+                    <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                       <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
                     </template>
                     <span class="docs-share-suggestion-copy">
@@ -7258,7 +7288,7 @@
               <div class="new-channel-resolved-profile settings-selected-agent">
                 <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.defaultAgentNpub)" :title="$store.chat.defaultAgentLabel">
                   <template x-if="$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)">
-                    <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)" />
+                    <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                   </template>
                   <template x-if="!$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)">
                     <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.defaultAgentLabel)"></div>
@@ -7283,10 +7313,10 @@
               <template x-for="person in $store.chat.defaultAgentSuggestions" :key="`default-agent-${person.npub}`">
                 <li>
                   <button type="button" class="docs-share-suggestion" @click="$store.chat.selectDefaultAgent(person.npub)">
-                    <template x-if="person.avatarUrl">
-                      <img class="new-channel-avatar" :src="person.avatarUrl" />
+                    <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                      <img class="new-channel-avatar" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
-                    <template x-if="!person.avatarUrl">
+                    <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                       <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
                     </template>
                     <span class="docs-share-suggestion-copy">
@@ -8702,7 +8732,7 @@
                 <div class="group-member-row" x-init="$store.chat.resolveChatProfile(member.npub)">
                   <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, member.npub)" :title="$store.chat.getSenderName(member.npub)">
                     <template x-if="$store.chat.getSenderAvatar(member.npub)">
-                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" />
+                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
                     <template x-if="!$store.chat.getSenderAvatar(member.npub)">
                       <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(member.npub))"></span>
@@ -8849,7 +8879,7 @@
                       <div class="group-member-row" x-init="$store.chat.resolveChatProfile(memberNpub)">
                         <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, memberNpub)" :title="$store.chat.getSenderName(memberNpub)">
                           <template x-if="$store.chat.getSenderAvatar(memberNpub)">
-                            <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(memberNpub)" alt="" />
+                            <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(memberNpub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                           </template>
                           <template x-if="!$store.chat.getSenderAvatar(memberNpub)">
                             <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(memberNpub))"></span>
@@ -8978,10 +9008,10 @@
               <template x-for="suggestion in $store.chat.groupMemberSuggestions" :key="suggestion.npub">
                 <li>
                   <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingGroupMember(suggestion)" :disabled="$store.chat.groupCreatePending">
-                    <template x-if="suggestion.avatarUrl">
-                      <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="" />
+                    <template x-if="$store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
+                      <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
-                    <template x-if="!suggestion.avatarUrl">
+                    <template x-if="!$store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
                       <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
                     </template>
                     <div class="docs-share-suggestion-copy">
@@ -8998,7 +9028,7 @@
                 <div class="new-group-member-row" x-init="$store.chat.resolveChatProfile(member.npub)">
                   <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, member.npub)" :title="$store.chat.getSenderName(member.npub)">
                     <template x-if="$store.chat.getSenderAvatar(member.npub)">
-                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" />
+                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
                     <template x-if="!$store.chat.getSenderAvatar(member.npub)">
                       <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(member.npub))"></span>
@@ -9036,10 +9066,10 @@
               <template x-for="suggestion in $store.chat.editGroupMemberSuggestions" :key="suggestion.npub">
                 <li>
                   <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingEditGroupMember(suggestion)" :disabled="$store.chat.groupEditPending">
-                    <template x-if="suggestion.avatarUrl">
-                      <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(suggestion.npub)" alt="" />
+                    <template x-if="$store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
+                      <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(suggestion.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
-                    <template x-if="!suggestion.avatarUrl">
+                    <template x-if="!$store.chat.canRenderAvatarImage(suggestion.avatarUrl)">
                       <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
                     </template>
                     <div class="docs-share-suggestion-copy">
@@ -9056,7 +9086,7 @@
                 <div class="new-group-member-row" x-init="$store.chat.resolveChatProfile(member.npub)">
                   <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, member.npub)" :title="$store.chat.getSenderName(member.npub)">
                     <template x-if="$store.chat.getSenderAvatar(member.npub)">
-                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" />
+                      <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                     </template>
                     <template x-if="!$store.chat.getSenderAvatar(member.npub)">
                       <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(member.npub))"></span>
@@ -9259,7 +9289,7 @@
                       <template x-if="$store.chat.getPgChannelGrantPrincipalNpub(grant)">
                         <button type="button" class="identity-avatar-button" @click.stop="$store.chat.openIdentityCard($event, $store.chat.getPgChannelGrantPrincipalNpub(grant))" :title="$store.chat.getSenderName($store.chat.getPgChannelGrantPrincipalNpub(grant))">
                           <template x-if="$store.chat.getSenderAvatar($store.chat.getPgChannelGrantPrincipalNpub(grant))">
-                            <img class="channel-grant-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPgChannelGrantPrincipalNpub(grant))" alt="" />
+                            <img class="channel-grant-avatar" :src="$store.chat.getSenderAvatar($store.chat.getPgChannelGrantPrincipalNpub(grant))" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                           </template>
                           <template x-if="!$store.chat.getSenderAvatar($store.chat.getPgChannelGrantPrincipalNpub(grant))">
                             <span class="channel-grant-avatar channel-grant-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getPgChannelGrantPrincipalLabel(grant))"></span>
@@ -9529,7 +9559,7 @@
                   <template x-if="$store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63">
                     <div class="new-channel-resolved-profile task-assignee-selected" x-init="$store.chat.resolveChatProfile($store.chat.newChannelDmNpub)">
                       <template x-if="$store.chat.getSenderAvatar($store.chat.newChannelDmNpub)">
-                        <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.newChannelDmNpub)" />
+                        <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.newChannelDmNpub)" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                       </template>
                       <template x-if="!$store.chat.getSenderAvatar($store.chat.newChannelDmNpub)">
                         <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.newChannelDmNpub))"></div>
@@ -9561,10 +9591,10 @@
                           @mouseenter="dmIdx = idx"
                           @click="$store.chat.selectNewChannelDm(person.npub)"
                         >
-                          <template x-if="person.avatarUrl">
-                            <img class="new-channel-avatar" :src="person.avatarUrl" />
+                          <template x-if="$store.chat.canRenderAvatarImage(person.avatarUrl)">
+                            <img class="new-channel-avatar" :src="person.avatarUrl" alt="" @error="$store.chat.handleAvatarImageError($event)" />
                           </template>
-                          <template x-if="!person.avatarUrl">
+                          <template x-if="!$store.chat.canRenderAvatarImage(person.avatarUrl)">
                             <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
                           </template>
                           <span class="docs-share-suggestion-copy">
