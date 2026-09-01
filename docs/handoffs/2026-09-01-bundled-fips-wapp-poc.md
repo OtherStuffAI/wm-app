@@ -56,6 +56,11 @@ login flow. Tower is excluded from this PoC.
    trust, then open a normal browser tab.
 8. Show a small FIPS transport indicator for `.fips` tabs so the end-to-end test
    is observable.
+9. Configure and await the upstream project's Noise-authenticated `test-us01`
+   peer at pinned IP `217.77.8.91:2121`. This is the PoC's no-DNS routed
+   bootstrap when v0.5 direct UDP punching cannot cross the two hosts' NATs.
+   Preserve existing peers and replace this public test dependency with
+   Wingman-operated bootstrap capacity before production.
 
 ## Validation
 

@@ -70,6 +70,9 @@ class FipsRuntimeService {
 
   static const expectedVersion = '0.5.0';
   static const configurationScriptName = 'configure-fips-wingman-poc.sh';
+  static const bootstrapPeerNpub =
+      'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
+  static const bootstrapPeerAddress = '217.77.8.91:2121';
 
   final String bundledPackagePath;
   final String fipsctlPath;
@@ -137,19 +140,79 @@ end run
   }
 
   Future<FipsRuntimeStatus> _ensureReadyForAppAccess() async {
-    final status = await inspect();
-    if (status.canAttemptAppAccess) return status;
+    var status = await inspect();
 
-    final canActivateBundledRuntime = switch (status.state) {
-      FipsRuntimeState.notInstalled ||
-      FipsRuntimeState.installRequired ||
-      FipsRuntimeState.degraded ||
-      FipsRuntimeState.failed =>
-        true,
-      _ => false,
-    };
-    if (!canActivateBundledRuntime) return status;
-    return installOrRepair();
+    if (!status.canAttemptAppAccess) {
+      final canActivateBundledRuntime = switch (status.state) {
+        FipsRuntimeState.notInstalled ||
+        FipsRuntimeState.installRequired ||
+        FipsRuntimeState.degraded ||
+        FipsRuntimeState.failed =>
+          true,
+        _ => false,
+      };
+      if (!canActivateBundledRuntime) return status;
+      status = await installOrRepair();
+    }
+    if (!status.canAttemptAppAccess) return status;
+    return _ensureBootstrapConnected(status);
+  }
+
+  Future<FipsRuntimeStatus> _ensureBootstrapConnected(
+    FipsRuntimeStatus readyStatus,
+  ) async {
+    if (readyStatus.state == FipsRuntimeState.controlAccessPending) {
+      return readyStatus;
+    }
+
+    for (var attempt = 0; attempt < 12; attempt += 1) {
+      final peers = await _run(fipsctlPath, const ['show', 'peers']);
+      if (peers.exitCode == 0 && _bootstrapIsConnected(peers.stdout)) {
+        return readyStatus;
+      }
+      if (attempt == 0) {
+        final connect = await _run(fipsctlPath, const [
+          'connect',
+          bootstrapPeerNpub,
+          bootstrapPeerAddress,
+          'udp',
+        ]);
+        if (connect.exitCode != 0) {
+          return FipsRuntimeStatus(
+            state: FipsRuntimeState.degraded,
+            detail: 'FIPS is running, but its authenticated bootstrap link '
+                'could not start: ${_resultDetail(connect)}',
+            nodeNpub: readyStatus.nodeNpub,
+          );
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return FipsRuntimeStatus(
+      state: FipsRuntimeState.degraded,
+      detail: 'FIPS is running, but the authenticated bootstrap peer did not '
+          'connect. Check that outbound UDP port 2121 is allowed.',
+      nodeNpub: readyStatus.nodeNpub,
+    );
+  }
+
+  static bool _bootstrapIsConnected(Object output) {
+    try {
+      final decoded = jsonDecode(output.toString());
+      final data = decoded is Map<String, dynamic> &&
+              decoded['data'] is Map<String, dynamic>
+          ? decoded['data'] as Map<String, dynamic>
+          : decoded;
+      if (data is! Map<String, dynamic> || data['peers'] is! List) {
+        return false;
+      }
+      return (data['peers'] as List).any((peer) =>
+          peer is Map<String, dynamic> &&
+          peer['npub'] == bootstrapPeerNpub &&
+          peer['connectivity']?.toString().toLowerCase() == 'connected');
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<FipsRuntimeStatus> _inspectRuntime() async {
@@ -350,7 +413,7 @@ end run
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return false;
-      return decoded['schema'] == 1 &&
+      return decoded['schema'] == 2 &&
           decoded['fipsVersion'] == expectedVersion &&
           decoded['rendezvousApp'] == 'wingman-fips-poc-v1' &&
           decoded['nostrShareLocalCandidates'] == true &&
@@ -360,7 +423,9 @@ end run
           decoded['dnsEnabled'] == true &&
           decoded['udpAdvertiseOnNostr'] == true &&
           decoded['udpAcceptConnections'] == true &&
-          decoded['udpOutboundOnly'] == false;
+          decoded['udpOutboundOnly'] == false &&
+          decoded['bootstrapPeerNpub'] == bootstrapPeerNpub &&
+          decoded['bootstrapPeerAddress'] == bootstrapPeerAddress;
     } catch (_) {
       return false;
     }

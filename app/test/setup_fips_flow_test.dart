@@ -9,12 +9,14 @@ import 'package:wingman_app/src/features/setup/setup_screen.dart';
 
 void main() {
   final npub = 'npub1${List.filled(58, 'q').join()}';
-  const compatibleAttestation = '{"schema":1,"fipsVersion":"0.5.0",'
+  const compatibleAttestation = '{"schema":2,"fipsVersion":"0.5.0",'
       '"rendezvousApp":"wingman-fips-poc-v1",'
       '"nostrShareLocalCandidates":true,"lanEnabled":true,'
       '"lanScope":"wingman-fips-poc-v1","tunEnabled":true,'
       '"dnsEnabled":true,"udpAdvertiseOnNostr":true,'
-      '"udpAcceptConnections":true,"udpOutboundOnly":false}';
+      '"udpAcceptConnections":true,"udpOutboundOnly":false,'
+      '"bootstrapPeerNpub":"${FipsRuntimeService.bootstrapPeerNpub}",'
+      '"bootstrapPeerAddress":"${FipsRuntimeService.bootstrapPeerAddress}"}';
 
   testWidgets(
       'Open FIPS app activates bundled runtime once and remains safe to repeat',
@@ -46,8 +48,20 @@ void main() {
         if (arguments.contains('--version')) {
           return ProcessResult(2, 0, '0.5.0', '');
         }
+        if (arguments.first == 'connect') {
+          return ProcessResult(3, 0, '{}', '');
+        }
+        if (arguments == const ['show', 'peers']) {
+          return ProcessResult(
+            4,
+            0,
+            '{"peers":[{"npub":"${FipsRuntimeService.bootstrapPeerNpub}",'
+                '"connectivity":"connected"}]}',
+            '',
+          );
+        }
         return ProcessResult(
-          3,
+          5,
           0,
           '{"state":"Running","tun_state":"active",'
               '"persistent":true,"npub":"$npub"}',

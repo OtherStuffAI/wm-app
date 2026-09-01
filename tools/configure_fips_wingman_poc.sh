@@ -4,6 +4,8 @@ set -eu
 CONFIG="${FIPS_CONFIG_PATH:-/usr/local/etc/fips/fips.yaml}"
 PLIST="${FIPS_LAUNCHD_PLIST:-/Library/LaunchDaemons/com.fips.daemon.plist}"
 ATTESTATION="${FIPS_ATTESTATION_PATH:-/usr/local/etc/fips/wingman-poc-runtime.json}"
+BOOTSTRAP_NPUB="npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98"
+BOOTSTRAP_ADDRESS="217.77.8.91:2121"
 
 if [ "$(id -u)" -ne 0 ] && [ "${FIPS_CONFIG_TEST:-0}" != "1" ]; then
   echo "This helper must run as root through WMapp's explicit FIPS activation." >&2
@@ -19,12 +21,13 @@ if [ ! -f "$BACKUP" ]; then
   cp -p "$CONFIG" "$BACKUP"
 fi
 TEMP="${CONFIG}.wingman-poc.tmp.$$"
-trap 'rm -f "$TEMP"' EXIT
+PEER_TEMP="${TEMP}.peers"
+trap 'rm -f "$TEMP" "$PEER_TEMP"' EXIT
 cp -p "$CONFIG" "$TEMP"
 
 # FIPS v0.5.0 ships each of these settings as a commented default. Replace
-# active values too, but never touch node.identity.nsec, key files, peers, or
-# unrelated operator configuration.
+# active values too, but never touch node.identity.nsec, key files, existing
+# peers, or unrelated operator configuration.
 sed -E -i '' \
   -e 's/^    (#[[:space:]]*)?persistent:[[:space:]]*(true|false)$/    persistent: true/' \
   -e '/^    (#[[:space:]]*)?nostr:$/,/^    (#[[:space:]]*)?lan:$/ {' \
@@ -59,6 +62,41 @@ sed -E -i '' \
   -e 's/^    (#[[:space:]]*)?outbound_only:[[:space:]]*(true|false).*$/    outbound_only: false/' \
   -e '}' \
   "$TEMP"
+
+# FIPS v0.5 direct NAT traversal does not work across every NAT pair. Join the
+# project's authenticated public test mesh over a pinned IP so this PoC has a
+# no-DNS bootstrap and can still route between outbound-only nodes. Preserve
+# every operator peer and add the bootstrap exactly once.
+if ! grep -Eq "^  - npub: \"$BOOTSTRAP_NPUB\"$" "$TEMP"; then
+  awk -v npub="$BOOTSTRAP_NPUB" -v address="$BOOTSTRAP_ADDRESS" '
+    function bootstrap() {
+      print "  - npub: \"" npub "\""
+      print "    alias: \"wingman-bootstrap\""
+      print "    addresses:"
+      print "      - transport: udp"
+      print "        addr: \"" address "\""
+      print "    connect_policy: auto_connect"
+    }
+    /^peers:[[:space:]]*\[\][[:space:]]*$/ {
+      print "peers:"
+      bootstrap()
+      inserted = 1
+      next
+    }
+    /^peers:[[:space:]]*$/ {
+      print
+      bootstrap()
+      inserted = 1
+      next
+    }
+    { print }
+    END { if (!inserted) exit 42 }
+  ' "$TEMP" > "$PEER_TEMP" || {
+    echo "FIPS config is not compatible with automatic Wingman bootstrap setup: missing peers section" >&2
+    exit 1
+  }
+  mv "$PEER_TEMP" "$TEMP"
+fi
 
 # v0.5.0 understands this option but its packaged example does not contain it,
 # so insert it inside the Nostr rendezvous section when there was no existing
@@ -101,6 +139,8 @@ require_section_line '^dns:$' '^transports:$' '^  enabled: true$' 'dns.enabled'
 require_section_line '^  udp:$' '^  tcp:$' '^    advertise_on_nostr: true$' 'transports.udp.advertise_on_nostr'
 require_section_line '^  udp:$' '^  tcp:$' '^    accept_connections: true$' 'transports.udp.accept_connections'
 require_section_line '^  udp:$' '^  tcp:$' '^    outbound_only: false$' 'transports.udp.outbound_only'
+require_line "^  - npub: \"$BOOTSTRAP_NPUB\"$" 'Wingman FIPS bootstrap peer identity'
+require_line "^        addr: \"$BOOTSTRAP_ADDRESS\"$" 'Wingman FIPS bootstrap peer address'
 
 chmod 600 "$TEMP"
 if [ "${FIPS_CONFIG_TEST:-0}" != "1" ]; then
@@ -112,7 +152,7 @@ trap - EXIT
 ATTESTATION_TEMP="${ATTESTATION}.tmp.$$"
 trap 'rm -f "$ATTESTATION_TEMP"' EXIT
 cat > "$ATTESTATION_TEMP" <<'EOF'
-{"schema":1,"fipsVersion":"0.5.0","rendezvousApp":"wingman-fips-poc-v1","nostrShareLocalCandidates":true,"lanEnabled":true,"lanScope":"wingman-fips-poc-v1","tunEnabled":true,"dnsEnabled":true,"udpAdvertiseOnNostr":true,"udpAcceptConnections":true,"udpOutboundOnly":false}
+{"schema":2,"fipsVersion":"0.5.0","rendezvousApp":"wingman-fips-poc-v1","nostrShareLocalCandidates":true,"lanEnabled":true,"lanScope":"wingman-fips-poc-v1","tunEnabled":true,"dnsEnabled":true,"udpAdvertiseOnNostr":true,"udpAcceptConnections":true,"udpOutboundOnly":false,"bootstrapPeerNpub":"npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98","bootstrapPeerAddress":"217.77.8.91:2121"}
 EOF
 chmod 0644 "$ATTESTATION_TEMP"
 if [ "${FIPS_CONFIG_TEST:-0}" != "1" ]; then

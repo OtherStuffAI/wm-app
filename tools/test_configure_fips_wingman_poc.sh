@@ -39,10 +39,13 @@ require_section_line '^dns:$' '^transports:$' '^  enabled: true$'
 require_section_line '^  udp:$' '^  tcp:$' '^    advertise_on_nostr: true$'
 require_section_line '^  udp:$' '^  tcp:$' '^    accept_connections: true$'
 require_section_line '^  udp:$' '^  tcp:$' '^    outbound_only: false$'
-grep -Fq '"schema":1' "$ATTESTATION"
+grep -Fq 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98' "$CONFIG"
+grep -Fq '217.77.8.91:2121' "$CONFIG"
+grep -Fq '"schema":2' "$ATTESTATION"
 grep -Fq '"lanScope":"wingman-fips-poc-v1"' "$ATTESTATION"
 grep -Fq '"nostrShareLocalCandidates":true' "$ATTESTATION"
 grep -Fq '"dnsEnabled":true' "$ATTESTATION"
+grep -Fq '"bootstrapPeerAddress":"217.77.8.91:2121"' "$ATTESTATION"
 cmp "$DEFAULT_CONFIG" "$CONFIG.pre-wingman-poc"
 
 # Reapplying the helper must preserve the identity backup and be idempotent.

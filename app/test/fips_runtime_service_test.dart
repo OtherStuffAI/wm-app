@@ -6,12 +6,14 @@ import 'package:wingman_app/src/core/fips_runtime_service.dart';
 
 void main() {
   final npub = 'npub1${List.filled(58, 'q').join()}';
-  const compatibleAttestation = '{"schema":1,"fipsVersion":"0.5.0",'
+  const compatibleAttestation = '{"schema":2,"fipsVersion":"0.5.0",'
       '"rendezvousApp":"wingman-fips-poc-v1",'
       '"nostrShareLocalCandidates":true,"lanEnabled":true,'
       '"lanScope":"wingman-fips-poc-v1","tunEnabled":true,'
       '"dnsEnabled":true,"udpAdvertiseOnNostr":true,'
-      '"udpAcceptConnections":true,"udpOutboundOnly":false}';
+      '"udpAcceptConnections":true,"udpOutboundOnly":false,'
+      '"bootstrapPeerNpub":"${FipsRuntimeService.bootstrapPeerNpub}",'
+      '"bootstrapPeerAddress":"${FipsRuntimeService.bootstrapPeerAddress}"}';
 
   test('constructs an authorization command without shell-interpolating paths',
       () {
@@ -283,6 +285,57 @@ void main() {
     authorization.complete(ProcessResult(2, 1, '', 'User canceled.'));
     expect((await first).state, FipsRuntimeState.failed);
     expect((await second).state, FipsRuntimeState.failed);
+  });
+
+  test('awaits the authenticated no-DNS bootstrap before app access', () async {
+    var peerChecks = 0;
+    final calls = <List<String>>[];
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips.pkg',
+      isMacOS: true,
+      fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
+      processRunner: (_, arguments) async {
+        calls.add(arguments);
+        if (arguments.contains('--version')) {
+          return ProcessResult(1, 0, '0.5.0', '');
+        }
+        if (arguments.first == 'connect') {
+          return ProcessResult(2, 0, '{}', '');
+        }
+        if (arguments == const ['show', 'peers']) {
+          peerChecks += 1;
+          final peers = peerChecks < 2
+              ? '{"peers":[]}'
+              : '{"peers":[{"npub":"${FipsRuntimeService.bootstrapPeerNpub}",'
+                  '"connectivity":"connected"}]}';
+          return ProcessResult(3, 0, peers, '');
+        }
+        return ProcessResult(
+          4,
+          0,
+          '{"state":"Running","tun_state":"active",'
+              '"persistent":true,"npub":"$npub"}',
+          '',
+        );
+      },
+    );
+
+    final status = await service.ensureReadyForAppAccess();
+
+    expect(status.state, FipsRuntimeState.running);
+    expect(
+      calls,
+      contains(
+        equals([
+          'connect',
+          FipsRuntimeService.bootstrapPeerNpub,
+          FipsRuntimeService.bootstrapPeerAddress,
+          'udp',
+        ]),
+      ),
+    );
+    expect(peerChecks, 2);
   });
 
   test('redacts private key material from diagnostics', () {
