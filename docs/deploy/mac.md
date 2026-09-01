@@ -61,7 +61,9 @@ After unlocking WMapp, open **Setup → FIPS transport**:
 2. WMapp preserves any existing FIPS key and unrelated configuration. The
    bundled helper transactionally enables persistent machine identity, Nostr
    rendezvous and UDP advertising under the `wingman-fips-poc-v1` application
-   namespace. An initial config backup is kept alongside `fips.yaml`.
+   namespace. Scoped LAN rendezvous is also enabled so two Wingman machines on
+   the same network do not depend on router NAT hairpin support. An initial
+   config backup is kept alongside `fips.yaml`.
 3. Once status is `running`, choose **Open FIPS app**, paste the exact
    `http://<autopilot-npub>.fips:<port>/` URL or matching JSON descriptor,
    optionally probe it, and approve trust for that exact origin.
