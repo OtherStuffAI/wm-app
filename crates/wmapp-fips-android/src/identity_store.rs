@@ -1,6 +1,6 @@
 use fips::{Identity, encode_nsec};
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
@@ -38,13 +38,19 @@ pub(crate) fn load_or_create(path: &Path) -> Result<Identity, NativeError> {
 }
 
 fn load(path: &Path) -> Result<Identity, NativeError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
         return Err(NativeError::Identity(
             "identity path is not a regular file".into(),
         ));
     }
-    let mut secret = Zeroizing::new(fs::read_to_string(path)?);
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    let mut value = String::new();
+    file.read_to_string(&mut value)?;
+    let mut secret = Zeroizing::new(value);
     let identity = Identity::from_secret_str(secret.trim())
         .map_err(|_| NativeError::Identity("stored identity is invalid".into()))?;
     secret.zeroize();
@@ -67,5 +73,12 @@ mod tests {
             0o600
         );
         assert!(!format!("{:?}", first).contains("nsec1"));
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        load_or_create(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

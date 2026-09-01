@@ -190,6 +190,9 @@ fn start_node() -> Result<Value, NativeError> {
 }
 
 fn run_node(tun_fd: i32) -> Result<Value, NativeError> {
+    if tun_fd < 0 {
+        return Err(NativeError::Lifecycle("TUN descriptor is invalid".into()));
+    }
     let mut guard = engine_slot().lock().unwrap();
     let engine = guard
         .as_mut()
@@ -261,13 +264,15 @@ fn stop() -> Result<Value, NativeError> {
             adapter,
         }) = engine.stage.as_mut()
         {
+            // Stop TUN producers/consumers while the node is still able to
+            // drain their channels, then shut down the FIPS receive loop.
+            adapter.stop();
             if let Some(sender) = shutdown.take() {
                 let _ = sender.send(());
             }
             engine.runtime.block_on(async {
                 let _ = tokio::time::timeout(Duration::from_secs(5), node_task).await;
             });
-            adapter.stop();
         } else if let Some(Stage::Started(started)) = engine.stage.as_mut() {
             let _ = engine.runtime.block_on(started.node.stop());
         }

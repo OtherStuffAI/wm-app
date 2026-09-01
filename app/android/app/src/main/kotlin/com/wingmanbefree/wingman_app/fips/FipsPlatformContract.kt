@@ -17,17 +17,16 @@ internal object FipsPlatformContract {
     )
 
     fun peerStatus(raw: String): Map<String, Any?> {
-        val text = raw.lowercase()
-        val marker = text.indexOf(BOOTSTRAP_NPUB)
-        val peerObject = if (marker >= 0) {
-            val start = text.lastIndexOf('{', marker).coerceAtLeast(0)
-            val end = text.indexOf('}', marker).let { if (it < 0) text.length else it + 1 }
-            text.substring(start, end)
-        } else {
-            ""
-        }
-        val connected = Regex("""[\"']connectivity[\"']\s*:\s*[\"']connected[\"']""")
-            .containsMatchIn(peerObject)
+        val connected = runCatching {
+            val response = org.json.JSONObject(raw)
+            val data = response.optJSONObject("data") ?: response
+            val peers = data.optJSONArray("peers") ?: return@runCatching false
+            (0 until peers.length()).any { index ->
+                val peer = peers.optJSONObject(index) ?: return@any false
+                peer.optString("npub") == BOOTSTRAP_NPUB &&
+                    peer.optString("connectivity").equals("connected", ignoreCase = true)
+            }
+        }.getOrDefault(false)
         return mapOf(
             "connected" to connected,
             "detail" to if (connected) {

@@ -126,9 +126,13 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 
 `ChromiumExactFipsTest` starts the embedded node, awaits the authenticated
 bootstrap, loads the unchanged hostname in Android System WebView, fails on a
-main-frame DNS/network error or timeout, and verifies that the final WebView
-host is still the exact `.fips` hostname. It intentionally does not substitute
-an IPv6 literal.
+main-frame DNS/network error or bounded timeout, and verifies that the final
+WebView scheme, host, and port still match the exact `.fips` origin. It always
+tears down the WebView and VPN, including after an assertion failure, so
+repeated device runs start from a deterministic test-owned lifecycle. It
+intentionally does not substitute an IPv6 literal. A passing result still
+depends on the installed System WebView accepting the FIPS ULA/AAAA answer;
+that Chromium behavior cannot be established by compilation or host tests.
 
 ## Shareable Release APK
 

@@ -17,7 +17,7 @@ internal class FipsRuntimeCoordinator(private val activity: MainActivity) : Meth
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "inspect" -> background(result) { inspectWithConsentState() }
-            "start", "repair" -> start(result, repair = call.method == "repair")
+            "start", "repair" -> start(result)
             "stop" -> background(result) {
                 FipsVpnService.stop(activity)
                 FipsNative.nativeStop()
@@ -44,7 +44,7 @@ internal class FipsRuntimeCoordinator(private val activity: MainActivity) : Meth
         return status.toString()
     }
 
-    private fun start(result: MethodChannel.Result, repair: Boolean) {
+    private fun start(result: MethodChannel.Result) {
         synchronized(this) {
             if (consentResult != null) {
                 result.error("operation_in_progress", "VPN consent is already in progress", null)
@@ -53,10 +53,9 @@ internal class FipsRuntimeCoordinator(private val activity: MainActivity) : Meth
             consentResult = result
         }
         worker.execute {
-            if (repair) {
-                FipsVpnService.stop(activity)
-                FipsNative.nativeStop()
-            }
+            // A direct repeated start must replace the Java TUN owner as well
+            // as nativePrepare's Rust engine; repair follows the same path.
+            FipsVpnService.resetForStart(activity)
             val fipsDir = File(activity.filesDir, "fips").apply { mkdirs() }
             val prepared = JSONObject(
                 FipsNative.nativePrepare(

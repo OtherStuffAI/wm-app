@@ -29,6 +29,13 @@ class FipsPlatformContractTest {
             """{"peers":[{"npub":"${FipsPlatformContract.BOOTSTRAP_NPUB}","connectivity":"disconnected"},{"npub":"other","connectivity":"connected"}]}""",
         )
         assertFalse(disconnected["connected"] as Boolean)
+
+        val spoofed = FipsPlatformContract.peerStatus(
+            """{"data":{"peers":[{"npub":"other","display_name":"${FipsPlatformContract.BOOTSTRAP_NPUB}","connectivity":"connected"}]}}""",
+        )
+        assertFalse(spoofed["connected"] as Boolean)
+
+        assertFalse(FipsPlatformContract.peerStatus("not json")["connected"] as Boolean)
     }
 
     @Test

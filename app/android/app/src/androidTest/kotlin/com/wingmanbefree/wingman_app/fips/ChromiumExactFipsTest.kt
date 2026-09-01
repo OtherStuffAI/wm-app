@@ -38,62 +38,72 @@ class ChromiumExactFipsTest {
             VpnService.prepare(context) == null,
         )
 
-        val fipsDir = File(context.filesDir, "fips").apply { mkdirs() }
-        val prepared = JSONObject(
-            FipsNative.nativePrepare(
-                File(fipsDir, "fips.machine.key").absolutePath,
-                File(fipsDir, "control.sock").absolutePath,
-            ),
-        )
-        assertEquals(prepared.optString("detail"), "starting", prepared.optString("state"))
-        FipsVpnService.start(context)
-        assertTrue("embedded FIPS did not start", waitForRunning())
-        assertTrue("authenticated bootstrap did not connect", waitForBootstrap())
+        var activity: MainActivity? = null
+        var webView: WebView? = null
+        try {
+            val fipsDir = File(context.filesDir, "fips").apply { mkdirs() }
+            val prepared = JSONObject(
+                FipsNative.nativePrepare(
+                    File(fipsDir, "fips.machine.key").absolutePath,
+                    File(fipsDir, "control.sock").absolutePath,
+                ),
+            )
+            assertEquals(prepared.optString("detail"), "starting", prepared.optString("state"))
+            FipsVpnService.start(context)
+            assertTrue("embedded FIPS did not start", waitForRunning())
+            assertTrue("authenticated bootstrap did not connect", waitForBootstrap())
 
-        val activity = instrumentation.startActivitySync(
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        ) as MainActivity
-        val finished = CountDownLatch(1)
-        var mainFrameError: String? = null
-        lateinit var webView: WebView
-        instrumentation.runOnMainSync {
-            webView = WebView(activity).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                webViewClient = object : WebViewClient() {
-                    override fun onReceivedError(
-                        view: WebView,
-                        request: WebResourceRequest,
-                        error: WebResourceError,
-                    ) {
-                        if (request.isForMainFrame) {
-                            mainFrameError = "${error.errorCode}: ${error.description}"
+            val launchedActivity = instrumentation.startActivitySync(
+                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            ) as MainActivity
+            activity = launchedActivity
+            val finished = CountDownLatch(1)
+            var mainFrameError: String? = null
+            instrumentation.runOnMainSync {
+                webView = WebView(launchedActivity).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = object : WebViewClient() {
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError,
+                        ) {
+                            if (request.isForMainFrame) {
+                                mainFrameError = "${error.errorCode}: ${error.description}"
+                                finished.countDown()
+                            }
+                        }
+
+                        override fun onPageFinished(view: WebView, url: String) {
                             finished.countDown()
                         }
                     }
-
-                    override fun onPageFinished(view: WebView, url: String) {
-                        finished.countDown()
-                    }
+                    launchedActivity.addContentView(
+                        this,
+                        ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    loadUrl(exactUrl)
                 }
-                activity.addContentView(
-                    this,
-                    ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    ),
-                )
-                loadUrl(exactUrl)
             }
+            assertTrue("System WebView timed out loading $exactUrl", finished.await(30, TimeUnit.SECONDS))
+            assertNull("System WebView failed exact .fips navigation: $mainFrameError", mainFrameError)
+            instrumentation.runOnMainSync {
+                val finalUrl = Uri.parse(requireNotNull(webView?.url))
+                assertEquals(requested.scheme, finalUrl.scheme)
+                assertEquals(requested.host, finalUrl.host)
+                assertEquals(requested.port, finalUrl.port)
+            }
+        } finally {
+            webView?.let { view ->
+                instrumentation.runOnMainSync { view.destroy() }
+            }
+            FipsVpnService.stop(context)
+            activity?.finish()
         }
-        assertTrue("System WebView timed out loading $exactUrl", finished.await(30, TimeUnit.SECONDS))
-        assertNull("System WebView failed exact .fips navigation: $mainFrameError", mainFrameError)
-        instrumentation.runOnMainSync {
-            assertEquals(requested.host, Uri.parse(webView.url).host)
-            webView.destroy()
-        }
-        FipsVpnService.stop(context)
-        activity.finish()
     }
 
     private fun waitForRunning(): Boolean {

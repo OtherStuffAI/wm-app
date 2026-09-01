@@ -30,13 +30,18 @@ class FipsVpnService : VpnService() {
             worker.execute { shutdown() }
             return START_NOT_STICKY
         }
-        worker.execute { establishAndRun() }
+        startForeground(NOTIFICATION_ID, notification("Starting embedded FIPS mesh…"))
+        worker.execute {
+            stopped = false
+            runCatching { establishAndRun() }
+                .onFailure { failClosed() }
+        }
         return START_NOT_STICKY
     }
 
     @Synchronized
     private fun establishAndRun() {
-        if (tun != null) return
+        if (stopped || tun != null) return
         val metadata = JSONObject(FipsNative.nativeInspect())
         val ipv6 = metadata.optString("ipv6")
         if (ipv6.isBlank()) {
@@ -89,6 +94,14 @@ class FipsVpnService : VpnService() {
 
     private fun failClosed() {
         shutdown()
+    }
+
+    @Synchronized
+    private fun resetForStart() {
+        FipsNative.nativeStop()
+        tun?.close()
+        tun = null
+        stopped = false
     }
 
     @Synchronized
@@ -162,6 +175,16 @@ class FipsVpnService : VpnService() {
             val service = current
             if (service != null) {
                 service.shutdown()
+            } else {
+                FipsNative.nativeStop()
+                context.stopService(Intent(context, FipsVpnService::class.java))
+            }
+        }
+
+        fun resetForStart(context: Context) {
+            val service = current
+            if (service != null) {
+                service.resetForStart()
             } else {
                 FipsNative.nativeStop()
                 context.stopService(Intent(context, FipsVpnService::class.java))

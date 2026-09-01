@@ -1,9 +1,9 @@
 use crate::dns_proxy;
 use fips::upper::{icmp::effective_ipv6_mtu, tcp_mss::clamp_tcp_mss};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::SocketAddr;
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -22,7 +22,7 @@ pub(crate) fn clamp_outbound(packet: &mut [u8], transport_mtu: u16) -> bool {
 
 pub(crate) struct TunAdapter {
     stop: Arc<AtomicBool>,
-    fd: RawFd,
+    tun: Option<File>,
     reader: Option<JoinHandle<()>>,
     writer: Option<JoinHandle<()>>,
 }
@@ -35,23 +35,23 @@ impl TunAdapter {
         transport_mtu: u16,
         resolver: SocketAddr,
     ) -> std::io::Result<Self> {
-        let read_fd = unsafe { libc::dup(fd) };
-        let dns_write_fd = unsafe { libc::dup(fd) };
-        let write_fd = unsafe { libc::dup(fd) };
-        if read_fd < 0 || dns_write_fd < 0 || write_fd < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+        // nativeRunNode takes ownership of the detached ParcelFileDescriptor.
+        // Keep every clone nonblocking so teardown never joins a thread stuck
+        // in a TUN read/write after the Java owner has closed its descriptor.
+        let tun = unsafe { File::from_raw_fd(fd) };
+        set_nonblocking(tun.as_raw_fd())?;
+        let mut input = tun.try_clone()?;
+        let mut dns_output = tun.try_clone()?;
+        let mut output = tun.try_clone()?;
         let stop = Arc::new(AtomicBool::new(false));
         let reader_stop = Arc::clone(&stop);
         let reader = std::thread::Builder::new()
             .name("wm-fips-tun-in".into())
             .spawn(move || {
-                let mut input = unsafe { File::from_raw_fd(read_fd) };
-                let mut dns_output = unsafe { File::from_raw_fd(dns_write_fd) };
                 let mut buffer = vec![0u8; TUN_MTU + 256];
                 while !reader_stop.load(Ordering::Acquire) {
                     let mut descriptor = libc::pollfd {
-                        fd: read_fd,
+                        fd: input.as_raw_fd(),
                         events: libc::POLLIN,
                         revents: 0,
                     };
@@ -60,14 +60,16 @@ impl TunAdapter {
                         continue;
                     }
                     let length = match input.read(&mut buffer) {
-                        Ok(0) => continue,
+                        Ok(0) => break,
                         Ok(length) => length,
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => continue,
+                        Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                         Err(_) => break,
                     };
                     let packet = &mut buffer[..length];
                     if let Some((ihl, payload)) = dns_proxy::is_fips_dns_query(packet) {
                         if let Ok(reply) = dns_proxy::proxy_query(packet, ihl, payload, resolver) {
-                            let _ = dns_output.write_all(&reply);
+                            let _ = write_packet(&mut dns_output, &reply, &reader_stop);
                         }
                         continue;
                     }
@@ -75,27 +77,47 @@ impl TunAdapter {
                         continue;
                     }
                     clamp_outbound(packet, transport_mtu);
-                    if outbound.blocking_send(packet.to_vec()).is_err() {
-                        break;
+                    let mut pending = packet.to_vec();
+                    loop {
+                        match outbound.try_send(pending) {
+                            Ok(()) => break,
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(packet)) => {
+                                pending = packet;
+                                if reader_stop.load(Ordering::Acquire) {
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                        }
                     }
                 }
             })?;
         let writer_stop = Arc::clone(&stop);
-        let writer = std::thread::Builder::new()
+        let writer = match std::thread::Builder::new()
             .name("wm-fips-tun-out".into())
             .spawn(move || {
-                let mut output = unsafe { File::from_raw_fd(write_fd) };
                 while !writer_stop.load(Ordering::Acquire) {
                     match inbound.recv_timeout(Duration::from_millis(200)) {
-                        Ok(packet) if output.write_all(&packet).is_err() => break,
+                        Ok(packet) if write_packet(&mut output, &packet, &writer_stop).is_err() => {
+                            break;
+                        }
                         Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
-            })?;
+            }) {
+            Ok(writer) => writer,
+            Err(error) => {
+                stop.store(true, Ordering::Release);
+                drop(tun);
+                let _ = reader.join();
+                return Err(error);
+            }
+        };
         Ok(Self {
             stop,
-            fd,
+            tun: Some(tun),
             reader: Some(reader),
             writer: Some(writer),
         })
@@ -103,13 +125,41 @@ impl TunAdapter {
 
     pub(crate) fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.tun.take();
         if let Some(handle) = self.reader.take() {
             let _ = handle.join();
         }
         if let Some(handle) = self.writer.take() {
             let _ = handle.join();
         }
-        unsafe { libc::close(self.fd) };
+    }
+}
+
+fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn write_packet(file: &mut File, packet: &[u8], stop: &AtomicBool) -> std::io::Result<()> {
+    loop {
+        match file.write(packet) {
+            Ok(length) if length == packet.len() => return Ok(()),
+            Ok(_) => return Err(std::io::Error::other("partial TUN packet write")),
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if stop.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -181,5 +231,26 @@ mod tests {
         assert_eq!(&received[..length], inbound);
 
         adapter.stop();
+    }
+
+    #[test]
+    fn stop_unblocks_when_fips_outbound_channel_is_full() {
+        let (tun, app) = UnixDatagram::pair().unwrap();
+        let (to_fips, _from_tun) = tokio::sync::mpsc::channel(1);
+        let (_to_tun, from_fips) = std::sync::mpsc::channel();
+        let resolver = "127.0.0.1:9".parse().unwrap();
+        let mut adapter =
+            TunAdapter::start(tun.into_raw_fd(), to_fips, from_fips, 1280, resolver).unwrap();
+
+        let mut outbound = vec![0u8; 40];
+        outbound[0] = 0x60;
+        outbound[24] = 0xfd;
+        app.send(&outbound).unwrap();
+        app.send(&outbound).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let started = std::time::Instant::now();
+        adapter.stop();
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

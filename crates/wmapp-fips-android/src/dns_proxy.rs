@@ -23,10 +23,13 @@ pub(crate) fn is_fips_dns_query(packet: &[u8]) -> Option<(usize, &[u8])> {
     }
     let payload = &packet[ihl + 8..ihl + udp_len];
     let query = Packet::parse(payload).ok()?;
-    let question = query.questions.first()?;
-    let name = question.qname.to_string();
-    let normalized = name.trim_end_matches('.').to_ascii_lowercase();
-    (normalized == "fips" || normalized.ends_with(".fips")).then_some((ihl, payload))
+    (!query.questions.is_empty()
+        && query.questions.iter().all(|question| {
+            let name = question.qname.to_string();
+            let normalized = name.trim_end_matches('.').to_ascii_lowercase();
+            normalized == "fips" || normalized.ends_with(".fips")
+        }))
+    .then_some((ihl, payload))
 }
 
 pub(crate) fn proxy_query(
@@ -42,9 +45,10 @@ pub(crate) fn proxy_query(
     };
     let socket = UdpSocket::bind(bind)?;
     socket.set_read_timeout(Some(Duration::from_secs(2)))?;
-    socket.send_to(payload, resolver)?;
+    socket.connect(resolver)?;
+    socket.send(payload)?;
     let mut answer = vec![0u8; 4096];
-    let (length, _) = socket.recv_from(&mut answer)?;
+    let length = socket.recv(&mut answer)?;
     answer.truncate(length);
     Ok(build_ipv4_udp_reply(query_packet, ihl, &answer))
 }
@@ -126,7 +130,10 @@ mod tests {
     }
 
     fn query(name: &str) -> Vec<u8> {
-        let payload = dns_payload(name);
+        query_from_payload(dns_payload(name))
+    }
+
+    fn query_from_payload(payload: Vec<u8>) -> Vec<u8> {
         let total = 28 + payload.len();
         let mut packet = vec![0u8; total];
         packet[0] = 0x45;
@@ -147,6 +154,17 @@ mod tests {
         assert!(is_fips_dns_query(&query("node.fips")).is_some());
         assert!(is_fips_dns_query(&query("example.com")).is_none());
         assert!(is_fips_dns_query(&query("notfips.example")).is_none());
+
+        let mut mixed = Packet::new_query(8);
+        for name in ["node.fips", "example.com"] {
+            mixed.questions.push(Question::new(
+                Name::new_unchecked(name).into_owned(),
+                QTYPE::TYPE(TYPE::AAAA),
+                QCLASS::CLASS(CLASS::IN),
+                false,
+            ));
+        }
+        assert!(is_fips_dns_query(&query_from_payload(mixed.build_bytes_vec().unwrap())).is_none());
     }
 
     #[test]
