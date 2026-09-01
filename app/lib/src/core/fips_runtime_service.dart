@@ -57,22 +57,27 @@ class FipsRuntimeService {
   FipsRuntimeService({
     String? bundledPackagePath,
     this.fipsctlPath = '/usr/local/bin/fipsctl',
+    this.attestationPath = '/usr/local/etc/fips/wingman-poc-runtime.json',
     FipsProcessRunner? processRunner,
     bool? isMacOS,
     Future<bool> Function(String path)? fileExists,
+    Future<String?> Function(String path)? readTextFile,
   })  : bundledPackagePath = bundledPackagePath ?? defaultBundledPackagePath(),
         _processRunner = processRunner ?? Process.run,
         _isMacOS = isMacOS ?? Platform.isMacOS,
-        _fileExists = fileExists ?? ((path) => File(path).exists());
+        _fileExists = fileExists ?? ((path) => File(path).exists()),
+        _readTextFile = readTextFile ?? _readTextFileFromDisk;
 
   static const expectedVersion = '0.5.0';
   static const configurationScriptName = 'configure-fips-wingman-poc.sh';
 
   final String bundledPackagePath;
   final String fipsctlPath;
+  final String attestationPath;
   final FipsProcessRunner _processRunner;
   final bool _isMacOS;
   final Future<bool> Function(String path) _fileExists;
+  final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
 
   static String defaultBundledPackagePath() {
@@ -131,7 +136,8 @@ end run
     if (!await _fileExists(fipsctlPath)) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.notInstalled,
-        detail: 'The bundled FIPS system service has not been installed.',
+        detail: 'Bundled FIPS is ready to enable. It will activate '
+            'automatically when you open a FIPS app.',
       );
     }
 
@@ -147,6 +153,15 @@ end run
         state: FipsRuntimeState.installRequired,
         detail: 'FIPS $expectedVersion is required; installed: '
             '${redactSecrets(version.stdout.toString().trim())}.',
+      );
+    }
+
+    if (!await _hasCompatibleWingmanAttestation()) {
+      return const FipsRuntimeStatus(
+        state: FipsRuntimeState.installRequired,
+        detail: 'FIPS is installed, but its bundled Wingman mesh setup is '
+            'missing or outdated. Opening a FIPS app will repair it while '
+            'preserving this machine identity.',
       );
     }
 
@@ -294,6 +309,36 @@ end run
       return await _processRunner(executable, arguments);
     } catch (error) {
       return ProcessResult(0, 127, '', redactSecrets(error.toString()));
+    }
+  }
+
+  Future<bool> _hasCompatibleWingmanAttestation() async {
+    final raw = await _readTextFile(attestationPath);
+    if (raw == null) return false;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return false;
+      return decoded['schema'] == 1 &&
+          decoded['fipsVersion'] == expectedVersion &&
+          decoded['rendezvousApp'] == 'wingman-fips-poc-v1' &&
+          decoded['nostrShareLocalCandidates'] == true &&
+          decoded['lanEnabled'] == true &&
+          decoded['lanScope'] == 'wingman-fips-poc-v1' &&
+          decoded['tunEnabled'] == true &&
+          decoded['dnsEnabled'] == true &&
+          decoded['udpAdvertiseOnNostr'] == true &&
+          decoded['udpAcceptConnections'] == true &&
+          decoded['udpOutboundOnly'] == false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<String?> _readTextFileFromDisk(String path) async {
+    try {
+      return await File(path).readAsString();
+    } catch (_) {
+      return null;
     }
   }
 

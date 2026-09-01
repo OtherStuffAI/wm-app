@@ -359,9 +359,8 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _openFipsApp() async {
     final input = TextEditingController();
-    var shouldProbe = _fipsStatus?.isRunning ?? false;
-    final submission = await showDialog<({String value, bool probe})>(
-      context: context,
+    var shouldProbe = false;
+    final submission = await _showSettledDialog<({String value, bool probe})>(
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Open FIPS app'),
@@ -410,9 +409,11 @@ class _SetupScreenState extends State<SetupScreen> {
     input.dispose();
     if (submission == null) return;
 
+    String? appUrlToOpen;
+    AppConfig? configToPersist;
     await _run('Checking FIPS transport…', () async {
       final target = FipsAppTarget.parse(submission.value);
-      final status = await widget.fipsRuntime.inspect();
+      final status = await _ensureFipsReadyForAppAccess();
       if (!status.canAttemptAppAccess) throw StateError(status.detail);
       if (submission.probe) {
         if (!status.isRunning) {
@@ -422,7 +423,34 @@ class _SetupScreenState extends State<SetupScreen> {
           );
         }
         final probe = await widget.fipsRuntime.probe(target.nodeNpub);
-        if (!probe.ok) throw StateError('FIPS probe failed: ${probe.detail}');
+        if (!probe.ok) {
+          if (!mounted) throw StateError('The setup screen closed.');
+          final continueWithoutProbe = await _showSettledDialog<bool>(
+                builder: (context) => AlertDialog(
+                  title: const Text('Node not confirmed yet'),
+                  content: const Text(
+                    'The optional probe could not confirm an existing mesh '
+                    'route. Opening the exact URL will let FIPS attempt normal '
+                    'discovery. If it still fails, inspect the transport '
+                    'diagnostics. Open it through the encrypted mesh anyway?',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Open anyway'),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+          if (!continueWithoutProbe) {
+            return 'FIPS app opening cancelled after the optional probe.';
+          }
+        }
       }
 
       final origin = target.origin;
@@ -431,8 +459,7 @@ class _SetupScreenState extends State<SetupScreen> {
           );
       if (!alreadyTrusted) {
         if (!mounted) throw StateError('The setup screen closed.');
-        final trust = await showDialog<bool>(
-              context: context,
+        final trust = await _showSettledDialog<bool>(
               builder: (context) => AlertDialog(
                 title: const Text('Trust this exact FIPS origin?'),
                 content: Text(
@@ -460,15 +487,75 @@ class _SetupScreenState extends State<SetupScreen> {
           origin,
         }.toList(growable: false);
         _trustedOriginsController.text = trustedOrigins.join('\n');
-        widget.onConfigChanged(
-          widget.config.copyWith(
-            trustedOrigins: trustedOrigins,
-          ),
+        configToPersist = widget.config.copyWith(
+          trustedOrigins: trustedOrigins,
         );
       }
-      widget.onOpenFipsApp(target.uri.toString());
+      appUrlToOpen = target.uri.toString();
       return 'Opened ${target.uri} through FIPS.';
     });
+
+    if (appUrlToOpen == null || !mounted) return;
+
+    // `_showSettledDialog` waits for the route's reverse transition and overlay
+    // removal, so root configuration and IndexedStack navigation cannot race
+    // inherited-dialog teardown on a repeated Open FIPS app attempt.
+    final config = configToPersist;
+    if (config != null) {
+      widget.onConfigChanged(config);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+    widget.onOpenFipsApp(appUrlToOpen!);
+  }
+
+  Future<T?> _showSettledDialog<T>({required WidgetBuilder builder}) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<T>(
+      context: context,
+      builder: builder,
+      themes: InheritedTheme.capture(
+        from: context,
+        to: navigator.context,
+      ),
+      barrierDismissible: true,
+    );
+    final result = await navigator.push<T>(route);
+    await route.completed;
+    return result;
+  }
+
+  Future<FipsRuntimeStatus> _ensureFipsReadyForAppAccess() async {
+    var status = await widget.fipsRuntime.inspect();
+    if (mounted) {
+      setState(() {
+        _fipsStatus = status;
+      });
+    }
+    if (status.canAttemptAppAccess) return status;
+
+    final canActivateBundledRuntime = switch (status.state) {
+      FipsRuntimeState.notInstalled ||
+      FipsRuntimeState.installRequired ||
+      FipsRuntimeState.degraded ||
+      FipsRuntimeState.failed =>
+        true,
+      _ => false,
+    };
+    if (!canActivateBundledRuntime) return status;
+
+    if (mounted) {
+      setState(() {
+        _message = 'Enabling the bundled FIPS transport…';
+      });
+    }
+    status = await widget.fipsRuntime.installOrRepair();
+    if (mounted) {
+      setState(() {
+        _fipsStatus = status;
+      });
+    }
+    return status;
   }
 
   Widget _field({

@@ -5,6 +5,12 @@ import 'package:wingman_app/src/core/fips_runtime_service.dart';
 
 void main() {
   final npub = 'npub1${List.filled(58, 'q').join()}';
+  const compatibleAttestation = '{"schema":1,"fipsVersion":"0.5.0",'
+      '"rendezvousApp":"wingman-fips-poc-v1",'
+      '"nostrShareLocalCandidates":true,"lanEnabled":true,'
+      '"lanScope":"wingman-fips-poc-v1","tunEnabled":true,'
+      '"dnsEnabled":true,"udpAdvertiseOnNostr":true,'
+      '"udpAcceptConnections":true,"udpOutboundOnly":false}';
 
   test('constructs an authorization command without shell-interpolating paths',
       () {
@@ -34,6 +40,7 @@ void main() {
       fipsctlPath: '/usr/local/bin/fipsctl',
       isMacOS: true,
       fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
       processRunner: (executable, arguments) async {
         calls.add((executable, arguments));
         if (arguments.contains('--version')) {
@@ -62,6 +69,7 @@ void main() {
       bundledPackagePath: '/bundle/fips.pkg',
       isMacOS: true,
       fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
       processRunner: (executable, arguments) async {
         if (arguments.contains('--version')) {
           return ProcessResult(1, 0, '0.5.0', '');
@@ -84,6 +92,7 @@ void main() {
       bundledPackagePath: '/bundle/fips.pkg',
       isMacOS: true,
       fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
       processRunner: (executable, arguments) async {
         if (arguments.contains('--version')) {
           return ProcessResult(1, 0, '0.5.0', '');
@@ -144,6 +153,7 @@ void main() {
       bundledPackagePath: '/bundle/fips.pkg',
       isMacOS: true,
       fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
       processRunner: (_, arguments) async {
         if (arguments.contains('--version')) {
           return ProcessResult(1, 0, '0.5.0', '');
@@ -170,6 +180,7 @@ void main() {
       bundledPackagePath: '/bundle/fips.pkg',
       isMacOS: true,
       fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
       processRunner: (executable, arguments) async {
         calls.add((executable, arguments));
         if (arguments.contains('--version')) {
@@ -191,6 +202,57 @@ void main() {
 
     expect(result.ok, isTrue);
     expect(calls.last.$2, ['probe', npub, '--json', '--timeout', '15']);
+  });
+
+  test('requires repair when a running v0.5.0 lacks mesh attestation',
+      () async {
+    var statusInspected = false;
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips.pkg',
+      isMacOS: true,
+      fileExists: (_) async => true,
+      readTextFile: (_) async => null,
+      processRunner: (_, arguments) async {
+        if (arguments.contains('--version')) {
+          return ProcessResult(1, 0, '0.5.0', '');
+        }
+        statusInspected = true;
+        return ProcessResult(
+          2,
+          0,
+          '{"state":"Running","tun_state":"active","persistent":true}',
+          '',
+        );
+      },
+    );
+
+    final status = await service.inspect();
+
+    expect(status.state, FipsRuntimeState.installRequired);
+    expect(status.detail, contains('mesh setup is missing or outdated'));
+    expect(statusInspected, isFalse);
+  });
+
+  test('reports cancelled bundled activation without retrying authorization',
+      () async {
+    var authorizationRuns = 0;
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips.pkg',
+      isMacOS: true,
+      fileExists: (_) async => true,
+      processRunner: (executable, _) async {
+        expect(executable, '/usr/bin/osascript');
+        authorizationRuns += 1;
+        return ProcessResult(1, 1, '', 'User canceled.');
+      },
+    );
+
+    final status = await service.installOrRepair();
+
+    expect(status.state, FipsRuntimeState.failed);
+    expect(status.detail, contains('cancelled or failed'));
+    expect(status.detail, contains('User canceled.'));
+    expect(authorizationRuns, 1);
   });
 
   test('redacts private key material from diagnostics', () {

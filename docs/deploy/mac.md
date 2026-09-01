@@ -55,18 +55,22 @@ binaries are not committed.
 
 After unlocking WMapp, open **Setup → FIPS transport**:
 
-1. Choose **Install or repair**. This is an explicit macOS administrator
-   authorization step because upstream FIPS installs a launch daemon, TUN
-   interface support, and `/etc/resolver/fips`.
-2. WMapp preserves any existing FIPS key and unrelated configuration. The
+1. Choose **Open FIPS app** and paste the exact
+   `http://<autopilot-npub>.fips:<port>/` URL or matching JSON descriptor.
+   If the bundled runtime has not been activated, or its Wingman mesh setup is
+   outdated, WMapp performs the repair automatically and macOS requests one
+   administrator authorization. The separate **Install or repair** control
+   remains available for diagnostics and explicit repair.
+2. Activation preserves any existing FIPS key and unrelated configuration. The
    bundled helper transactionally enables persistent machine identity, Nostr
    rendezvous and UDP advertising under the `wingman-fips-poc-v1` application
    namespace. Scoped LAN rendezvous is also enabled so two Wingman machines on
-   the same network do not depend on router NAT hairpin support. An initial
-   config backup is kept alongside `fips.yaml`.
-3. Once status is `running`, choose **Open FIPS app**, paste the exact
-   `http://<autopilot-npub>.fips:<port>/` URL or matching JSON descriptor,
-   optionally probe it, and approve trust for that exact origin.
+   the same physical network do not depend on router NAT hairpin support. For
+   this explicit same-LAN PoC, RFC1918/ULA candidates are included only inside
+   encrypted Nostr traversal offers. An initial config backup is kept alongside
+   `fips.yaml`.
+3. The optional diagnostic probe is off by default and does not establish a
+   route. Approve trust for the exact origin; WMapp never trusts `*.fips`.
 
 FIPS machine identity is separate from the WMapp user signer. No FIPS private
 key is copied into Flutter settings, command arguments, or logs.
