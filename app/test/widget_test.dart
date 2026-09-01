@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -266,6 +268,47 @@ void main() {
       find.byTooltip('Encrypted FIPS mesh transport'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('FIPS navigation waits for bundled runtime readiness',
+      (tester) async {
+    final browserKey = GlobalKey<BrowserScreenState>();
+    final readiness = Completer<String?>();
+    final preparedUrls = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            key: browserKey,
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+            onPrepareFipsNavigation: (url) {
+              preparedUrls.add(url);
+              return readiness.future;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final npub = 'npub1${List.filled(58, 'q').join()}';
+    final url = 'http://$npub.fips:41024/';
+
+    browserKey.currentState!.openTab(url);
+    await tester.pump();
+
+    expect(preparedUrls, [url]);
+    expect(fakeLoadedRequestUrls, isEmpty);
+
+    readiness.complete(null);
+    await tester.pump();
+
+    expect(fakeLoadedRequestUrls, [url]);
   });
 
   testWidgets('clean launch renders a neutral browser signer new tab',

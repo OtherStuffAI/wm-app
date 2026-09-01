@@ -79,6 +79,7 @@ class FipsRuntimeService {
   final Future<bool> Function(String path) _fileExists;
   final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
+  Future<FipsRuntimeStatus>? _ensureReadyOperation;
 
   static String defaultBundledPackagePath() {
     final executable = File(Platform.resolvedExecutable);
@@ -118,6 +119,37 @@ end run
       );
     }
     return _inspectRuntime();
+  }
+
+  Future<FipsRuntimeStatus> ensureReadyForAppAccess() {
+    final activeOperation = _ensureReadyOperation;
+    if (activeOperation != null) return activeOperation;
+
+    final operation = _ensureReadyForAppAccess();
+    late final Future<FipsRuntimeStatus> trackedOperation;
+    trackedOperation = operation.whenComplete(() {
+      if (identical(_ensureReadyOperation, trackedOperation)) {
+        _ensureReadyOperation = null;
+      }
+    });
+    _ensureReadyOperation = trackedOperation;
+    return trackedOperation;
+  }
+
+  Future<FipsRuntimeStatus> _ensureReadyForAppAccess() async {
+    final status = await inspect();
+    if (status.canAttemptAppAccess) return status;
+
+    final canActivateBundledRuntime = switch (status.state) {
+      FipsRuntimeState.notInstalled ||
+      FipsRuntimeState.installRequired ||
+      FipsRuntimeState.degraded ||
+      FipsRuntimeState.failed =>
+        true,
+      _ => false,
+    };
+    if (!canActivateBundledRuntime) return status;
+    return installOrRepair();
   }
 
   Future<FipsRuntimeStatus> _inspectRuntime() async {

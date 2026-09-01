@@ -30,6 +30,7 @@ class BrowserScreen extends StatefulWidget {
     this.localFlightDeckUrl = '',
     this.onBookmarkMenuStateChanged,
     this.onFocusModeChanged,
+    this.onPrepareFipsNavigation,
     this.onLogOut,
     super.key,
   });
@@ -44,6 +45,7 @@ class BrowserScreen extends StatefulWidget {
   final String localFlightDeckUrl;
   final ValueChanged<BrowserBookmarkMenuState>? onBookmarkMenuStateChanged;
   final ValueChanged<bool>? onFocusModeChanged;
+  final Future<String?> Function(String url)? onPrepareFipsNavigation;
   final VoidCallback? onLogOut;
 
   @override
@@ -563,7 +565,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onNavigationRequest: _onNavigationRequest,
+          onNavigationRequest: (request) => _onNavigationRequest(id, request),
           onUrlChange: (change) => _onUrlChanged(id, change.url),
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
@@ -1108,8 +1110,36 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
   }
 
-  NavigationDecision _onNavigationRequest(NavigationRequest request) {
-    return NavigationDecision.navigate;
+  Future<NavigationDecision> _onNavigationRequest(
+    int tabId,
+    NavigationRequest request,
+  ) async {
+    final prepare = widget.onPrepareFipsNavigation;
+    if (prepare == null || !_isFipsAppUrl(request.url)) {
+      return NavigationDecision.navigate;
+    }
+
+    final failure = await prepare(request.url);
+    if (failure == null) return NavigationDecision.navigate;
+    if (mounted) {
+      final tab = _tabById(tabId);
+      if (tab != null) {
+        setState(() {
+          tab.title = 'FIPS unavailable';
+          tab.message = failure;
+        });
+      }
+    }
+    return NavigationDecision.prevent;
+  }
+
+  bool _isFipsAppUrl(String url) {
+    try {
+      FipsAppTarget.parse(url);
+      return true;
+    } on FormatException {
+      return false;
+    }
   }
 
   void _onUrlChanged(int tabId, String? url) {

@@ -534,22 +534,12 @@ class _SetupScreenState extends State<SetupScreen> {
     }
     if (status.canAttemptAppAccess) return status;
 
-    final canActivateBundledRuntime = switch (status.state) {
-      FipsRuntimeState.notInstalled ||
-      FipsRuntimeState.installRequired ||
-      FipsRuntimeState.degraded ||
-      FipsRuntimeState.failed =>
-        true,
-      _ => false,
-    };
-    if (!canActivateBundledRuntime) return status;
-
     if (mounted) {
       setState(() {
         _message = 'Enabling the bundled FIPS transport…';
       });
     }
-    status = await widget.fipsRuntime.installOrRepair();
+    status = await widget.fipsRuntime.ensureReadyForAppAccess();
     if (mounted) {
       setState(() {
         _fipsStatus = status;

@@ -249,8 +249,26 @@ class _ShellHomeState extends State<ShellHome> {
       onOpenStatus: () => _selectSurface(ShellSurface.status),
       onFocusModeChanged: (focused) => _browserFocusMode.value = focused,
       onBookmarkMenuStateChanged: (state) => _bookmarkMenuState.value = state,
+      onPrepareFipsNavigation: _prepareFipsNavigation,
       onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );
+  }
+
+  Future<String?> _prepareFipsNavigation(String url) async {
+    final status = await _fipsRuntime.ensureReadyForAppAccess();
+    if (status.canAttemptAppAccess) return null;
+    if (!mounted) return status.detail;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(status.detail),
+        action: SnackBarAction(
+          label: 'Setup',
+          onPressed: () => _selectSurface(ShellSurface.setup),
+        ),
+      ),
+    );
+    return status.detail;
   }
 
   int _surfaceIndex(ShellSurface surface) {

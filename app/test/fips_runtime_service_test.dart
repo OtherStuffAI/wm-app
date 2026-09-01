@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -253,6 +254,35 @@ void main() {
     expect(status.detail, contains('cancelled or failed'));
     expect(status.detail, contains('User canceled.'));
     expect(authorizationRuns, 1);
+  });
+
+  test('coalesces simultaneous app-link activation into one admin prompt',
+      () async {
+    final authorization = Completer<ProcessResult>();
+    var authorizationRuns = 0;
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips.pkg',
+      isMacOS: true,
+      fileExists: (_) async => true,
+      readTextFile: (_) async => null,
+      processRunner: (executable, arguments) async {
+        if (arguments.contains('--version')) {
+          return ProcessResult(1, 0, '0.5.0', '');
+        }
+        expect(executable, '/usr/bin/osascript');
+        authorizationRuns += 1;
+        return authorization.future;
+      },
+    );
+
+    final first = service.ensureReadyForAppAccess();
+    final second = service.ensureReadyForAppAccess();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(authorizationRuns, 1);
+    authorization.complete(ProcessResult(2, 1, '', 'User canceled.'));
+    expect((await first).state, FipsRuntimeState.failed);
+    expect((await second).state, FipsRuntimeState.failed);
   });
 
   test('redacts private key material from diagnostics', () {
