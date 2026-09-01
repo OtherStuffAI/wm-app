@@ -6,6 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -48,6 +51,15 @@ class FipsVpnService : VpnService() {
             failClosed()
             return
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            failClosed()
+            return
+        }
+        val underlyingNetwork = selectUnderlyingNetwork()
+        if (underlyingNetwork == null) {
+            failClosed()
+            return
+        }
 
         val spec = FipsPlatformContract.vpnSpec
         // Deliberately no addDisallowedApplication(packageName): WM-App's own
@@ -59,6 +71,7 @@ class FipsVpnService : VpnService() {
             .addRoute(FipsPlatformContract.MESH_ROUTE, spec.meshPrefix)
             .addRoute(FipsPlatformContract.DNS_ADDRESS, spec.dnsPrefix)
             .addDnsServer(FipsPlatformContract.DNS_ADDRESS)
+            .setUnderlyingNetworks(arrayOf(underlyingNetwork))
             .setMtu(spec.mtu)
             .setBlocking(true)
             .establish()
@@ -83,13 +96,31 @@ class FipsVpnService : VpnService() {
         }
 
         val rustFd = ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd()
-        val running = JSONObject(FipsNative.nativeRunNode(rustFd))
+        val running = JSONObject(
+            FipsNative.nativeRunNode(rustFd, underlyingNetwork.networkHandle),
+        )
         if (running.optString("state") != "running") {
             failClosed()
             return
         }
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification("Routing fd00::/8 and .fips DNS"))
+    }
+
+    private fun selectUnderlyingNetwork(): Network? {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val active = connectivity.activeNetwork
+        val candidates = buildList {
+            if (active != null) add(active)
+            addAll(connectivity.allNetworks.filterNot { it == active })
+        }
+        return candidates.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+            FipsPlatformContract.isEligibleUnderlyingNetwork(
+                hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                isVpn = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+            )
+        }
     }
 
     private fun failClosed() {

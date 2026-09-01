@@ -11,6 +11,10 @@ use std::time::Duration;
 
 const TUN_MTU: usize = 1280;
 
+pub(crate) trait PublicDnsResolver: Send + Sync + 'static {
+    fn resolve(&self, query: &[u8]) -> std::io::Result<Vec<u8>>;
+}
+
 pub(crate) fn is_mesh_ipv6(packet: &[u8]) -> bool {
     packet.len() >= 40 && packet[0] >> 4 == 6 && packet[24] == 0xfd
 }
@@ -33,7 +37,8 @@ impl TunAdapter {
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
         inbound: std::sync::mpsc::Receiver<Vec<u8>>,
         transport_mtu: u16,
-        resolver: SocketAddr,
+        fips_resolver: SocketAddr,
+        public_resolver: Arc<dyn PublicDnsResolver>,
     ) -> std::io::Result<Self> {
         // nativeRunNode takes ownership of the detached ParcelFileDescriptor.
         // Keep every clone nonblocking so teardown never joins a thread stuck
@@ -67,10 +72,40 @@ impl TunAdapter {
                         Err(_) => break,
                     };
                     let packet = &mut buffer[..length];
-                    if let Some((ihl, payload)) = dns_proxy::is_fips_dns_query(packet) {
-                        if let Ok(reply) = dns_proxy::proxy_query(packet, ihl, payload, resolver) {
-                            let _ = write_packet(&mut dns_output, &reply, &reader_stop);
-                        }
+                    if let Some(query) = dns_proxy::classify_dns_query(packet) {
+                        let reply = match query {
+                            dns_proxy::DnsQuery::Fips { ihl, payload } => {
+                                dns_proxy::proxy_query(packet, ihl, payload, fips_resolver)
+                                    .unwrap_or_else(|_| {
+                                        dns_proxy::build_error_reply(
+                                            packet,
+                                            ihl,
+                                            payload,
+                                            simple_dns::RCODE::ServerFailure,
+                                        )
+                                    })
+                            }
+                            dns_proxy::DnsQuery::Public { ihl, payload } => public_resolver
+                                .resolve(payload)
+                                .map(|answer| dns_proxy::build_resolver_reply(packet, ihl, &answer))
+                                .unwrap_or_else(|_| {
+                                    dns_proxy::build_error_reply(
+                                        packet,
+                                        ihl,
+                                        payload,
+                                        simple_dns::RCODE::ServerFailure,
+                                    )
+                                }),
+                            dns_proxy::DnsQuery::Mixed { ihl, payload } => {
+                                dns_proxy::build_error_reply(
+                                    packet,
+                                    ihl,
+                                    payload,
+                                    simple_dns::RCODE::Refused,
+                                )
+                            }
+                        };
+                        let _ = write_packet(&mut dns_output, &reply, &reader_stop);
                         continue;
                     }
                     if !is_mesh_ipv6(packet) {
@@ -172,8 +207,63 @@ impl Drop for TunAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use simple_dns::{CLASS, Name, Packet, QCLASS, QTYPE, Question, RCODE, TYPE};
     use std::os::fd::IntoRawFd;
     use std::os::unix::net::UnixDatagram;
+    use std::sync::Mutex;
+
+    struct FailingPublicResolver;
+
+    impl PublicDnsResolver for FailingPublicResolver {
+        fn resolve(&self, _query: &[u8]) -> std::io::Result<Vec<u8>> {
+            Err(std::io::Error::other("test resolver unavailable"))
+        }
+    }
+
+    struct RecordingPublicResolver {
+        queries: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl PublicDnsResolver for RecordingPublicResolver {
+        fn resolve(&self, query: &[u8]) -> std::io::Result<Vec<u8>> {
+            self.queries.lock().unwrap().push(query.to_vec());
+            let mut reply = query.to_vec();
+            reply[2] |= 0x80;
+            Ok(reply)
+        }
+    }
+
+    fn dns_packet(names: &[&str]) -> Vec<u8> {
+        let mut dns = Packet::new_query(42);
+        for name in names {
+            dns.questions.push(Question::new(
+                Name::new_unchecked(name).into_owned(),
+                QTYPE::TYPE(TYPE::AAAA),
+                QCLASS::CLASS(CLASS::IN),
+                false,
+            ));
+        }
+        let payload = dns.build_bytes_vec().unwrap();
+        let total = 28 + payload.len();
+        let mut packet = vec![0u8; total];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&(total as u16).to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 17;
+        packet[12..16].copy_from_slice(&[10, 1, 1, 2]);
+        packet[16..20].copy_from_slice(&dns_proxy::DNS_INTERCEPT);
+        packet[20..22].copy_from_slice(&4242u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&53u16.to_be_bytes());
+        packet[24..26].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+        packet[28..].copy_from_slice(&payload);
+        packet
+    }
+
+    fn receive_dns(app: &UnixDatagram) -> Vec<u8> {
+        let mut received = [0u8; 4096];
+        let length = app.recv(&mut received).unwrap();
+        received[..length].to_vec()
+    }
 
     fn syn_packet(mss: u16) -> Vec<u8> {
         let mut packet = vec![0u8; 64];
@@ -215,8 +305,15 @@ mod tests {
         let (to_fips, mut from_tun) = tokio::sync::mpsc::channel(1);
         let (to_tun, from_fips) = std::sync::mpsc::channel();
         let resolver = "127.0.0.1:9".parse().unwrap();
-        let mut adapter =
-            TunAdapter::start(tun.into_raw_fd(), to_fips, from_fips, 1280, resolver).unwrap();
+        let mut adapter = TunAdapter::start(
+            tun.into_raw_fd(),
+            to_fips,
+            from_fips,
+            1280,
+            resolver,
+            Arc::new(FailingPublicResolver),
+        )
+        .unwrap();
 
         let mut outbound = vec![0u8; 40];
         outbound[0] = 0x60;
@@ -239,8 +336,15 @@ mod tests {
         let (to_fips, _from_tun) = tokio::sync::mpsc::channel(1);
         let (_to_tun, from_fips) = std::sync::mpsc::channel();
         let resolver = "127.0.0.1:9".parse().unwrap();
-        let mut adapter =
-            TunAdapter::start(tun.into_raw_fd(), to_fips, from_fips, 1280, resolver).unwrap();
+        let mut adapter = TunAdapter::start(
+            tun.into_raw_fd(),
+            to_fips,
+            from_fips,
+            1280,
+            resolver,
+            Arc::new(FailingPublicResolver),
+        )
+        .unwrap();
 
         let mut outbound = vec![0u8; 40];
         outbound[0] = 0x60;
@@ -249,6 +353,99 @@ mod tests {
         app.send(&outbound).unwrap();
         std::thread::sleep(Duration::from_millis(50));
 
+        let started = std::time::Instant::now();
+        adapter.stop();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn splits_fips_public_and_mixed_dns_without_leaking_questions() {
+        let fips_server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let fips_address = fips_server.local_addr().unwrap();
+        let fips_queries = Arc::new(Mutex::new(Vec::new()));
+        let received_fips_queries = Arc::clone(&fips_queries);
+        let fips_responder = std::thread::spawn(move || {
+            let mut bytes = [0u8; 4096];
+            let (length, peer) = fips_server.recv_from(&mut bytes).unwrap();
+            received_fips_queries
+                .lock()
+                .unwrap()
+                .push(bytes[..length].to_vec());
+            bytes[2] |= 0x80;
+            fips_server.send_to(&bytes[..length], peer).unwrap();
+        });
+        let public_queries = Arc::new(Mutex::new(Vec::new()));
+        let public_resolver = RecordingPublicResolver {
+            queries: Arc::clone(&public_queries),
+        };
+        let (tun, app) = UnixDatagram::pair().unwrap();
+        app.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (to_fips, _from_tun) = tokio::sync::mpsc::channel(1);
+        let (_to_tun, from_fips) = std::sync::mpsc::channel();
+        let mut adapter = TunAdapter::start(
+            tun.into_raw_fd(),
+            to_fips,
+            from_fips,
+            1280,
+            fips_address,
+            Arc::new(public_resolver),
+        )
+        .unwrap();
+
+        app.send(&dns_packet(&["example.com"])).unwrap();
+        let public_reply = receive_dns(&app);
+        assert_eq!(
+            Packet::parse(&public_reply[28..]).unwrap().rcode(),
+            RCODE::NoError
+        );
+        assert_eq!(public_queries.lock().unwrap().len(), 1);
+        assert!(fips_queries.lock().unwrap().is_empty());
+
+        app.send(&dns_packet(&["node.fips", "example.com"]))
+            .unwrap();
+        let mixed_reply = receive_dns(&app);
+        assert_eq!(
+            Packet::parse(&mixed_reply[28..]).unwrap().rcode(),
+            RCODE::Refused
+        );
+        assert_eq!(public_queries.lock().unwrap().len(), 1);
+        assert!(fips_queries.lock().unwrap().is_empty());
+
+        app.send(&dns_packet(&["node.fips"])).unwrap();
+        let fips_reply = receive_dns(&app);
+        assert_eq!(
+            Packet::parse(&fips_reply[28..]).unwrap().rcode(),
+            RCODE::NoError
+        );
+        fips_responder.join().unwrap();
+        assert_eq!(fips_queries.lock().unwrap().len(), 1);
+        assert_eq!(public_queries.lock().unwrap().len(), 1);
+
+        adapter.stop();
+    }
+
+    #[test]
+    fn public_resolver_failure_returns_servfail_and_tears_down() {
+        let (tun, app) = UnixDatagram::pair().unwrap();
+        app.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let (to_fips, _from_tun) = tokio::sync::mpsc::channel(1);
+        let (_to_tun, from_fips) = std::sync::mpsc::channel();
+        let mut adapter = TunAdapter::start(
+            tun.into_raw_fd(),
+            to_fips,
+            from_fips,
+            1280,
+            "127.0.0.1:9".parse().unwrap(),
+            Arc::new(FailingPublicResolver),
+        )
+        .unwrap();
+
+        app.send(&dns_packet(&["example.com"])).unwrap();
+        let reply = receive_dns(&app);
+        assert_eq!(
+            Packet::parse(&reply[28..]).unwrap().rcode(),
+            RCODE::ServerFailure
+        );
         let started = std::time::Instant::now();
         adapter.stop();
         assert!(started.elapsed() < Duration::from_secs(1));

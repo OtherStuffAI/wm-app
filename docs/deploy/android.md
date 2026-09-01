@@ -86,8 +86,16 @@ The nsec is encrypted into the Android app's local secure storage backed vault.
   notification drawer). Stopping or repairing FIPS tears down both the Rust
   node and the app-owned TUN.
 - Android permits one active VPN per user/profile. Starting WM-App's FIPS VPN
-  replaces, or can be blocked by, another VPN. Normal internet remains outside
-  WM-App's split tunnel; only `fd00::/8` and `10.1.1.1/32` are routed into it.
+  replaces, or can be blocked by, another VPN. Public destination traffic remains
+  outside WM-App's split tunnel; only `fd00::/8` and `10.1.1.1/32` are routed
+  into it. DNS is separate: Android sends system queries to the advertised
+  `10.1.1.1`, where WM-App sends all-`.fips` questions only to the embedded FIPS
+  resolver and sends all-public questions through Android's resolver on the
+  selected non-VPN underlying network. Mixed questions receive local `REFUSED`.
+- Safe public-DNS forwarding uses `DnsResolver.rawQuery`, which is available on
+  Android 10 (API 29) and newer. On older Android versions, or when no
+  internet-capable non-VPN network is available at startup, FIPS fails closed
+  before it can become the device DNS path.
 - WM-App itself is intentionally not excluded from the VPN. Every UDP socket
   published by FIPS is protected with `VpnService.protect(fd)` before packet
   loops begin, while WebView mesh traffic continues through the TUN.
@@ -115,24 +123,39 @@ the answer, the outstanding work is a browser-resolution strategy (potentially
 NAT46 after a separate safety design), not the FIPS native interface.
 
 After granting VPN consent once, run the device-only regression with the exact
-Autopilot WApp URL:
+Autopilot WApp URL and a known public hostname:
 
 ```bash
 cd app/android
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
   ./gradlew connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.fipsUrl='http://<npub>.fips:<port>/'
+  -Pandroid.testInstrumentationRunnerArguments.fipsUrl='http://<npub>.fips:<port>/' \
+  -Pandroid.testInstrumentationRunnerArguments.publicDnsName='example.com'
 ```
 
-`ChromiumExactFipsTest` starts the embedded node, awaits the authenticated
-bootstrap, loads the unchanged hostname in Android System WebView, fails on a
+`ChromiumExactFipsTest` separately resolves `publicDnsName` while the FIPS VPN is
+running, then starts the embedded node, awaits the authenticated bootstrap,
+loads the unchanged `.fips` hostname in Android System WebView, fails on a
 main-frame DNS/network error or bounded timeout, and verifies that the final
-WebView scheme, host, and port still match the exact `.fips` origin. It always
-tears down the WebView and VPN, including after an assertion failure, so
-repeated device runs start from a deterministic test-owned lifecycle. It
-intentionally does not substitute an IPv6 literal. A passing result still
-depends on the installed System WebView accepting the FIPS ULA/AAAA answer;
-that Chromium behavior cannot be established by compilation or host tests.
+WebView scheme, host, and port still match the exact `.fips` origin. Both tests
+always tear down the VPN, and the browser test also tears down its WebView,
+including after an assertion failure. The browser test intentionally does not
+substitute an IPv6 literal. A passing result still depends on the installed
+System WebView accepting the FIPS ULA/AAAA answer; that Chromium behavior cannot
+be established by compilation or host tests.
+
+The design follows Android's documented contracts: `Builder.addDnsServer()`
+adds a DNS server to the VPN (and does not say that public names bypass it),
+whereas `Builder.addRoute()` controls destination routes. `DnsResolver.rawQuery`
+accepts a specific `Network`, and `LinkProperties.isPrivateDnsActive()` warns
+that applications must not send unencrypted DNS while Private DNS is active.
+Consequently WM-App delegates public packets to Android's network-scoped resolver
+instead of choosing or directly contacting a public DNS server:
+
+- https://developer.android.com/reference/android/net/VpnService.Builder#addDnsServer(java.net.InetAddress)
+- https://developer.android.com/reference/android/net/VpnService.Builder#addRoute(java.net.InetAddress,int)
+- https://developer.android.com/reference/android/net/DnsResolver#rawQuery(android.net.Network,byte[],int,java.util.concurrent.Executor,android.os.CancellationSignal,android.net.DnsResolver.Callback)
+- https://developer.android.com/reference/android/net/LinkProperties#isPrivateDnsActive()
 
 ## Shareable Release APK
 

@@ -18,11 +18,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.InetAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class ChromiumExactFipsTest {
+    @Test
+    fun ordinaryPublicDnsStillResolvesWhileFipsVpnIsActive() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val publicName = InstrumentationRegistry.getArguments().getString("publicDnsName")
+            ?: "example.com"
+        assertTrue(
+            "Grant WM-App VPN consent once before this device test",
+            VpnService.prepare(context) == null,
+        )
+
+        try {
+            val fipsDir = File(context.filesDir, "fips").apply { mkdirs() }
+            val prepared = JSONObject(
+                FipsNative.nativePrepare(
+                    File(fipsDir, "fips.machine.key").absolutePath,
+                    File(fipsDir, "control.sock").absolutePath,
+                ),
+            )
+            assertEquals(prepared.optString("detail"), "starting", prepared.optString("state"))
+            FipsVpnService.start(context)
+            assertTrue("embedded FIPS did not start", waitForRunning())
+            assertTrue(
+                "ordinary public DNS failed while FIPS VPN was active: $publicName",
+                InetAddress.getAllByName(publicName).isNotEmpty(),
+            )
+        } finally {
+            FipsVpnService.stop(context)
+        }
+    }
+
     @Test
     fun systemWebViewLoadsExactFipsHostnameWithoutOriginRewrite() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

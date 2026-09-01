@@ -1,4 +1,4 @@
-use simple_dns::Packet;
+use simple_dns::{Packet, RCODE};
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
@@ -6,7 +6,14 @@ use std::time::Duration;
 pub(crate) const DNS_INTERCEPT: [u8; 4] = [10, 1, 1, 1];
 const DNS_PORT: u16 = 53;
 
-pub(crate) fn is_fips_dns_query(packet: &[u8]) -> Option<(usize, &[u8])> {
+#[derive(Debug)]
+pub(crate) enum DnsQuery<'a> {
+    Fips { ihl: usize, payload: &'a [u8] },
+    Public { ihl: usize, payload: &'a [u8] },
+    Mixed { ihl: usize, payload: &'a [u8] },
+}
+
+pub(crate) fn classify_dns_query(packet: &[u8]) -> Option<DnsQuery<'_>> {
     if packet.len() < 40 || packet[0] >> 4 != 4 || packet[9] != 17 {
         return None;
     }
@@ -23,13 +30,23 @@ pub(crate) fn is_fips_dns_query(packet: &[u8]) -> Option<(usize, &[u8])> {
     }
     let payload = &packet[ihl + 8..ihl + udp_len];
     let query = Packet::parse(payload).ok()?;
-    (!query.questions.is_empty()
-        && query.questions.iter().all(|question| {
+    if query.questions.is_empty() {
+        return None;
+    }
+    let fips_questions = query
+        .questions
+        .iter()
+        .filter(|question| {
             let name = question.qname.to_string();
             let normalized = name.trim_end_matches('.').to_ascii_lowercase();
             normalized == "fips" || normalized.ends_with(".fips")
-        }))
-    .then_some((ihl, payload))
+        })
+        .count();
+    Some(match fips_questions {
+        0 => DnsQuery::Public { ihl, payload },
+        count if count == query.questions.len() => DnsQuery::Fips { ihl, payload },
+        _ => DnsQuery::Mixed { ihl, payload },
+    })
 }
 
 pub(crate) fn proxy_query(
@@ -51,6 +68,39 @@ pub(crate) fn proxy_query(
     let length = socket.recv(&mut answer)?;
     answer.truncate(length);
     Ok(build_ipv4_udp_reply(query_packet, ihl, &answer))
+}
+
+pub(crate) fn build_resolver_reply(query: &[u8], ihl: usize, payload: &[u8]) -> Vec<u8> {
+    build_ipv4_udp_reply(query, ihl, payload)
+}
+
+pub(crate) fn build_error_reply(
+    query_packet: &[u8],
+    ihl: usize,
+    payload: &[u8],
+    rcode: RCODE,
+) -> Vec<u8> {
+    let answer = Packet::parse(payload)
+        .map(|query| {
+            let mut reply = query.into_reply();
+            reply.answers.clear();
+            reply.name_servers.clear();
+            reply.additional_records.clear();
+            *reply.opt_mut() = None;
+            *reply.rcode_mut() = rcode;
+            reply.build_bytes_vec()
+        })
+        .and_then(|result| result)
+        .unwrap_or_else(|_| {
+            let mut reply = payload.to_vec();
+            if reply.len() >= 12 {
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | (rcode as u8 & 0x0f);
+                reply[6..12].fill(0);
+            }
+            reply
+        });
+    build_ipv4_udp_reply(query_packet, ihl, &answer)
 }
 
 fn build_ipv4_udp_reply(query: &[u8], ihl: usize, payload: &[u8]) -> Vec<u8> {
@@ -151,9 +201,18 @@ mod tests {
 
     #[test]
     fn intercepts_only_exact_fips_zone() {
-        assert!(is_fips_dns_query(&query("node.fips")).is_some());
-        assert!(is_fips_dns_query(&query("example.com")).is_none());
-        assert!(is_fips_dns_query(&query("notfips.example")).is_none());
+        assert!(matches!(
+            classify_dns_query(&query("node.fips")),
+            Some(DnsQuery::Fips { .. })
+        ));
+        assert!(matches!(
+            classify_dns_query(&query("example.com")),
+            Some(DnsQuery::Public { .. })
+        ));
+        assert!(matches!(
+            classify_dns_query(&query("notfips.example")),
+            Some(DnsQuery::Public { .. })
+        ));
 
         let mut mixed = Packet::new_query(8);
         for name in ["node.fips", "example.com"] {
@@ -164,7 +223,10 @@ mod tests {
                 false,
             ));
         }
-        assert!(is_fips_dns_query(&query_from_payload(mixed.build_bytes_vec().unwrap())).is_none());
+        assert!(matches!(
+            classify_dns_query(&query_from_payload(mixed.build_bytes_vec().unwrap())),
+            Some(DnsQuery::Mixed { .. })
+        ));
     }
 
     #[test]
@@ -178,7 +240,9 @@ mod tests {
             server.send_to(&bytes[..length], peer).unwrap();
         });
         let packet = query("node.fips");
-        let (ihl, payload) = is_fips_dns_query(&packet).unwrap();
+        let Some(DnsQuery::Fips { ihl, payload }) = classify_dns_query(&packet) else {
+            panic!("expected .fips query")
+        };
         let reply = proxy_query(&packet, ihl, payload, address).unwrap();
         responder.join().unwrap();
         assert_eq!(checksum(&reply[..ihl]), 0);
@@ -189,5 +253,33 @@ mod tests {
         );
         assert_eq!(&reply[12..16], &DNS_INTERCEPT);
         assert_eq!(&reply[16..20], &[10, 0, 0, 2]);
+    }
+
+    #[test]
+    fn mixed_query_gets_local_refused_with_valid_checksums() {
+        let mut mixed = Packet::new_query(8);
+        for name in ["node.fips", "example.com"] {
+            mixed.questions.push(Question::new(
+                Name::new_unchecked(name).into_owned(),
+                QTYPE::TYPE(TYPE::AAAA),
+                QCLASS::CLASS(CLASS::IN),
+                false,
+            ));
+        }
+        let packet = query_from_payload(mixed.build_bytes_vec().unwrap());
+        let Some(DnsQuery::Mixed { ihl, payload }) = classify_dns_query(&packet) else {
+            panic!("expected mixed query")
+        };
+        let reply = build_error_reply(&packet, ihl, payload, RCODE::Refused);
+        assert_eq!(
+            Packet::parse(&reply[ihl + 8..]).unwrap().rcode(),
+            RCODE::Refused
+        );
+        assert_eq!(checksum(&reply[..ihl]), 0);
+        let written_udp_sum = u16::from_be_bytes([reply[ihl + 6], reply[ihl + 7]]);
+        assert_eq!(
+            udp_checksum(&reply[12..16], &reply[16..20], &reply[ihl..]),
+            written_udp_sum
+        );
     }
 }

@@ -16,6 +16,9 @@ internal object FipsPlatformContract {
         disallowedApplications = emptyList(),
     )
 
+    fun isEligibleUnderlyingNetwork(hasInternet: Boolean, isVpn: Boolean): Boolean =
+        hasInternet && !isVpn
+
     fun peerStatus(raw: String): Map<String, Any?> {
         val connected = runCatching {
             val response = org.json.JSONObject(raw)

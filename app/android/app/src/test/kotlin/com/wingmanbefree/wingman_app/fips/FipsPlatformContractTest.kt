@@ -16,6 +16,13 @@ class FipsPlatformContractTest {
     }
 
     @Test
+    fun publicDnsRequiresAnInternetCapableNonVpnUnderlyingNetwork() {
+        assertTrue(FipsPlatformContract.isEligibleUnderlyingNetwork(hasInternet = true, isVpn = false))
+        assertFalse(FipsPlatformContract.isEligibleUnderlyingNetwork(hasInternet = true, isVpn = true))
+        assertFalse(FipsPlatformContract.isEligibleUnderlyingNetwork(hasInternet = false, isVpn = false))
+    }
+
+    @Test
     fun mapsAuthenticatedBootstrapConnection() {
         val connected = FipsPlatformContract.peerStatus(
             """{"data":{"peers":[{"npub":"${FipsPlatformContract.BOOTSTRAP_NPUB}","connectivity":"connected"}]}}""",

@@ -3,15 +3,16 @@ mod identity_store;
 mod tun_adapter;
 
 use fips::Node;
-use jni::JNIEnv;
-use jni::objects::{JClass, JString};
-use jni::sys::{jint, jstring};
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
+use jni::sys::{jint, jlong, jstring};
+use jni::{JNIEnv, JavaVM};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -189,9 +190,53 @@ fn start_node() -> Result<Value, NativeError> {
     Ok(json!({"ok":true,"transportSockets":sockets}))
 }
 
-fn run_node(tun_fd: i32) -> Result<Value, NativeError> {
-    if tun_fd < 0 {
-        return Err(NativeError::Lifecycle("TUN descriptor is invalid".into()));
+struct AndroidPublicDnsResolver {
+    vm: Arc<JavaVM>,
+    native_class: GlobalRef,
+    network_handle: i64,
+}
+
+impl tun_adapter::PublicDnsResolver for AndroidPublicDnsResolver {
+    fn resolve(&self, query: &[u8]) -> std::io::Result<Vec<u8>> {
+        let mut env = self
+            .vm
+            .attach_current_thread()
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let query = env
+            .byte_array_from_slice(query)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let query_object = query.as_ref();
+        let answer = env
+            .call_static_method(
+                &self.native_class,
+                "resolvePublicDns",
+                "([BJ)[B",
+                &[
+                    JValue::Object(query_object),
+                    JValue::Long(self.network_handle),
+                ],
+            )
+            .and_then(|value| value.l())
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        if answer.is_null() {
+            return Err(std::io::Error::other(
+                "Android underlying-network DNS query failed",
+            ));
+        }
+        env.convert_byte_array(JByteArray::from(answer))
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+}
+
+fn run_node(
+    tun_fd: OwnedFd,
+    public_network_handle: i64,
+    public_resolver: Arc<dyn tun_adapter::PublicDnsResolver>,
+) -> Result<Value, NativeError> {
+    if public_network_handle == 0 {
+        return Err(NativeError::Lifecycle(
+            "underlying network handle is invalid".into(),
+        ));
     }
     let mut guard = engine_slot().lock().unwrap();
     let engine = guard
@@ -208,11 +253,12 @@ fn run_node(tun_fd: i32) -> Result<Value, NativeError> {
         ));
     };
     let adapter = tun_adapter::TunAdapter::start(
-        tun_fd,
+        tun_fd.into_raw_fd(),
         started.outbound,
         started.inbound,
         started.transport_mtu,
         started.resolver,
+        public_resolver,
     )?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let task = engine.runtime.spawn(async move {
@@ -381,10 +427,33 @@ pub extern "system" fn Java_com_wingmanbefree_wingman_1app_fips_FipsNative_nativ
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_wingmanbefree_wingman_1app_fips_FipsNative_nativeRunNode(
     mut env: JNIEnv,
-    _: JClass,
+    object: JObject,
     fd: jint,
+    public_network_handle: jlong,
 ) -> jstring {
-    java_string(&mut env, envelope(run_node(fd)))
+    let result = if fd < 0 {
+        Err(NativeError::Lifecycle("TUN descriptor is invalid".into()))
+    } else {
+        // nativeRunNode owns the detached descriptor even when JNI setup or
+        // lifecycle validation fails, so every failure path closes it.
+        let tun_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        env.get_java_vm()
+            .and_then(|vm| {
+                env.get_object_class(object)
+                    .and_then(|class| env.new_global_ref(class))
+                    .map(|class| (vm, class))
+            })
+            .map(|(vm, native_class)| {
+                Arc::new(AndroidPublicDnsResolver {
+                    vm: Arc::new(vm),
+                    native_class,
+                    network_handle: public_network_handle,
+                }) as Arc<dyn tun_adapter::PublicDnsResolver>
+            })
+            .map_err(|error| NativeError::Runtime(error.to_string()))
+            .and_then(|resolver| run_node(tun_fd, public_network_handle, resolver))
+    };
+    java_string(&mut env, envelope(result))
 }
 
 #[unsafe(no_mangle)]
@@ -424,6 +493,16 @@ pub extern "system" fn Java_com_wingmanbefree_wingman_1app_fips_FipsNative_nativ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::UnixDatagram;
+
+    struct UnusedPublicResolver;
+
+    impl tun_adapter::PublicDnsResolver for UnusedPublicResolver {
+        fn resolve(&self, _query: &[u8]) -> std::io::Result<Vec<u8>> {
+            unreachable!("invalid startup must not query DNS")
+        }
+    }
 
     #[test]
     fn pinned_config_has_wingman_scope_and_authenticated_bootstrap() {
@@ -439,5 +518,19 @@ mod tests {
     fn stop_is_repeatable_without_preparation() {
         assert_eq!(stop().unwrap()["state"], "notInstalled");
         assert_eq!(stop().unwrap()["state"], "notInstalled");
+    }
+
+    #[test]
+    fn invalid_public_network_closes_owned_tun_descriptor() {
+        let (tun, _peer) = UnixDatagram::pair().unwrap();
+        let raw_fd = tun.into_raw_fd();
+        let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        let error = run_node(owned_fd, 0, Arc::new(UnusedPublicResolver)).unwrap_err();
+        assert!(error.to_string().contains("underlying network handle"));
+        assert_eq!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF)
+        );
     }
 }

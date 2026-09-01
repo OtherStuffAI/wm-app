@@ -37,6 +37,12 @@ create an empty commit; report exact evidence.
 9. There is no attached Android target. Do not claim device validation. Confirm
    the exact `.fips` WebView instrumentation test is deterministic and documents
    the Chromium ULA/AAAA uncertainty honestly.
+10. Explicitly verify ordinary DNS while the VPN is active. Android's configured
+    `Builder.addDnsServer(10.1.1.1)` may direct non-FIPS system queries to the
+    routed interception address; simply dropping packets whose questions are not
+    all `.fips` would then break normal hostname resolution despite split IP
+    routes. Prove ordinary DNS bypasses the VPN, or add a safe protected upstream
+    fallback/other split-DNS solution and a regression test.
 
 ## Constraints
 
