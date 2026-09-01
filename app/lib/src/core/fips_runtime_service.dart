@@ -13,6 +13,7 @@ enum FipsRuntimeState {
   notInstalled,
   installRequired,
   starting,
+  controlAccessPending,
   running,
   degraded,
   failed,
@@ -30,6 +31,9 @@ class FipsRuntimeStatus {
   final String? nodeNpub;
 
   bool get isRunning => state == FipsRuntimeState.running;
+  bool get canAttemptAppAccess =>
+      state == FipsRuntimeState.running ||
+      state == FipsRuntimeState.controlAccessPending;
 }
 
 class FipsProbeResult {
@@ -153,6 +157,15 @@ end run
         const ['print', 'system/com.fips.daemon'],
       );
       if (launchd.exitCode == 0) {
+        if (_looksLikePermissionDenied(status)) {
+          return const FipsRuntimeStatus(
+            state: FipsRuntimeState.controlAccessPending,
+            detail: 'FIPS is installed and its system daemon is loaded, but '
+                'this macOS login session has not refreshed its FIPS control '
+                'permission yet. You can open a FIPS app without the optional '
+                'probe now; log out and back in to enable diagnostics.',
+          );
+        }
         return FipsRuntimeStatus(
           state: FipsRuntimeState.starting,
           detail:
@@ -290,6 +303,13 @@ end run
     if (stderr.isNotEmpty) return stderr;
     if (stdout.isNotEmpty) return stdout;
     return 'command exited ${result.exitCode}';
+  }
+
+  static bool _looksLikePermissionDenied(ProcessResult result) {
+    final detail = '${result.stderr}\n${result.stdout}'.toLowerCase();
+    return detail.contains('permission denied') ||
+        detail.contains('operation not permitted') ||
+        detail.contains('eacces');
   }
 
   static String? _findString(Map<String, dynamic> value, List<String> keys) {

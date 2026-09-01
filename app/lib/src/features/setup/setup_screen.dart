@@ -309,6 +309,7 @@ class _SetupScreenState extends State<SetupScreen> {
       FipsRuntimeState.notInstalled => 'not installed',
       FipsRuntimeState.installRequired => 'install required',
       FipsRuntimeState.starting => 'starting',
+      FipsRuntimeState.controlAccessPending => 'diagnostics pending',
       FipsRuntimeState.running => 'running',
       FipsRuntimeState.degraded => 'degraded',
       FipsRuntimeState.failed => 'failed',
@@ -358,7 +359,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _openFipsApp() async {
     final input = TextEditingController();
-    var shouldProbe = true;
+    var shouldProbe = _fipsStatus?.isRunning ?? false;
     final submission = await showDialog<({String value, bool probe})>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -412,8 +413,14 @@ class _SetupScreenState extends State<SetupScreen> {
     await _run('Checking FIPS transport…', () async {
       final target = FipsAppTarget.parse(submission.value);
       final status = await widget.fipsRuntime.inspect();
-      if (!status.isRunning) throw StateError(status.detail);
+      if (!status.canAttemptAppAccess) throw StateError(status.detail);
       if (submission.probe) {
+        if (!status.isRunning) {
+          throw StateError(
+            'The optional probe needs refreshed FIPS control permission. '
+            'Open without probing, or log out and back in first.',
+          );
+        }
         final probe = await widget.fipsRuntime.probe(target.nodeNpub);
         if (!probe.ok) throw StateError('FIPS probe failed: ${probe.detail}');
       }

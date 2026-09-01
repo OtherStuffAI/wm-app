@@ -78,6 +78,32 @@ void main() {
     expect(status.state, FipsRuntimeState.starting);
   });
 
+  test('allows a WebView attempt while first-login control access is pending',
+      () async {
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips.pkg',
+      isMacOS: true,
+      fileExists: (_) async => true,
+      processRunner: (executable, arguments) async {
+        if (arguments.contains('--version')) {
+          return ProcessResult(1, 0, '0.5.0', '');
+        }
+        if (executable == '/bin/launchctl') {
+          return ProcessResult(3, 0, 'loaded', '');
+        }
+        return ProcessResult(2, 1, '', 'connect: Permission denied (EACCES)');
+      },
+    );
+
+    final status = await service.inspect();
+
+    expect(status.state, FipsRuntimeState.controlAccessPending);
+    expect(status.canAttemptAppAccess, isTrue);
+    expect(status.isRunning, isFalse);
+    expect(
+        status.detail, contains('open a FIPS app without the optional probe'));
+  });
+
   test('distinguishes missing bundle, missing install, and old install',
       () async {
     Future<FipsRuntimeStatus> inspectWith({

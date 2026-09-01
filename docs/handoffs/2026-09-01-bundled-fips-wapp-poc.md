@@ -73,3 +73,14 @@ Work on `main`. Preserve concurrent changes. When ready, commit all nonignored,
 tested state in this worktree with a Conventional Commit. Do not restart any
 registered Wingman/Autopilot process. Report platform-signing or privilege
 blockers precisely.
+
+## Implementation caveats
+
+- On first install, macOS may not refresh the running login session's new
+  `fips` group membership immediately. WMapp labels this `diagnostics pending`
+  and permits a direct WApp attempt with the optional probe disabled because
+  WebView mesh traffic does not use the control socket. Logging out and back in
+  enables `fipsctl` diagnostics; production should replace this upstream
+  group-membership UX with a signed helper/XPC boundary.
+- Upstream v0.5.0 macOS packages are unsigned and rejected by Gatekeeper.
+  Production distribution requires Wingman signing and notarization.
