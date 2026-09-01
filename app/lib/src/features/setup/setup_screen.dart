@@ -243,6 +243,7 @@ class _SetupScreenState extends State<SetupScreen> {
     final status = _fipsStatus;
     final state = status?.state;
     final canInstall = state == FipsRuntimeState.notInstalled ||
+        state == FipsRuntimeState.consentRequired ||
         state == FipsRuntimeState.installRequired ||
         state == FipsRuntimeState.degraded ||
         state == FipsRuntimeState.failed;
@@ -307,6 +308,7 @@ class _SetupScreenState extends State<SetupScreen> {
       null => 'checking',
       FipsRuntimeState.notBundled => 'not bundled',
       FipsRuntimeState.notInstalled => 'not installed',
+      FipsRuntimeState.consentRequired => 'VPN consent required',
       FipsRuntimeState.installRequired => 'install required',
       FipsRuntimeState.starting => 'starting',
       FipsRuntimeState.controlAccessPending => 'diagnostics pending',

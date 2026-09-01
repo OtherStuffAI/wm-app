@@ -18,7 +18,7 @@ echo "Fetching Flutter dependencies..."
 echo "Building Android debug APK..."
 (
   cd "$APP_DIR"
-  flutter build apk --debug
+  flutter build apk --debug --target-platform android-arm64
 )
 
 echo "APK:"

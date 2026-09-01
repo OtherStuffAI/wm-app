@@ -6,6 +6,7 @@
 build/
 target/
 app/macos/.fips-cache/
+app/android/app/src/main/jniLibs/
 node_modules/
 *.log
 .env.local

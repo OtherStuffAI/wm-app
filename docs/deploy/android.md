@@ -50,6 +50,20 @@ flutter doctor
 
 shows an Android toolchain. If it reports missing command line tools, install them through Android Studio's SDK Manager or the standalone command line tools package.
 
+The embedded FIPS library also requires a stable Rust toolchain, the ARM64
+Android standard library, and `cargo-ndk`:
+
+```bash
+rustup target add aarch64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+```
+
+The supported `build_android_apk.sh` and release build invoke the Gradle native
+task automatically. It builds official FIPS `v0.5.0` from the Git commit pinned
+in `Cargo.lock` and packages only the ARM64 JNI library. Generated `jniLibs`
+and Cargo caches are ignored and may be deleted safely; no identity or secret
+is generated at build time.
+
 ## First Launch
 
 On first launch WMApp asks for:
@@ -64,7 +78,57 @@ The nsec is encrypted into the Android app's local secure storage backed vault.
 - The debug APK is for personal testing, not Play Store distribution.
 - Android application id is currently `com.wingmanbefree.wingman_app`.
 - Browser and signer flows are the main mobile test target right now.
-- Desktop-only process-backed features should report unavailable on Android until the Rust/core paths are made native.
+- FIPS is embedded in WM-App; no separate FIPS app or daemon is installed.
+- The first exact `.fips` app open asks for Android VPN consent. Android may
+  show this again after consent is revoked or the app is reinstalled.
+- A persistent foreground-service notification is posted while the FIPS VPN is
+  active (Android 13+ may require notification permission to show it in the
+  notification drawer). Stopping or repairing FIPS tears down both the Rust
+  node and the app-owned TUN.
+- Android permits one active VPN per user/profile. Starting WM-App's FIPS VPN
+  replaces, or can be blocked by, another VPN. Normal internet remains outside
+  WM-App's split tunnel; only `fd00::/8` and `10.1.1.1/32` are routed into it.
+- WM-App itself is intentionally not excluded from the VPN. Every UDP socket
+  published by FIPS is protected with `VpnService.protect(fd)` before packet
+  loops begin, while WebView mesh traffic continues through the TUN.
+- The FIPS machine key is app-private, mode `0600`, and separate from the
+  WM-App Nostr signer. Clearing app storage replaces it; upgrades preserve it.
+
+## FIPS Device Validation
+
+As of 2026-09-01 the ARM64 APK, host native tests, Kotlin JVM tests, Flutter
+analysis, and the complete Flutter suite pass. No Android device or emulator
+was connected for this implementation pass, so VPN consent, notification,
+bootstrap connectivity, and a real exact `.fips` WebView request remain device
+validation items.
+
+There is one specifically isolated browser risk: Android System WebView is
+Chromium-based and Chromium is known to suppress AAAA resolution on some
+ULA-only VPNs. The native path is complete (split TUN, official DNS proxy,
+checksummed reply, and unchanged exact hostname/origin), but this environment
+cannot truthfully establish whether the installed device WebView accepts the
+AAAA answer. Test on ARM64 hardware by opening the exact Autopilot-provided
+`http://<npub>.fips:<port>/` URL and capture `adb logcat` plus the WebView error,
+if any. Do not replace the hostname with an IPv6 literal: that changes the
+origin and invalidates exact-origin NIP-07/NIP-98 trust. If Chromium suppresses
+the answer, the outstanding work is a browser-resolution strategy (potentially
+NAT46 after a separate safety design), not the FIPS native interface.
+
+After granting VPN consent once, run the device-only regression with the exact
+Autopilot WApp URL:
+
+```bash
+cd app/android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+  ./gradlew connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.fipsUrl='http://<npub>.fips:<port>/'
+```
+
+`ChromiumExactFipsTest` starts the embedded node, awaits the authenticated
+bootstrap, loads the unchanged hostname in Android System WebView, fails on a
+main-frame DNS/network error or timeout, and verifies that the final WebView
+host is still the exact `.fips` hostname. It intentionally does not substitute
+an IPv6 literal.
 
 ## Shareable Release APK
 

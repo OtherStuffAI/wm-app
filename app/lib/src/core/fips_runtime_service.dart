@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 typedef FipsProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -11,6 +13,7 @@ typedef FipsProcessRunner = Future<ProcessResult> Function(
 enum FipsRuntimeState {
   notBundled,
   notInstalled,
+  consentRequired,
   installRequired,
   starting,
   controlAccessPending,
@@ -53,6 +56,54 @@ class FipsCommand {
   final List<String> arguments;
 }
 
+abstract class FipsAndroidRuntimeChannel {
+  Future<Map<String, dynamic>> inspect();
+  Future<Map<String, dynamic>> start({bool repair = false});
+  Future<Map<String, dynamic>> stop();
+  Future<Map<String, dynamic>> peerStatus();
+  Future<Map<String, dynamic>> probe(String npub);
+}
+
+class MethodChannelFipsAndroidRuntime implements FipsAndroidRuntimeChannel {
+  const MethodChannelFipsAndroidRuntime({MethodChannel? channel})
+      : _channel = channel ??
+            const MethodChannel('com.wingmanbefree.wingman_app/fips');
+
+  final MethodChannel _channel;
+
+  @override
+  Future<Map<String, dynamic>> inspect() => _invoke('inspect');
+
+  @override
+  Future<Map<String, dynamic>> start({bool repair = false}) =>
+      _invoke(repair ? 'repair' : 'start');
+
+  @override
+  Future<Map<String, dynamic>> stop() => _invoke('stop');
+
+  @override
+  Future<Map<String, dynamic>> peerStatus() => _invoke('peerStatus');
+
+  @override
+  Future<Map<String, dynamic>> probe(String npub) =>
+      _invoke('probe', {'npub': npub});
+
+  Future<Map<String, dynamic>> _invoke(
+    String method, [
+    Map<String, dynamic>? arguments,
+  ]) async {
+    final value = await _channel.invokeMapMethod<String, dynamic>(
+      method,
+      arguments,
+    );
+    return value ??
+        const {
+          'state': 'failed',
+          'detail': 'Android returned no embedded FIPS status.',
+        };
+  }
+}
+
 class FipsRuntimeService {
   FipsRuntimeService({
     String? bundledPackagePath,
@@ -61,6 +112,8 @@ class FipsRuntimeService {
     FipsProcessRunner? processRunner,
     bool? isMacOS,
     bool? isLinux,
+    bool? isAndroid,
+    FipsAndroidRuntimeChannel? androidRuntime,
     Future<bool> Function(String path)? fileExists,
     Future<String?> Function(String path)? readTextFile,
   })  : bundledPackagePath = bundledPackagePath ??
@@ -71,6 +124,10 @@ class FipsRuntimeService {
         _processRunner = processRunner ?? Process.run,
         _isMacOS = isMacOS ?? (isLinux == true ? false : Platform.isMacOS),
         _isLinux = isLinux ?? (isMacOS == true ? false : Platform.isLinux),
+        _isAndroid = isAndroid ??
+            (isMacOS == true || isLinux == true ? false : Platform.isAndroid),
+        _androidRuntime =
+            androidRuntime ?? const MethodChannelFipsAndroidRuntime(),
         _fileExists = fileExists ?? ((path) => File(path).exists()),
         _readTextFile = readTextFile ?? _readTextFileFromDisk;
 
@@ -88,6 +145,8 @@ class FipsRuntimeService {
   final FipsProcessRunner _processRunner;
   final bool _isMacOS;
   final bool _isLinux;
+  final bool _isAndroid;
+  final FipsAndroidRuntimeChannel _androidRuntime;
   final Future<bool> Function(String path) _fileExists;
   final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
@@ -145,19 +204,25 @@ end run
     return FipsCommand('/usr/bin/pkexec', ['/bin/sh', activationPath]);
   }
 
-  String get authorizationDescription => _isLinux
-      ? 'Linux will request administrator authorization. The pinned FIPS '
-          'systemd bundle installs the mesh daemon, TUN support, and the '
-          '.fips resolver. Existing FIPS configuration and machine identity '
-          'are preserved.'
-      : 'macOS will request administrator authorization. The pinned FIPS '
-          'system package installs a launch daemon, TUN support, and the '
-          '.fips resolver. Existing FIPS configuration and machine identity '
-          'are preserved.';
+  String get authorizationDescription => _isAndroid
+      ? 'Android will request VPN consent once. WM-App keeps normal internet '
+          'routing outside the VPN and routes only FIPS mesh and .fips DNS '
+          'traffic through its embedded runtime.'
+      : _isLinux
+          ? 'Linux will request administrator authorization. The pinned FIPS '
+              'systemd bundle installs the mesh daemon, TUN support, and the '
+              '.fips resolver. Existing FIPS configuration and machine identity '
+              'are preserved.'
+          : 'macOS will request administrator authorization. The pinned FIPS '
+              'system package installs a launch daemon, TUN support, and the '
+              '.fips resolver. Existing FIPS configuration and machine identity '
+              'are preserved.';
 
-  String get authorizationWaitingMessage => _isLinux
-      ? 'Waiting for Linux administrator authorization…'
-      : 'Waiting for macOS authorization…';
+  String get authorizationWaitingMessage => _isAndroid
+      ? 'Waiting for Android VPN consent…'
+      : _isLinux
+          ? 'Waiting for Linux administrator authorization…'
+          : 'Waiting for macOS authorization…';
 
   Future<FipsRuntimeStatus> inspect() async {
     if (_operationInProgress) {
@@ -190,6 +255,7 @@ end run
     if (!status.canAttemptAppAccess) {
       final canActivateBundledRuntime = switch (status.state) {
         FipsRuntimeState.notInstalled ||
+        FipsRuntimeState.consentRequired ||
         FipsRuntimeState.installRequired ||
         FipsRuntimeState.degraded ||
         FipsRuntimeState.failed =>
@@ -208,6 +274,20 @@ end run
   ) async {
     if (readyStatus.state == FipsRuntimeState.controlAccessPending) {
       return readyStatus;
+    }
+
+    if (_isAndroid) {
+      for (var attempt = 0; attempt < 20; attempt += 1) {
+        final peers = await _androidRuntime.peerStatus();
+        if (peers['connected'] == true) return readyStatus;
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      return FipsRuntimeStatus(
+        state: FipsRuntimeState.degraded,
+        detail: 'FIPS is running, but the authenticated bootstrap peer did not '
+            'connect. Check outbound UDP port 2121 and the active Android VPN.',
+        nodeNpub: readyStatus.nodeNpub,
+      );
     }
 
     for (var attempt = 0; attempt < 12; attempt += 1) {
@@ -261,6 +341,18 @@ end run
   }
 
   Future<FipsRuntimeStatus> _inspectRuntime() async {
+    if (_isAndroid) {
+      try {
+        return _androidStatus(await _androidRuntime.inspect());
+      } on PlatformException catch (error) {
+        return FipsRuntimeStatus(
+          state: FipsRuntimeState.failed,
+          detail: redactSecrets(
+            error.message ?? 'Android embedded FIPS inspection failed.',
+          ),
+        );
+      }
+    }
     if (!_isMacOS && !_isLinux) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.notBundled,
@@ -388,6 +480,32 @@ end run
   }
 
   Future<FipsRuntimeStatus> installOrRepair() async {
+    if (_isAndroid) {
+      if (_operationInProgress) {
+        return const FipsRuntimeStatus(
+          state: FipsRuntimeState.starting,
+          detail:
+              'Android VPN consent or embedded FIPS startup is in progress.',
+        );
+      }
+      _operationInProgress = true;
+      try {
+        final current = await _androidRuntime.inspect();
+        final repair = current['state'] == 'degraded' ||
+            current['state'] == 'failed' ||
+            current['state'] == 'running';
+        return _androidStatus(await _androidRuntime.start(repair: repair));
+      } on PlatformException catch (error) {
+        return FipsRuntimeStatus(
+          state: FipsRuntimeState.failed,
+          detail: redactSecrets(
+            error.message ?? 'Android VPN consent or FIPS startup failed.',
+          ),
+        );
+      } finally {
+        _operationInProgress = false;
+      }
+    }
     if ((!_isMacOS && !_isLinux) || !await _fileExists(bundledPackagePath)) {
       return _inspectRuntime();
     }
@@ -438,6 +556,22 @@ end run
     if (!status.isRunning) {
       return FipsProbeResult(ok: false, detail: status.detail);
     }
+    if (_isAndroid) {
+      try {
+        final result = await _androidRuntime.probe(npub);
+        return FipsProbeResult(
+          ok: result['ok'] == true,
+          detail: redactSecrets(
+            result['detail']?.toString() ?? 'Android FIPS probe failed.',
+          ),
+        );
+      } on PlatformException catch (error) {
+        return FipsProbeResult(
+          ok: false,
+          detail: redactSecrets(error.message ?? 'Android FIPS probe failed.'),
+        );
+      }
+    }
     final result = await _run(
       fipsctlPath,
       ['probe', npub, '--json', '--timeout', '15'],
@@ -445,6 +579,39 @@ end run
     return FipsProbeResult(
       ok: result.exitCode == 0,
       detail: _resultDetail(result),
+    );
+  }
+
+  Future<FipsRuntimeStatus> stop() async {
+    if (!_isAndroid) return inspect();
+    try {
+      return _androidStatus(await _androidRuntime.stop());
+    } on PlatformException catch (error) {
+      return FipsRuntimeStatus(
+        state: FipsRuntimeState.failed,
+        detail: redactSecrets(error.message ?? 'Android FIPS stop failed.'),
+      );
+    }
+  }
+
+  static FipsRuntimeStatus _androidStatus(Map<String, dynamic> value) {
+    final state = switch (value['state']?.toString()) {
+      'notBundled' => FipsRuntimeState.notBundled,
+      'notInstalled' => FipsRuntimeState.notInstalled,
+      'consentRequired' => FipsRuntimeState.consentRequired,
+      'installRequired' => FipsRuntimeState.installRequired,
+      'starting' => FipsRuntimeState.starting,
+      'running' => FipsRuntimeState.running,
+      'degraded' => FipsRuntimeState.degraded,
+      _ => FipsRuntimeState.failed,
+    };
+    return FipsRuntimeStatus(
+      state: state,
+      detail: redactSecrets(
+        value['detail']?.toString() ??
+            'Android embedded FIPS state is unknown.',
+      ),
+      nodeNpub: value['nodeNpub']?.toString(),
     );
   }
 
