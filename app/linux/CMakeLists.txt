@@ -57,6 +57,39 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# Bundle the pinned upstream FIPS systemd distribution for the current Linux
+# architecture. WM-App activates it through the desktop's normal pkexec flow;
+# users never need to download or preinstall FIPS separately.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+  set(FIPS_LINUX_ARCH "x86_64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+  set(FIPS_LINUX_ARCH "aarch64")
+else()
+  message(FATAL_ERROR "Unsupported FIPS Linux architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+set(FIPS_RESOURCE_DIR "${CMAKE_BINARY_DIR}/fips-runtime")
+set(FIPS_PREPARE_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/prepare_fips_linux.sh")
+set(FIPS_CONFIGURE_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/configure_fips_wingman_linux.sh")
+set(FIPS_INSTALL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/install_fips_wingman_linux.sh")
+add_custom_command(
+  OUTPUT
+    "${FIPS_RESOURCE_DIR}/fips"
+    "${FIPS_RESOURCE_DIR}/configure_fips_wingman_linux.sh"
+    "${FIPS_RESOURCE_DIR}/install_fips_wingman_linux.sh"
+  COMMAND /bin/bash "${FIPS_PREPARE_SCRIPT}" --arch "${FIPS_LINUX_ARCH}" "${FIPS_RESOURCE_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy "${FIPS_CONFIGURE_SCRIPT}" "${FIPS_RESOURCE_DIR}/configure_fips_wingman_linux.sh"
+  COMMAND ${CMAKE_COMMAND} -E copy "${FIPS_INSTALL_SCRIPT}" "${FIPS_RESOURCE_DIR}/install_fips_wingman_linux.sh"
+  DEPENDS "${FIPS_PREPARE_SCRIPT}" "${FIPS_CONFIGURE_SCRIPT}" "${FIPS_INSTALL_SCRIPT}"
+  VERBATIM
+)
+add_custom_target(fips_linux_bundle ALL
+  DEPENDS
+    "${FIPS_RESOURCE_DIR}/fips"
+    "${FIPS_RESOURCE_DIR}/configure_fips_wingman_linux.sh"
+    "${FIPS_RESOURCE_DIR}/install_fips_wingman_linux.sh"
+)
+add_dependencies(${BINARY_NAME} fips_linux_bundle)
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
@@ -120,6 +153,11 @@ install(CODE "
   " COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+
+install(DIRECTORY "${FIPS_RESOURCE_DIR}/"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/fips"
+  USE_SOURCE_PERMISSIONS
+  COMPONENT Runtime)
 
 # Install the AOT library on non-Debug builds only.
 if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")

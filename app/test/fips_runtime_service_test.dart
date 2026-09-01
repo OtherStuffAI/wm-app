@@ -36,6 +36,104 @@ void main() {
     );
   });
 
+  test('constructs Linux pkexec activation without shell interpolation', () {
+    const installPath = '/opt/Wingman App/data/fips/install.sh';
+    final command = FipsRuntimeService.linuxInstallCommand(installPath);
+
+    expect(command.executable, '/usr/bin/pkexec');
+    expect(command.arguments, [
+      '/bin/sh',
+      '/opt/Wingman App/data/fips/install_fips_wingman_linux.sh',
+    ]);
+  });
+
+  test('locates the bundled Linux systemd runtime beside the executable', () {
+    expect(
+      FipsRuntimeService.defaultBundledPackagePath(
+        isMacOS: false,
+        isLinux: true,
+      ),
+      endsWith('/data/fips/install.sh'),
+    );
+    expect(
+      FipsRuntimeService.defaultAttestationPath(
+        isMacOS: false,
+        isLinux: true,
+      ),
+      '/etc/fips/wingman-poc-runtime.json',
+    );
+  });
+
+  test('uses Linux service and attestation paths', () async {
+    final calls = <(String, List<String>)>[];
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips/install.sh',
+      isMacOS: false,
+      isLinux: true,
+      fileExists: (_) async => true,
+      readTextFile: (path) async {
+        expect(path, '/etc/fips/wingman-poc-runtime.json');
+        return compatibleAttestation;
+      },
+      processRunner: (executable, arguments) async {
+        calls.add((executable, arguments));
+        if (arguments.contains('--version')) {
+          return ProcessResult(1, 0, '0.5.0', '');
+        }
+        if (executable == '/usr/bin/systemctl') {
+          return ProcessResult(2, 0, 'active', '');
+        }
+        return ProcessResult(3, 1, '', 'control socket unavailable');
+      },
+    );
+
+    final status = await service.inspect();
+
+    expect(status.state, FipsRuntimeState.starting);
+    expect(calls.last.$1, '/usr/bin/systemctl');
+    expect(calls.last.$2, ['is-active', 'fips.service']);
+  });
+
+  test('installs bundled Linux FIPS through pkexec', () async {
+    final calls = <(String, List<String>)>[];
+    var installed = false;
+    final service = FipsRuntimeService(
+      bundledPackagePath: '/bundle/fips/install.sh',
+      isMacOS: false,
+      isLinux: true,
+      fileExists: (path) async =>
+          path.startsWith('/bundle/fips/') ||
+          (path == '/usr/local/bin/fipsctl' && installed),
+      readTextFile: (_) async => installed ? compatibleAttestation : null,
+      processRunner: (executable, arguments) async {
+        calls.add((executable, arguments));
+        if (executable == '/usr/bin/pkexec') {
+          installed = true;
+          return ProcessResult(1, 0, 'installed', '');
+        }
+        if (arguments.contains('--version')) {
+          return ProcessResult(2, 0, '0.5.0', '');
+        }
+        return ProcessResult(
+          3,
+          0,
+          '{"state":"Running","tun_state":"active",'
+              '"persistent":true,"npub":"$npub"}',
+          '',
+        );
+      },
+    );
+
+    final status = await service.installOrRepair();
+
+    expect(status.state, FipsRuntimeState.running);
+    expect(calls.first.$1, '/usr/bin/pkexec');
+    expect(calls.first.$2, [
+      '/bin/sh',
+      '/bundle/fips/install_fips_wingman_linux.sh',
+    ]);
+  });
+
   test('parses a running daemon status without exposing its key', () async {
     final calls = <(String, List<String>)>[];
     final service = FipsRuntimeService(

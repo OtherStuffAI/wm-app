@@ -329,9 +329,7 @@ class _SetupScreenState extends State<SetupScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Install bundled FIPS?'),
-            content: const Text(
-              'macOS will request administrator authorization. The pinned FIPS system package installs a launch daemon, TUN support, and the .fips resolver. Existing FIPS configuration and machine identity are preserved.',
-            ),
+            content: Text(widget.fipsRuntime.authorizationDescription),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -346,7 +344,7 @@ class _SetupScreenState extends State<SetupScreen> {
         ) ??
         false;
     if (!confirmed) return;
-    await _run('Waiting for macOS authorization…', () async {
+    await _run(widget.fipsRuntime.authorizationWaitingMessage, () async {
       final status = await widget.fipsRuntime.installOrRepair();
       if (mounted) {
         setState(() {

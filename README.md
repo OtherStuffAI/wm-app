@@ -169,6 +169,7 @@ Root helper scripts are available for the most common local builds:
 
 ```bash
 ./build_runapp.sh          # macOS debug build, then launch
+./build_linux.sh           # Linux release bundle with bundled FIPS
 ./build_android_apk.sh     # Android debug APK
 ./build_ios_debug.sh       # iOS device debug build without codesigning
 ./build_ios_debug.sh simulator
@@ -191,6 +192,16 @@ Mobile status:
 
 - Browser shell, home bookmarks, WebView browsing, policy prompts, encrypted local signer onboarding, NIP-07 `signEvent`, and NIP-98 signing are mobile-ready.
 - Drive sync, device registration, channel validation, local file mounting, and NIP-44 encryption/decryption still use the desktop `wmapp-core` process path and need a mobile-native bridge in a later package.
+
+Desktop FIPS status:
+
+- macOS bundles the pinned upstream package and activates it through the normal
+  administrator authorization dialog.
+- Linux bundles the pinned upstream systemd release for x86_64 or aarch64. On
+  first `.fips` navigation WM-App uses `pkexec` to install/repair it, enable the
+  daemon and split-DNS service, preserve any existing identity, and connect the
+  authenticated no-DNS bootstrap. This path supports Ubuntu and
+  Arch/systemd-based Omarchy without a separate FIPS download.
 
 See:
 

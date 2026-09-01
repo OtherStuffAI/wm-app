@@ -56,20 +56,28 @@ class FipsCommand {
 class FipsRuntimeService {
   FipsRuntimeService({
     String? bundledPackagePath,
-    this.fipsctlPath = '/usr/local/bin/fipsctl',
-    this.attestationPath = '/usr/local/etc/fips/wingman-poc-runtime.json',
+    String? fipsctlPath,
+    String? attestationPath,
     FipsProcessRunner? processRunner,
     bool? isMacOS,
+    bool? isLinux,
     Future<bool> Function(String path)? fileExists,
     Future<String?> Function(String path)? readTextFile,
-  })  : bundledPackagePath = bundledPackagePath ?? defaultBundledPackagePath(),
+  })  : bundledPackagePath = bundledPackagePath ??
+            defaultBundledPackagePath(isMacOS: isMacOS, isLinux: isLinux),
+        fipsctlPath = fipsctlPath ?? '/usr/local/bin/fipsctl',
+        attestationPath = attestationPath ??
+            defaultAttestationPath(isMacOS: isMacOS, isLinux: isLinux),
         _processRunner = processRunner ?? Process.run,
-        _isMacOS = isMacOS ?? Platform.isMacOS,
+        _isMacOS = isMacOS ?? (isLinux == true ? false : Platform.isMacOS),
+        _isLinux = isLinux ?? (isMacOS == true ? false : Platform.isLinux),
         _fileExists = fileExists ?? ((path) => File(path).exists()),
         _readTextFile = readTextFile ?? _readTextFileFromDisk;
 
   static const expectedVersion = '0.5.0';
   static const configurationScriptName = 'configure-fips-wingman-poc.sh';
+  static const linuxConfigurationScriptName = 'configure_fips_wingman_linux.sh';
+  static const linuxInstallScriptName = 'install_fips_wingman_linux.sh';
   static const bootstrapPeerNpub =
       'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
   static const bootstrapPeerAddress = '217.77.8.91:2121';
@@ -79,12 +87,18 @@ class FipsRuntimeService {
   final String attestationPath;
   final FipsProcessRunner _processRunner;
   final bool _isMacOS;
+  final bool _isLinux;
   final Future<bool> Function(String path) _fileExists;
   final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
   Future<FipsRuntimeStatus>? _ensureReadyOperation;
 
-  static String defaultBundledPackagePath() {
+  static String defaultBundledPackagePath({bool? isMacOS, bool? isLinux}) {
+    final resolvedIsLinux =
+        isLinux ?? (isMacOS == true ? false : Platform.isLinux);
+    if (resolvedIsLinux) {
+      return '${File(Platform.resolvedExecutable).parent.path}/data/fips/install.sh';
+    }
     final executable = File(Platform.resolvedExecutable);
     final contents = executable.parent.parent;
     final packageName = switch (Abi.current()) {
@@ -93,6 +107,14 @@ class FipsRuntimeService {
       _ => 'fips-0.5.0-macos-unsupported.pkg',
     };
     return '${contents.path}/Resources/FIPS/$packageName';
+  }
+
+  static String defaultAttestationPath({bool? isMacOS, bool? isLinux}) {
+    final resolvedIsLinux =
+        isLinux ?? (isMacOS == true ? false : Platform.isLinux);
+    return resolvedIsLinux
+        ? '/etc/fips/wingman-poc-runtime.json'
+        : '/usr/local/etc/fips/wingman-poc-runtime.json';
   }
 
   static FipsCommand installCommand(String packagePath) {
@@ -113,6 +135,29 @@ end run
       ['-e', script, packagePath, configurationScriptPath],
     );
   }
+
+  static FipsCommand linuxInstallCommand(String upstreamInstallPath) {
+    final activationPath = File(upstreamInstallPath)
+        .parent
+        .uri
+        .resolve(linuxInstallScriptName)
+        .toFilePath();
+    return FipsCommand('/usr/bin/pkexec', ['/bin/sh', activationPath]);
+  }
+
+  String get authorizationDescription => _isLinux
+      ? 'Linux will request administrator authorization. The pinned FIPS '
+          'systemd bundle installs the mesh daemon, TUN support, and the '
+          '.fips resolver. Existing FIPS configuration and machine identity '
+          'are preserved.'
+      : 'macOS will request administrator authorization. The pinned FIPS '
+          'system package installs a launch daemon, TUN support, and the '
+          '.fips resolver. Existing FIPS configuration and machine identity '
+          'are preserved.';
+
+  String get authorizationWaitingMessage => _isLinux
+      ? 'Waiting for Linux administrator authorization…'
+      : 'Waiting for macOS authorization…';
 
   Future<FipsRuntimeStatus> inspect() async {
     if (_operationInProgress) {
@@ -216,10 +261,10 @@ end run
   }
 
   Future<FipsRuntimeStatus> _inspectRuntime() async {
-    if (!_isMacOS) {
+    if (!_isMacOS && !_isLinux) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.notBundled,
-        detail: 'Bundled FIPS is currently supported only by macOS WMapp.',
+        detail: 'Bundled desktop FIPS is supported on macOS and Linux WMapp.',
       );
     }
     if (!await _fileExists(bundledPackagePath)) {
@@ -262,16 +307,19 @@ end run
 
     final status = await _run(fipsctlPath, const ['show', 'status']);
     if (status.exitCode != 0) {
-      final launchd = await _run(
-        '/bin/launchctl',
-        const ['print', 'system/com.fips.daemon'],
-      );
-      if (launchd.exitCode == 0) {
+      final service = _isLinux
+          ? await _run(
+              '/usr/bin/systemctl', const ['is-active', 'fips.service'])
+          : await _run(
+              '/bin/launchctl',
+              const ['print', 'system/com.fips.daemon'],
+            );
+      if (service.exitCode == 0) {
         if (_looksLikePermissionDenied(status)) {
-          return const FipsRuntimeStatus(
+          return FipsRuntimeStatus(
             state: FipsRuntimeState.controlAccessPending,
-            detail: 'FIPS is installed and its system daemon is loaded, but '
-                'this macOS login session has not refreshed its FIPS control '
+            detail: 'FIPS is installed and its system service is loaded, but '
+                'this ${_isLinux ? 'Linux' : 'macOS'} login session has not refreshed its FIPS control '
                 'permission yet. You can open a FIPS app without the optional '
                 'probe now; log out and back in to enable diagnostics.',
           );
@@ -340,23 +388,24 @@ end run
   }
 
   Future<FipsRuntimeStatus> installOrRepair() async {
-    if (!_isMacOS || !await _fileExists(bundledPackagePath)) {
+    if ((!_isMacOS && !_isLinux) || !await _fileExists(bundledPackagePath)) {
       return _inspectRuntime();
     }
-    final configurationScriptPath = File(bundledPackagePath)
-        .parent
-        .uri
-        .resolve(configurationScriptName)
-        .toFilePath();
-    if (!await _fileExists(configurationScriptPath)) {
+    final helperName =
+        _isLinux ? linuxInstallScriptName : configurationScriptName;
+    final helperPath =
+        File(bundledPackagePath).parent.uri.resolve(helperName).toFilePath();
+    if (!await _fileExists(helperPath)) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.notBundled,
-        detail: 'The bundled FIPS configuration helper is missing.',
+        detail: 'The bundled FIPS activation helper is missing.',
       );
     }
     _operationInProgress = true;
     try {
-      final command = installCommand(bundledPackagePath);
+      final command = _isLinux
+          ? linuxInstallCommand(bundledPackagePath)
+          : installCommand(bundledPackagePath);
       final result = await _run(command.executable, command.arguments);
       if (result.exitCode != 0) {
         return FipsRuntimeStatus(

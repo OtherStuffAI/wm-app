@@ -17,7 +17,8 @@ login flow. Tower is excluded from this PoC.
 
 ## Scope and constraints
 
-- First supported client: macOS WMapp.
+- Supported desktop clients: macOS and Linux WMapp. Linux packages the
+  upstream systemd tarball for Ubuntu and Arch/systemd-based Omarchy.
 - Use the upstream FIPS v0.5.0 macOS daemon/package design. FIPS requires a
   system launch daemon, TUN setup, and `/etc/resolver/fips`; simply spawning an
   unprivileged child from the Flutter process is not a correct implementation.
@@ -29,8 +30,8 @@ login flow. Tower is excluded from this PoC.
 - Never copy a FIPS private key into Flutter config, logs, argv, or the WMapp
   Nostr signer vault. FIPS machine identity and WMapp user/device identity are
   separate.
-- Do not claim iOS or Android support in this PoC. FIPS v0.5.0 has no iOS port;
-  Android embedding can be a later phase.
+- Do not claim iOS or Android support in this desktop PoC. FIPS v0.5.0 has no
+  iOS port; Android embedding can be a later phase.
 
 ## Required implementation
 
