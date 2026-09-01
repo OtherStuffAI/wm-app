@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260828-0230-1-1853">
+  <meta name="flightdeck-build-id" content="20260901-0140-2-1867">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -13,7 +13,73 @@
     (() => {
       const guardKey = 'flightdeck:asset-recovery-attempted';
       const recoveryParam = 'flightdeck-asset-recovery';
+      const failurePanelId = 'flightdeck-asset-recovery-failed';
+      const isRecoveryDocument = new URL(location.href).searchParams.has(recoveryParam);
       let assetFailureSeen = false;
+      const recoveryAttempted = () => {
+        try {
+          return sessionStorage.getItem(guardKey) === '1';
+        } catch {
+          return true;
+        }
+      };
+      const markRecoveryAttempted = () => {
+        try {
+          sessionStorage.setItem(guardKey, '1');
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const clearRecoveryAttempt = () => {
+        try { sessionStorage.removeItem(guardKey); } catch {}
+      };
+      const showRecoveryFailure = () => {
+        const render = () => {
+          if (!document.body || document.getElementById(failurePanelId)) return;
+          document.body.removeAttribute('x-cloak');
+          const panel = document.createElement('main');
+          panel.id = failurePanelId;
+          panel.setAttribute('role', 'alert');
+          Object.assign(panel.style, {
+            position: 'fixed',
+            inset: '0',
+            zIndex: '2147483647',
+            display: 'grid',
+            placeContent: 'center',
+            gap: '16px',
+            padding: '32px',
+            color: '#f5f7fb',
+            background: '#111827',
+            fontFamily: 'system-ui, sans-serif',
+            textAlign: 'center',
+          });
+          const title = document.createElement('h1');
+          title.textContent = 'Flight Deck could not finish loading';
+          const message = document.createElement('p');
+          message.textContent = 'A required application file is still unavailable. Your local workspace data has not been cleared.';
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.textContent = 'Retry loading';
+          Object.assign(retry.style, {
+            justifySelf: 'center',
+            padding: '12px 18px',
+            border: '0',
+            borderRadius: '8px',
+            font: 'inherit',
+            fontWeight: '700',
+            cursor: 'pointer',
+          });
+          retry.addEventListener('click', () => {
+            clearRecoveryAttempt();
+            location.reload();
+          });
+          panel.append(title, message, retry);
+          document.body.append(panel);
+        };
+        if (document.body) render();
+        else window.addEventListener('DOMContentLoaded', render, { once: true });
+      };
       const isAssetFailure = (event) => {
         const target = event?.target;
         if (target?.tagName === 'LINK') return target.rel === 'stylesheet' && /\/assets\//.test(target.href || '');
@@ -24,8 +90,10 @@
       const recoverOnce = (event) => {
         if (!isAssetFailure(event)) return;
         assetFailureSeen = true;
-        if (sessionStorage.getItem(guardKey)) return;
-        sessionStorage.setItem(guardKey, '1');
+        if (recoveryAttempted() || !markRecoveryAttempted()) {
+          showRecoveryFailure();
+          return;
+        }
         const recoveryUrl = new URL(location.href);
         recoveryUrl.searchParams.set(recoveryParam, Date.now().toString(36));
         location.replace(recoveryUrl.href);
@@ -33,12 +101,11 @@
       window.addEventListener('error', recoverOnce, true);
       window.addEventListener('unhandledrejection', recoverOnce);
       window.addEventListener('load', () => {
-        if (assetFailureSeen) return;
-        sessionStorage.removeItem(guardKey);
-        const cleanUrl = new URL(location.href);
-        if (!cleanUrl.searchParams.has(recoveryParam)) return;
-        cleanUrl.searchParams.delete(recoveryParam);
-        history.replaceState(history.state, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        if (!isRecoveryDocument && !assetFailureSeen) clearRecoveryAttempt();
+        if (!isRecoveryDocument) return;
+        const recoveryUrl = new URL(location.href);
+        recoveryUrl.searchParams.delete(recoveryParam);
+        history.replaceState(history.state, '', `${recoveryUrl.pathname}${recoveryUrl.search}${recoveryUrl.hash}`);
       }, { once: true });
     })();
   </script>
@@ -46,8 +113,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-SNhqQfG5.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DZvog6Wn.css">
+  <script type="module" crossorigin src="/assets/index-DQl8t1dO.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DaVAVcKw.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <div
@@ -2464,6 +2531,19 @@
               x-model="$store.chat.taskFilter"
               placeholder="Search tasks..."
             />
+            <select
+              class="task-state-filter"
+              x-model="$store.chat.taskFilterState"
+              aria-label="Filter tasks by status"
+            >
+              <option value="">All statuses</option>
+              <option value="new">New</option>
+              <option value="ready">Ready</option>
+              <option value="in_progress">In Progress</option>
+              <option value="blocked">Blocked</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
+            </select>
             <button
               type="button"
               class="filter-to-me-btn"
@@ -2510,7 +2590,7 @@
                       title="Show all tags"
                     >...</button>
                   </template>
-                  <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterAssignee">
+                  <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterState || $store.chat.taskFilterAssignee">
                     <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
                   </template>
                 </div>
@@ -2629,6 +2709,7 @@
               <button type="button" class="task-bulk-btn" @click="$store.chat.clearSelectedTasks()" :disabled="$store.chat.bulkTaskBusy">Clear</button>
               <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('archive')" :disabled="$store.chat.bulkTaskBusy" x-text="$store.chat.bulkTaskBusy ? 'Working...' : 'Archive'"></button>
               <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('done')" :disabled="$store.chat.bulkTaskBusy">Done</button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('blocked')" :disabled="$store.chat.bulkTaskBusy">Blocked</button>
               <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('ready')" :disabled="!$store.chat.canBulkAssignToDefaultAgent" :title="$store.chat.defaultAgentNpub ? '' : 'Set a default agent in Setup first'">Ready</button>
               <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('today')" :disabled="$store.chat.bulkTaskBusy">Today</button>
             </div>
@@ -2968,6 +3049,8 @@
                       </template>
                     </div>
                     <div class="task-quick-date-links" x-show="!$store.chat.isTaskDetailEditing()">
+                      <button type="button" class="task-quick-date-link" :disabled="$store.chat.taskDetailSaving" @click="$store.chat.applyTaskDetailQuickAction('blocked')">Blocked</button>
+                      <span class="task-quick-date-sep">|</span>
                       <button type="button" class="task-quick-date-link" :disabled="$store.chat.taskDetailSaving" @click="$store.chat.applyTaskDetailQuickAction('done')">Done</button>
                       <span class="task-quick-date-sep">|</span>
                       <button type="button" class="task-quick-date-link" :disabled="$store.chat.taskDetailSaving" @click="$store.chat.applyTaskDetailQuickAction('archive')">Archive</button>
@@ -2997,11 +3080,14 @@
                         <option value="ready">Ready</option>
 
                         <option value="in_progress">In Progress</option>
+                        <option value="blocked">Blocked</option>
                         <option value="review">Review</option>
                         <option value="done">Done</option>
                         <option value="archive">Archive</option>
                       </select>
                       <span class="task-quick-date-links">
+                        <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('blocked')">Blocked</button>
+                        <span class="task-quick-date-sep">|</span>
                         <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('done')">Done</button>
                         <span class="task-quick-date-sep">|</span>
                         <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('archive')">Archive</button>
@@ -3302,7 +3388,7 @@
                         data-placeholder="Add a description..."
                         x-init="$store.chat.initMentionComposer($el, 'task-description')"
                         x-effect="$store.chat.syncMentionComposerFromModel($el, 'task-description', $store.chat.editingTask?.description || '')"
-                        @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                        @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                         @keydown="$store.chat.handleMentionKeydown($event)"
                         @paste="$store.chat.handleMentionComposerPaste($event, 'task-description')"
                       ></div>
@@ -3400,7 +3486,7 @@
                       data-placeholder="Add a comment..."
                       x-init="$store.chat.initMentionComposer($el, 'task-comment')"
                       x-effect="$store.chat.syncMentionComposerFromModel($el, 'task-comment', $store.chat.newTaskCommentBody)"
-                      @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                      @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                       @keydown="$store.chat.handleComposerKeydown($event, () => { if ($store.chat.editingTask?.record_id) $store.chat.addTaskComment($store.chat.editingTask.record_id); })"
                       @paste="$store.chat.handleMentionComposerPaste($event, 'task-comment')"
                     ></div>
@@ -3937,7 +4023,7 @@
                   aria-multiline="true"
                   :data-placeholder="$store.chat.canComposeInChatDestination ? 'Message channel' : 'Select a channel to write a message'"
                   x-init="$store.chat.initMentionComposer($el, 'message'); $watch('$store.chat.messageInput', value => $store.chat.syncMentionComposerFromModel($el, 'message', value))"
-                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                   @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.sendMessage())"
                   @paste="$store.chat.handleMentionComposerPaste($event, 'message')"
                   @dragover.prevent
@@ -4331,7 +4417,7 @@
                   aria-multiline="true"
                   :data-placeholder="$store.chat.deckThreadComposerOpen ? 'Start a new thread…' : 'Reply to thread...'"
                   x-init="$store.chat.initMentionComposer($el, 'thread'); $watch('$store.chat.threadInput', value => $store.chat.syncMentionComposerFromModel($el, 'thread', value))"
-                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget); if ($store.chat.deckThreadComposerOpen) $store.chat.updateDeckThreadCreateBody()"
+                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event); if ($store.chat.deckThreadComposerOpen) $store.chat.updateDeckThreadCreateBody()"
                   @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.deckThreadComposerOpen ? $store.chat.sendDeckThread() : $store.chat.sendThreadReply())"
                   @paste="$store.chat.handleMentionComposerPaste($event, 'thread')"
                   @dragover.prevent
@@ -5062,7 +5148,7 @@
                                     x-model="$store.chat.docBlockBuffer"
                                     :style="$store.chat.getDocBlockEditorStyle()"
                                     x-init="$nextTick(() => $store.chat.resizeDocBlockEditor($el))"
-                                    @input="$store.chat.updateDocBlockBuffer($event.target.value, $event.target); $store.chat.handleMentionInput($event.target)"
+                                    @input="$store.chat.updateDocBlockBuffer($event.target.value, $event.target); $store.chat.handleMentionInput($event.target, $event)"
                                     @keydown="$store.chat.handleMentionKeydown($event)"
                                     @paste="$store.chat.handleDocBlockPaste($event)"
                                     @blur="if (!$store.chat.mentionActive) $store.chat.commitDocBlockEdit()"
@@ -5107,7 +5193,7 @@
                         </div>
                       </template>
                       <template x-if="$store.chat.docEditorMode === 'source'">
-                        <textarea class="doc-source-editor" placeholder="Start writing..." x-model="$store.chat.docEditorContent" @input="$store.chat.handleDocSourceInput($event.target.value); $store.chat.handleMentionInput($event.target)" @keydown="$store.chat.handleMentionKeydown($event)" @paste="$store.chat.handleDocSourcePaste($event)"></textarea>
+                        <textarea class="doc-source-editor" placeholder="Start writing..." x-model="$store.chat.docEditorContent" @input="$store.chat.handleDocSourceInput($event.target.value); $store.chat.handleMentionInput($event.target, $event)" @keydown="$store.chat.handleMentionKeydown($event)" @paste="$store.chat.handleDocSourcePaste($event)"></textarea>
                       </template>
                     </div>
 
@@ -5159,7 +5245,7 @@
                             data-placeholder="Write a new comment..."
                             x-init="$store.chat.initMentionComposer($el, 'doc-comment')"
                             x-effect="$store.chat.syncMentionComposerFromModel($el, 'doc-comment', $store.chat.newDocCommentBody)"
-                            @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                            @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                             @keydown="$store.chat.handleMentionKeydown($event)"
                             @paste="$store.chat.handleMentionComposerPaste($event, 'doc-comment')"
                             @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocComment()"
@@ -5350,7 +5436,7 @@
                                   data-placeholder="Reply in thread..."
                                   x-init="$store.chat.initMentionComposer($el, 'doc-reply')"
                                   x-effect="$store.chat.syncMentionComposerFromModel($el, 'doc-reply', $store.chat.newDocCommentReplyBody)"
-                                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                                  @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                                   @keydown="$store.chat.handleMentionKeydown($event)"
                                   @paste="$store.chat.handleMentionComposerPaste($event, 'doc-reply')"
                                   @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
@@ -5689,7 +5775,7 @@
                 data-placeholder="Write a comment..."
                 x-init="$store.chat.initMentionComposer($el, 'doc-comment')"
                 x-effect="$store.chat.syncMentionComposerFromModel($el, 'doc-comment', $store.chat.newDocCommentBody)"
-                @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)"
+                @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)"
                 @keydown="$store.chat.handleMentionKeydown($event)"
                 @paste="$store.chat.handleMentionComposerPaste($event, 'doc-comment')"
                 @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocComment()"
@@ -5851,7 +5937,7 @@
                     </template>
                   </div>
                   <div class="workroom-thread-composer thread-input-bar" x-show="$store.chat.selectedWorkroomAnnouncementMessageId">
-                    <div class="chat-input" data-chat-composer="thread" data-workroom-composer="true" contenteditable="true" role="textbox" aria-label="Reply to workroom thread" aria-multiline="true" data-placeholder="Reply to thread..." x-init="$store.chat.initMentionComposer($el, 'thread'); $watch('$store.chat.threadInput', value => $store.chat.syncMentionComposerFromModel($el, 'thread', value))" @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget)" @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.sendSelectedWorkroomThreadReply())" @paste="$store.chat.handleMentionComposerPaste($event, 'thread')" @dragover.prevent @drop.prevent="$store.chat.handleChatFileDrop($event, 'thread')"></div>
+                    <div class="chat-input" data-chat-composer="thread" data-workroom-composer="true" contenteditable="true" role="textbox" aria-label="Reply to workroom thread" aria-multiline="true" data-placeholder="Reply to thread..." x-init="$store.chat.initMentionComposer($el, 'thread'); $watch('$store.chat.threadInput', value => $store.chat.syncMentionComposerFromModel($el, 'thread', value))" @input="$store.chat.syncMentionComposerModel($event.currentTarget); $store.chat.handleMentionInput($event.currentTarget, $event)" @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.sendSelectedWorkroomThreadReply())" @paste="$store.chat.handleMentionComposerPaste($event, 'thread')" @dragover.prevent @drop.prevent="$store.chat.handleChatFileDrop($event, 'thread')"></div>
                     <div class="thread-input-actions"><div class="chat-composer-menu" x-data="{ open: false }" @click.outside="open = false"><button class="chat-composer-menu-trigger" type="button" @click="open = !open" :aria-expanded="open" aria-haspopup="menu">Menu</button><div class="chat-composer-menu-popover" x-show="open" x-cloak x-transition role="menu"><button type="button" role="menuitem" @click="$store.chat.openAudioRecorder('thread'); open = false">Record Audio</button><button type="button" role="menuitem" x-show="$store.chat.workroomsEnabled" @click="$store.chat.openWorkroomCreation(); open = false" :disabled="!$store.chat.isTowerPgMode || !$store.chat.selectedChannelId">Start Workroom</button></div></div><button type="button" class="thread-reply-btn" @click="$store.chat.sendSelectedWorkroomThreadReply()" :disabled="((!$store.chat.threadInput.trim() && $store.chat.threadAudioDrafts.length === 0) || $store.chat.threadImageUploadCount > 0)">Reply</button></div>
                   </div>
                   <div class="audio-draft-list" x-show="$store.chat.threadAudioDrafts.length > 0"><template x-for="draft in $store.chat.threadAudioDrafts" :key="draft.draft_id"><div class="audio-card audio-card-draft"><div class="audio-card-main"><div class="audio-card-title" x-text="draft.title || 'Voice note'"></div><div class="audio-card-meta"><span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span><span>Ready to reply</span></div></div><button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('thread', draft.draft_id)">&times;</button></div></template></div>
