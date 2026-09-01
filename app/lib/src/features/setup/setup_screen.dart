@@ -1,21 +1,28 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
+import '../../core/fips_app_target.dart';
+import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
+import '../browser/signer_policy.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     required this.config,
     required this.bridge,
+    required this.fipsRuntime,
     required this.onConfigChanged,
     required this.onClearBrowserData,
+    required this.onOpenFipsApp,
     super.key,
   });
 
   final AppConfig config;
   final NativeCoreBridge bridge;
+  final FipsRuntimeService fipsRuntime;
   final ValueChanged<AppConfig> onConfigChanged;
   final Future<void> Function() onClearBrowserData;
+  final ValueChanged<String> onOpenFipsApp;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -36,6 +43,7 @@ class _SetupScreenState extends State<SetupScreen> {
   late bool _displayExperimentalFlightDeckDriveSync;
   String? _message;
   bool _busy = false;
+  FipsRuntimeStatus? _fipsStatus;
 
   @override
   void initState() {
@@ -61,6 +69,7 @@ class _SetupScreenState extends State<SetupScreen> {
     _rememberNip98Approvals = widget.config.rememberNip98Approvals;
     _displayExperimentalFlightDeckDriveSync =
         widget.config.displayExperimentalFlightDeckDriveSync;
+    _refreshFipsStatus();
   }
 
   @override
@@ -95,6 +104,8 @@ class _SetupScreenState extends State<SetupScreen> {
             child: const Text('Reset browser data'),
           ),
         ),
+        const SizedBox(height: 14),
+        _fipsCard(),
         const SizedBox(height: 14),
         if (_displayExperimentalFlightDeckDriveSync) ...[
           _field(
@@ -226,6 +237,231 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ],
     );
+  }
+
+  Widget _fipsCard() {
+    final status = _fipsStatus;
+    final state = status?.state;
+    final canInstall = state == FipsRuntimeState.notInstalled ||
+        state == FipsRuntimeState.installRequired ||
+        state == FipsRuntimeState.degraded ||
+        state == FipsRuntimeState.failed;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(state == FipsRuntimeState.running
+                    ? Icons.hub
+                    : Icons.hub_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'FIPS transport',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Text(_fipsStateLabel(state)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(status?.detail ?? 'Checking bundled FIPS runtime…'),
+            if (status?.nodeNpub != null) ...[
+              const SizedBox(height: 6),
+              SelectableText('Node: ${status!.nodeNpub}'),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _refreshFipsStatus,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
+                ),
+                if (canInstall)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _installOrRepairFips,
+                    icon: const Icon(Icons.admin_panel_settings_outlined),
+                    label: const Text('Install or repair'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _openFipsApp,
+                  icon: const Icon(Icons.open_in_browser),
+                  label: const Text('Open FIPS app'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fipsStateLabel(FipsRuntimeState? state) {
+    return switch (state) {
+      null => 'checking',
+      FipsRuntimeState.notBundled => 'not bundled',
+      FipsRuntimeState.notInstalled => 'not installed',
+      FipsRuntimeState.installRequired => 'install required',
+      FipsRuntimeState.starting => 'starting',
+      FipsRuntimeState.running => 'running',
+      FipsRuntimeState.degraded => 'degraded',
+      FipsRuntimeState.failed => 'failed',
+    };
+  }
+
+  Future<void> _refreshFipsStatus() async {
+    final status = await widget.fipsRuntime.inspect();
+    if (!mounted) return;
+    setState(() {
+      _fipsStatus = status;
+    });
+  }
+
+  Future<void> _installOrRepairFips() async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Install bundled FIPS?'),
+            content: const Text(
+              'macOS will request administrator authorization. The pinned FIPS system package installs a launch daemon, TUN support, and the .fips resolver. Existing FIPS configuration and machine identity are preserved.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Continue'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    await _run('Waiting for macOS authorization…', () async {
+      final status = await widget.fipsRuntime.installOrRepair();
+      if (mounted) {
+        setState(() {
+          _fipsStatus = status;
+        });
+      }
+      return status.detail;
+    });
+  }
+
+  Future<void> _openFipsApp() async {
+    final input = TextEditingController();
+    var shouldProbe = true;
+    final submission = await showDialog<({String value, bool probe})>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Open FIPS app'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('fips-app-target-field'),
+                  controller: input,
+                  autofocus: true,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'FIPS URL or descriptor',
+                    hintText: 'http://npub1….fips:41024/',
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: shouldProbe,
+                  onChanged: (value) => setDialogState(
+                    () => shouldProbe = value ?? true,
+                  ),
+                  title: const Text('Probe node before opening'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(
+                (value: input.text, probe: shouldProbe),
+              ),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    input.dispose();
+    if (submission == null) return;
+
+    await _run('Checking FIPS transport…', () async {
+      final target = FipsAppTarget.parse(submission.value);
+      final status = await widget.fipsRuntime.inspect();
+      if (!status.isRunning) throw StateError(status.detail);
+      if (submission.probe) {
+        final probe = await widget.fipsRuntime.probe(target.nodeNpub);
+        if (!probe.ok) throw StateError('FIPS probe failed: ${probe.detail}');
+      }
+
+      final origin = target.origin;
+      final alreadyTrusted = widget.config.effectiveTrustedOrigins().any(
+            (value) => SignerPolicy.normalizeOrigin(value) == origin,
+          );
+      if (!alreadyTrusted) {
+        if (!mounted) throw StateError('The setup screen closed.');
+        final trust = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Trust this exact FIPS origin?'),
+                content: Text(
+                  '$origin may request NIP-98 signatures after the normal per-request approval. No other .fips origin will be trusted.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Trust and open'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (!trust) return 'FIPS app opening cancelled.';
+        final trustedOrigins = {
+          ..._trustedOriginsController.text
+              .split('\n')
+              .map((line) => line.trim())
+              .where((line) => line.isNotEmpty),
+          origin,
+        }.toList(growable: false);
+        _trustedOriginsController.text = trustedOrigins.join('\n');
+        widget.onConfigChanged(
+          widget.config.copyWith(
+            trustedOrigins: trustedOrigins,
+          ),
+        );
+      }
+      widget.onOpenFipsApp(target.uri.toString());
+      return 'Opened ${target.uri} through FIPS.';
+    });
   }
 
   Widget _field({

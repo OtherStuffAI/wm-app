@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
+import '../../core/fips_app_target.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import 'browser_bookmark_store.dart';
@@ -219,6 +220,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                     final button = _BrowserTabButton(
                       title: tab.label,
                       active: active,
+                      fipsTransport: tab.isFips,
                       closeable: true,
                       width: tabWidth,
                       onPressed: () => _activateTab(tab.id),
@@ -627,6 +629,10 @@ class BrowserScreenState extends State<BrowserScreen> {
     }
     _loadHomeForTab(tab);
     if (persistState) _schedulePersistTabs();
+  }
+
+  void openTab(String url) {
+    _createTab(url);
   }
 
   void _activateTab(int id) {
@@ -2390,6 +2396,7 @@ class _BrowserTabButton extends StatelessWidget {
   const _BrowserTabButton({
     required this.title,
     required this.active,
+    required this.fipsTransport,
     required this.closeable,
     required this.onPressed,
     required this.onClose,
@@ -2398,6 +2405,7 @@ class _BrowserTabButton extends StatelessWidget {
 
   final String title;
   final bool active;
+  final bool fipsTransport;
   final bool closeable;
   final VoidCallback onPressed;
   final VoidCallback onClose;
@@ -2429,10 +2437,18 @@ class _BrowserTabButton extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(
-                  Icons.public,
-                  size: 16,
-                  color: active ? colors.onSurface : colors.onSurfaceVariant,
+                Tooltip(
+                  message: fipsTransport
+                      ? 'Encrypted FIPS mesh transport'
+                      : 'Web transport',
+                  child: Icon(
+                    fipsTransport ? Icons.hub_outlined : Icons.public,
+                    key: fipsTransport
+                        ? const ValueKey('fips-transport-indicator')
+                        : null,
+                    size: 16,
+                    color: active ? colors.onSurface : colors.onSurfaceVariant,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -2945,6 +2961,15 @@ class BrowserTab {
     final uri = Uri.tryParse(currentUrl ?? '');
     if (uri != null && uri.host.isNotEmpty) return uri.host;
     return 'New tab';
+  }
+
+  bool get isFips {
+    try {
+      FipsAppTarget.parse(currentUrl ?? addressController.text);
+      return true;
+    } on FormatException {
+      return false;
+    }
   }
 
   void dispose() {

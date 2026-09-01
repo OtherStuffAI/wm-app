@@ -234,6 +234,40 @@ void main() {
     expect(fakeWebViewControllerCreationCount, 1);
   });
 
+  testWidgets('FIPS tabs show the mesh transport indicator', (tester) async {
+    final browserKey = GlobalKey<BrowserScreenState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            key: browserKey,
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final npub = 'npub1${List.filled(58, 'q').join()}';
+
+    browserKey.currentState!.openTab('http://$npub.fips:41024/');
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('fips-transport-indicator')),
+      findsOneWidget,
+    );
+    expect(
+      find.byTooltip('Encrypted FIPS mesh transport'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('clean launch renders a neutral browser signer new tab',
       (tester) async {
     await tester.pumpWidget(

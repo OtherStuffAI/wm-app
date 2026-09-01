@@ -46,6 +46,35 @@ flutter build macos --debug
 open build/macos/Build/Products/Debug/wingman_app.app
 ```
 
+The Xcode build bundles the pinned FIPS v0.5.0 macOS packages for both arm64
+and x86_64. `tools/prepare_fips_macos.sh` downloads them from the upstream
+release into an ignored cache and refuses a checksum mismatch. Generated
+binaries are not committed.
+
+## FIPS WApp PoC
+
+After unlocking WMapp, open **Setup → FIPS transport**:
+
+1. Choose **Install or repair**. This is an explicit macOS administrator
+   authorization step because upstream FIPS installs a launch daemon, TUN
+   interface support, and `/etc/resolver/fips`.
+2. WMapp preserves any existing FIPS key and unrelated configuration. The
+   bundled helper transactionally enables persistent machine identity, Nostr
+   rendezvous and UDP advertising under the `wingman-fips-poc-v1` application
+   namespace. An initial config backup is kept alongside `fips.yaml`.
+3. Once status is `running`, choose **Open FIPS app**, paste the exact
+   `http://<autopilot-npub>.fips:<port>/` URL or matching JSON descriptor,
+   optionally probe it, and approve trust for that exact origin.
+
+FIPS machine identity is separate from the WMapp user signer. No FIPS private
+key is copied into Flutter settings, command arguments, or logs.
+
+The upstream v0.5.0 `.pkg` files are not signed and macOS `spctl` reports `no
+usable signature`. This is acceptable only for this local PoC. Production
+distribution is blocked until the FIPS packages are rebuilt, Developer ID
+Installer signed, and notarized as part of the Wingman release process. Do not
+disable Gatekeeper to work around this.
+
 ## First Launch
 
 On first launch WMApp asks for:

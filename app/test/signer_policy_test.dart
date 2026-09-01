@@ -107,5 +107,32 @@ void main() {
       expect(decision.allowed, isFalse);
       expect(decision.reason, contains('too large'));
     });
+
+    test('trusts one exact FIPS origin without trusting the suffix', () {
+      final npub = 'npub1${List.filled(58, 'q').join()}';
+      final origin = 'http://$npub.fips:41024';
+      final policy = SignerPolicy(trustedOrigins: [origin]);
+
+      expect(
+        policy
+            .validateNip98(
+              pageUrl: '$origin/',
+              targetUrl: '$origin/api/login',
+              method: 'POST',
+            )
+            .allowed,
+        isTrue,
+      );
+      expect(
+        policy
+            .validateNip98(
+              pageUrl: 'http://npub1${List.filled(58, 'p').join()}.fips:41024/',
+              targetUrl: '$origin/api/login',
+              method: 'POST',
+            )
+            .allowed,
+        isFalse,
+      );
+    });
   });
 }

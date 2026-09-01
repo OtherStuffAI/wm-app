@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
+import '../../core/fips_runtime_service.dart';
 import '../../core/flight_deck_update_manager.dart';
 import '../../core/native_core_bridge.dart';
 import '../browser/browser_screen.dart';
@@ -44,6 +45,7 @@ class _ShellHomeState extends State<ShellHome> {
   final ValueNotifier<BrowserBookmarkMenuState> _bookmarkMenuState =
       ValueNotifier(const BrowserBookmarkMenuState.unavailable());
   final MacOSMenuBridge _macOSMenuBridge = MacOSMenuBridge();
+  late final FipsRuntimeService _fipsRuntime = FipsRuntimeService();
 
   @override
   void initState() {
@@ -96,8 +98,10 @@ class _ShellHomeState extends State<ShellHome> {
             child: SetupScreen(
               config: widget.config,
               bridge: widget.bridge,
+              fipsRuntime: _fipsRuntime,
               onConfigChanged: widget.onConfigChanged,
               onClearBrowserData: _clearBrowserData,
+              onOpenFipsApp: _openFipsApp,
             ),
           ),
         ],
@@ -315,6 +319,15 @@ class _ShellHomeState extends State<ShellHome> {
 
   void _reloadFlightDeck() {
     _browserKey.currentState?.reloadFlightDeck();
+  }
+
+  void _openFipsApp(String url) {
+    setState(() {
+      _selectedSurface = ShellSurface.browser;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _browserKey.currentState?.openTab(url);
+    });
   }
 
   Future<void> _confirmLogOut() async {

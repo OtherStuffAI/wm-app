@@ -5,6 +5,7 @@
 .packages
 build/
 target/
+app/macos/.fips-cache/
 node_modules/
 *.log
 .env.local

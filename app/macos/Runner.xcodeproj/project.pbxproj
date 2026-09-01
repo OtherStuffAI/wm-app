@@ -213,6 +213,7 @@
 				33CC10EB2044A3C60003C045 /* Resources */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
+				F1A500012F50F1A500000001 /* Bundle pinned FIPS */,
 			);
 			buildRules = (
 			);
@@ -301,6 +302,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		F1A500012F50F1A500000001 /* Bundle pinned FIPS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../tools/prepare_fips_macos.sh",
+				"$(SRCROOT)/../../tools/configure_fips_wingman_poc.sh",
+			);
+			name = "Bundle pinned FIPS";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FIPS/fips-0.5.0-macos-arm64.pkg",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FIPS/fips-0.5.0-macos-x86_64.pkg",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FIPS/configure-fips-wingman-poc.sh",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nFIPS_RESOURCE_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FIPS\"\nrm -f \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch arm64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-arm64.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch x86_64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-x86_64.pkg\"\ncp \"$SRCROOT/../../tools/configure_fips_wingman_poc.sh\" \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\nchmod 755 \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
