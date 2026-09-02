@@ -1,148 +1,257 @@
 package com.wingmanbefree.wingman_app.fips
 
-import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import com.wingmanbefree.wingman_app.MainActivity
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
-internal class FipsRuntimeCoordinator(private val activity: MainActivity) : MethodChannel.MethodCallHandler {
+internal class FipsRuntimeCoordinator(
+    private val activity: MainActivity,
+    private val launchConsent: (Intent) -> Unit,
+) : MethodChannel.MethodCallHandler {
+    private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
-    private var consentResult: MethodChannel.Result? = null
+    private val timer: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var alive = true
+    private var preparedConsentIntent: Intent? = null
+
+    private val startOperation = FipsStartOperation(object : FipsStartEnvironment {
+        override fun runBackground(task: () -> Unit): Boolean = execute(worker, task)
+        override fun runMain(task: () -> Unit): Boolean = postMain(task)
+
+        override fun scheduleTimeout(delayMillis: Long, task: () -> Unit): FipsTimeout {
+            val future = timer.schedule({ if (alive) task() }, delayMillis, TimeUnit.MILLISECONDS)
+            return FipsTimeout { future.cancel(false) }
+        }
+
+        override fun resetForStart() {
+            FipsVpnServiceFailure.clear()
+            FipsVpnService.resetForStart(activity.applicationContext)
+        }
+
+        override fun prepareNative(): String {
+            val fipsDir = File(activity.filesDir, "fips")
+            if (!fipsDir.exists() && !fipsDir.mkdirs()) throw IllegalStateException("directory unavailable")
+            return FipsNative.nativePrepare(
+                File(fipsDir, "fips.machine.key").absolutePath,
+                File(fipsDir, "control.sock").absolutePath,
+            )
+        }
+
+        override fun prepareVpnConsent(): Boolean {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            preparedConsentIntent = VpnService.prepare(activity)
+            return preparedConsentIntent != null
+        }
+
+        override fun launchVpnConsent() {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val intent = preparedConsentIntent
+                ?: throw IllegalStateException("consent intent unavailable")
+            preparedConsentIntent = null
+            launchConsent(intent)
+        }
+
+        override fun startVpnService() {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            FipsVpnService.start(activity.applicationContext)
+        }
+
+        override fun inspectNative(): String = FipsNative.nativeInspect()
+
+        override fun stopNative() {
+            runCatching { FipsNative.nativeStop() }
+            FipsVpnService.stop(activity.applicationContext)
+        }
+
+        override fun pauseBeforePoll(delayMillis: Long) = Thread.sleep(delayMillis)
+
+        override fun log(event: String, failure: Throwable?) {
+            if (failure == null) Log.i(TAG, event)
+            else Log.e(TAG, "$event (${failure.javaClass.simpleName})")
+        }
+    })
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        when (call.method) {
-            "inspect" -> background(result) { inspectWithConsentState() }
-            "start", "repair" -> start(result)
-            "stop" -> background(result) {
-                FipsVpnService.stop(activity)
-                FipsNative.nativeStop()
+        try {
+            when (call.method) {
+                "inspect" -> inspect(result)
+                "start", "repair" -> startOperation.start(result.asCompletion())
+                "stop" -> backgroundStatus(result) {
+                    FipsVpnService.stop(activity.applicationContext)
+                    FipsStatus.fromNative(FipsNative.nativeInspect(), "Embedded FIPS could not stop safely.")
+                }
+                "peerStatus" -> backgroundMap(result) {
+                    FipsPlatformContract.peerStatus(FipsNative.nativePeerStatus())
+                }
+                "probe" -> {
+                    val npub = call.argument<String>("npub")
+                    if (npub == null) {
+                        result.success(FipsStartOperation.failed("invalid_argument", "A FIPS node is required."))
+                    } else {
+                        backgroundMap(result) { FipsPlatformContract.probe(FipsNative.nativeProbe(npub)) }
+                    }
+                }
+                else -> result.notImplemented()
             }
-            "peerStatus" -> backgroundMap(result) {
-                FipsPlatformContract.peerStatus(FipsNative.nativePeerStatus())
-            }
-            "probe" -> {
-                val npub = call.argument<String>("npub")
-                if (npub == null) result.error("invalid_argument", "npub is required", null)
-                else backgroundMap(result) { FipsPlatformContract.probe(FipsNative.nativeProbe(npub)) }
-            }
-            else -> result.notImplemented()
-        }
-    }
-
-    private fun inspectWithConsentState(): String {
-        val raw = FipsNative.nativeInspect()
-        val status = JSONObject(raw)
-        if (status.optString("state") == "notInstalled" && VpnService.prepare(activity) != null) {
-            status.put("state", "consentRequired")
-            status.put("detail", "Android VPN consent is required to start embedded FIPS.")
-        }
-        return status.toString()
-    }
-
-    private fun start(result: MethodChannel.Result) {
-        synchronized(this) {
-            if (consentResult != null) {
-                result.error("operation_in_progress", "VPN consent is already in progress", null)
-                return
-            }
-            consentResult = result
-        }
-        worker.execute {
-            // A direct repeated start must replace the Java TUN owner as well
-            // as nativePrepare's Rust engine; repair follows the same path.
-            FipsVpnService.resetForStart(activity)
-            val fipsDir = File(activity.filesDir, "fips").apply { mkdirs() }
-            val prepared = JSONObject(
-                FipsNative.nativePrepare(
-                    File(fipsDir, "fips.machine.key").absolutePath,
-                    File(fipsDir, "control.sock").absolutePath,
+        } catch (failure: Throwable) {
+            logFailure("method_dispatch_failed", failure)
+            safeSuccess(
+                result,
+                FipsStartOperation.failed(
+                    "android_bridge_failed",
+                    "Android embedded FIPS is unavailable. Please retry.",
                 ),
             )
-            if (prepared.optString("state") == "failed") {
-                finishConsent(prepared.toString())
-                return@execute
-            }
-            activity.runOnUiThread {
-                val consent = VpnService.prepare(activity)
-                if (consent == null) launchServiceAndAwait()
-                else activity.startActivityForResult(consent, VPN_CONSENT_REQUEST)
-            }
         }
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode != VPN_CONSENT_REQUEST) return false
-        if (resultCode != Activity.RESULT_OK) {
-            worker.execute { FipsNative.nativeStop() }
-            finishConsent(
-                JSONObject()
-                    .put("state", "failed")
-                    .put("detail", "Android VPN consent was cancelled.")
-                    .toString(),
-            )
-        } else {
-            launchServiceAndAwait()
-        }
-        return true
+    fun onVpnConsentResult(granted: Boolean): Boolean = startOperation.onVpnConsentResult(granted)
+
+    fun destroy() {
+        if (!alive) return
+        startOperation.destroy()
+        alive = false
+        preparedConsentIntent = null
+        worker.shutdownNow()
+        timer.shutdownNow()
+        main.removeCallbacksAndMessages(null)
     }
 
-    private fun launchServiceAndAwait() {
-        FipsVpnService.start(activity)
-        worker.execute {
-            repeat(100) {
-                val status = FipsNative.nativeInspect()
-                val state = JSONObject(status).optString("state")
-                if (state == "running" || state == "failed") {
-                    finishConsent(status)
-                    return@execute
+    private fun inspect(result: MethodChannel.Result) {
+        if (!execute(worker) {
+                val native = try {
+                    FipsStatus.fromNative(FipsNative.nativeInspect(), "Embedded FIPS inspection failed.")
+                } catch (failure: Throwable) {
+                    logFailure("inspect_native_failed", failure)
+                    FipsStartOperation.failed("inspect_failed", "Embedded FIPS inspection failed. Please retry.")
                 }
-                Thread.sleep(100)
+                postMain {
+                    val serviceFailure = FipsVpnServiceFailure.peek()
+                    val status = if (serviceFailure != null) {
+                        FipsStartOperation.failed(serviceFailure.code, serviceFailure.detail)
+                    } else if (native["state"] == "notInstalled") {
+                        try {
+                            if (VpnService.prepare(activity) != null) {
+                                native + mapOf(
+                                    "state" to "consentRequired",
+                                    "detail" to "Android VPN consent is required to start embedded FIPS.",
+                                )
+                            } else native
+                        } catch (failure: Throwable) {
+                            logFailure("inspect_consent_failed", failure)
+                            FipsStartOperation.failed(
+                                "consent_prepare_failed",
+                                "Android VPN consent could not be checked. Please retry.",
+                            )
+                        }
+                    } else native
+                    safeSuccess(result, status)
+                }
             }
-            finishConsent(
-                JSONObject().put("state", "failed")
-                    .put("detail", "Embedded FIPS did not become ready in time.").toString(),
+        ) {
+            safeSuccess(
+                result,
+                FipsStartOperation.failed(
+                    "executor_unavailable",
+                    "Embedded FIPS inspection was interrupted. Please retry.",
+                ),
             )
         }
     }
 
-    private fun finishConsent(raw: String) {
-        val pending = synchronized(this) {
-            val value = consentResult
-            consentResult = null
-            value
-        } ?: return
-        activity.runOnUiThread { pending.success(jsonToMap(raw)) }
-    }
-
-    private fun background(result: MethodChannel.Result, action: () -> String) {
-        worker.execute {
-            val raw = runCatching(action).getOrElse {
-                JSONObject().put("state", "failed").put("detail", it.message ?: "Native FIPS failed.").toString()
+    private fun backgroundStatus(result: MethodChannel.Result, action: () -> Map<String, Any?>) {
+        if (!execute(worker) {
+                val status = try {
+                    action()
+                } catch (failure: Throwable) {
+                    logFailure("background_status_failed", failure)
+                    FipsStartOperation.failed("native_failed", "Android embedded FIPS failed. Please retry.")
+                }
+                postMain { safeSuccess(result, status) }
             }
-            activity.runOnUiThread { result.success(jsonToMap(raw)) }
+        ) {
+            safeSuccess(
+                result,
+                FipsStartOperation.failed(
+                    "executor_unavailable",
+                    "Android embedded FIPS was interrupted. Please retry.",
+                ),
+            )
         }
     }
 
     private fun backgroundMap(result: MethodChannel.Result, action: () -> Map<String, Any?>) {
-        worker.execute {
-            val value = runCatching(action).getOrElse {
-                mapOf("ok" to false, "connected" to false, "detail" to (it.message ?: "Native FIPS failed."))
+        if (!execute(worker) {
+                val value = try {
+                    action()
+                } catch (failure: Throwable) {
+                    logFailure("background_map_failed", failure)
+                    mapOf(
+                        "ok" to false,
+                        "connected" to false,
+                        "detail" to "Android embedded FIPS request failed. Please retry.",
+                    )
+                }
+                postMain { safeSuccess(result, value) }
             }
-            activity.runOnUiThread { result.success(value) }
+        ) {
+            safeSuccess(
+                result,
+                mapOf(
+                    "ok" to false,
+                    "connected" to false,
+                    "detail" to "Android embedded FIPS was interrupted. Please retry.",
+                ),
+            )
         }
     }
 
-    private fun jsonToMap(raw: String): Map<String, Any?> {
-        val json = JSONObject(raw)
-        return json.keys().asSequence().associateWith { key -> if (json.isNull(key)) null else json.get(key) }
+    private fun MethodChannel.Result.asCompletion() = FipsCompletion { safeSuccess(this, it) }
+
+    private fun safeSuccess(result: MethodChannel.Result, value: Map<String, Any?>) {
+        try {
+            result.success(value)
+        } catch (failure: Throwable) {
+            logFailure("result_delivery_failed", failure)
+        }
     }
 
-    companion object {
-        private const val VPN_CONSENT_REQUEST = 7211
+    private fun postMain(task: () -> Unit): Boolean {
+        if (!alive || activity.isFinishing || activity.isDestroyed) return false
+        return if (Looper.myLooper() == Looper.getMainLooper()) {
+            task()
+            true
+        } else {
+            main.post { if (alive && !activity.isDestroyed) task() }
+        }
     }
+
+    private fun execute(executor: ExecutorService, task: () -> Unit): Boolean {
+        if (!alive || executor.isShutdown) return false
+        return try {
+            executor.execute { if (alive) task() }
+            true
+        } catch (_: RejectedExecutionException) {
+            false
+        }
+    }
+
+    private fun logFailure(event: String, failure: Throwable) {
+        // Event codes plus exception classes are actionable in logcat without
+        // exposing native payloads, identities, secrets, or filesystem paths.
+        Log.e(TAG, "$event (${failure.javaClass.simpleName})")
+    }
+
+    companion object { private const val TAG = "WMAppFips" }
 }

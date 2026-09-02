@@ -250,23 +250,30 @@ end run
   }
 
   Future<FipsRuntimeStatus> _ensureReadyForAppAccess() async {
-    var status = await inspect();
+    try {
+      var status = await inspect();
 
-    if (!status.canAttemptAppAccess) {
-      final canActivateBundledRuntime = switch (status.state) {
-        FipsRuntimeState.notInstalled ||
-        FipsRuntimeState.consentRequired ||
-        FipsRuntimeState.installRequired ||
-        FipsRuntimeState.degraded ||
-        FipsRuntimeState.failed =>
-          true,
-        _ => false,
-      };
-      if (!canActivateBundledRuntime) return status;
-      status = await installOrRepair();
+      if (!status.canAttemptAppAccess) {
+        final canActivateBundledRuntime = switch (status.state) {
+          FipsRuntimeState.notInstalled ||
+          FipsRuntimeState.consentRequired ||
+          FipsRuntimeState.installRequired ||
+          FipsRuntimeState.degraded ||
+          FipsRuntimeState.failed =>
+            true,
+          _ => false,
+        };
+        if (!canActivateBundledRuntime) return status;
+        status = await installOrRepair();
+      }
+      if (!status.canAttemptAppAccess) return status;
+      return _ensureBootstrapConnected(status);
+    } catch (_) {
+      return const FipsRuntimeStatus(
+        state: FipsRuntimeState.failed,
+        detail: 'Android embedded FIPS failed unexpectedly. Please retry.',
+      );
     }
-    if (!status.canAttemptAppAccess) return status;
-    return _ensureBootstrapConnected(status);
   }
 
   Future<FipsRuntimeStatus> _ensureBootstrapConnected(
@@ -344,11 +351,12 @@ end run
     if (_isAndroid) {
       try {
         return _androidStatus(await _androidRuntime.inspect());
-      } on PlatformException catch (error) {
+      } catch (error) {
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
-          detail: redactSecrets(
-            error.message ?? 'Android embedded FIPS inspection failed.',
+          detail: _androidBoundaryDetail(
+            error,
+            'Android embedded FIPS inspection failed. Please retry.',
           ),
         );
       }
@@ -495,11 +503,12 @@ end run
             current['state'] == 'failed' ||
             current['state'] == 'running';
         return _androidStatus(await _androidRuntime.start(repair: repair));
-      } on PlatformException catch (error) {
+      } catch (error) {
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
-          detail: redactSecrets(
-            error.message ?? 'Android VPN consent or FIPS startup failed.',
+          detail: _androidBoundaryDetail(
+            error,
+            'Android VPN consent or FIPS startup failed. Please retry.',
           ),
         );
       } finally {
@@ -565,10 +574,13 @@ end run
             result['detail']?.toString() ?? 'Android FIPS probe failed.',
           ),
         );
-      } on PlatformException catch (error) {
+      } catch (error) {
         return FipsProbeResult(
           ok: false,
-          detail: redactSecrets(error.message ?? 'Android FIPS probe failed.'),
+          detail: _androidBoundaryDetail(
+            error,
+            'Android FIPS probe failed. Please retry.',
+          ),
         );
       }
     }
@@ -586,10 +598,13 @@ end run
     if (!_isAndroid) return inspect();
     try {
       return _androidStatus(await _androidRuntime.stop());
-    } on PlatformException catch (error) {
+    } catch (error) {
       return FipsRuntimeStatus(
         state: FipsRuntimeState.failed,
-        detail: redactSecrets(error.message ?? 'Android FIPS stop failed.'),
+        detail: _androidBoundaryDetail(
+          error,
+          'Android FIPS stop failed. Please retry.',
+        ),
       );
     }
   }
@@ -613,6 +628,13 @@ end run
       ),
       nodeNpub: value['nodeNpub']?.toString(),
     );
+  }
+
+  static String _androidBoundaryDetail(Object error, String fallback) {
+    if (error is PlatformException) {
+      return redactSecrets(error.message ?? fallback);
+    }
+    return fallback;
   }
 
   Future<ProcessResult> _run(String executable, List<String> arguments) async {

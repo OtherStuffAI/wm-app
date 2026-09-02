@@ -12,32 +12,59 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import com.wingmanbefree.wingman_app.MainActivity
 import com.wingmanbefree.wingman_app.R
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 class FipsVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor()
     private var tun: ParcelFileDescriptor? = null
     @Volatile private var stopped = false
+    @Volatile private var creationFailed = false
 
     override fun onCreate() {
         super.onCreate()
-        current = this
-        startForeground(NOTIFICATION_ID, notification("Starting embedded FIPS mesh…"))
+        try {
+            promote("Starting embedded FIPS mesh…")
+            current = this
+            Log.i(TAG, "service_created")
+        } catch (failure: Throwable) {
+            creationFailed = true
+            recordFailure("foreground_start_failed", "Android could not show the FIPS VPN foreground service.", failure)
+            runCatching { stopSelf() }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            worker.execute { shutdown() }
+            executeWorker { shutdown() }
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, notification("Starting embedded FIPS mesh…"))
-        worker.execute {
+        if (creationFailed) {
+            safeShutdown()
+            return START_NOT_STICKY
+        }
+        try {
+            promote("Starting embedded FIPS mesh…")
+        } catch (failure: Throwable) {
+            recordFailure("foreground_start_failed", "Android could not start the FIPS VPN foreground service.", failure)
+            safeShutdown()
+            return START_NOT_STICKY
+        }
+        if (!executeWorker {
             stopped = false
-            runCatching { establishAndRun() }
-                .onFailure { failClosed() }
+            try {
+                establishAndRun()
+            } catch (failure: Throwable) {
+                recordFailure("vpn_establish_failed", "The embedded FIPS VPN could not be established.", failure)
+                safeShutdown()
+            }
+        }) {
+            recordFailure("service_executor_failed", "The embedded FIPS VPN startup was interrupted.")
+            safeShutdown()
         }
         return START_NOT_STICKY
     }
@@ -48,16 +75,16 @@ class FipsVpnService : VpnService() {
         val metadata = JSONObject(FipsNative.nativeInspect())
         val ipv6 = metadata.optString("ipv6")
         if (ipv6.isBlank()) {
-            failClosed()
+            failClosed("native_metadata_failed", "Embedded FIPS startup data was unavailable.")
             return
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            failClosed()
+            failClosed("android_version_unsupported", "Embedded FIPS requires Android 10 or later.")
             return
         }
         val underlyingNetwork = selectUnderlyingNetwork()
         if (underlyingNetwork == null) {
-            failClosed()
+            failClosed("network_unavailable", "No eligible internet connection was available for embedded FIPS.")
             return
         }
 
@@ -76,7 +103,7 @@ class FipsVpnService : VpnService() {
             .setBlocking(true)
             .establish()
         if (descriptor == null) {
-            failClosed()
+            failClosed("vpn_establish_denied", "Android did not create the embedded FIPS VPN interface.")
             return
         }
         tun = descriptor
@@ -84,13 +111,13 @@ class FipsVpnService : VpnService() {
         val started = JSONObject(FipsNative.nativeStartNode())
         val sockets = started.optJSONArray("transportSockets")
         if (!started.optBoolean("ok") || sockets == null || sockets.length() == 0) {
-            failClosed()
+            failClosed("native_start_failed", "Embedded FIPS transport startup failed.")
             return
         }
         for (index in 0 until sockets.length()) {
             val fd = sockets.getJSONObject(index).getInt("fd")
             if (!protect(fd)) {
-                failClosed()
+                failClosed("socket_protection_failed", "Android could not protect the FIPS transport socket.")
                 return
             }
         }
@@ -100,7 +127,7 @@ class FipsVpnService : VpnService() {
             FipsNative.nativeRunNode(rustFd, underlyingNetwork.networkHandle),
         )
         if (running.optString("state") != "running") {
-            failClosed()
+            failClosed("native_run_failed", "Embedded FIPS did not enter its running state.")
             return
         }
         getSystemService(NotificationManager::class.java)
@@ -123,12 +150,15 @@ class FipsVpnService : VpnService() {
         }
     }
 
-    private fun failClosed() {
-        shutdown()
+    private fun failClosed(code: String, detail: String) {
+        recordFailure(code, detail)
+        safeShutdown()
     }
 
     @Synchronized
     private fun resetForStart() {
+        // The coordinator owns and sanitizes reset errors so the originating
+        // method call is completed rather than silently continuing.
         FipsNative.nativeStop()
         tun?.close()
         tun = null
@@ -139,22 +169,24 @@ class FipsVpnService : VpnService() {
     private fun shutdown() {
         if (stopped) return
         stopped = true
-        FipsNative.nativeStop()
-        tun?.close()
+        runCatching { FipsNative.nativeStop() }
+            .onFailure { Log.e(TAG, "native_stop_failed (${it.javaClass.simpleName})") }
+        runCatching { tun?.close() }
+            .onFailure { Log.e(TAG, "tun_close_failed (${it.javaClass.simpleName})") }
         tun = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        runCatching { stopSelf() }
     }
 
     override fun onRevoke() {
-        worker.execute { shutdown() }
+        executeWorker { shutdown() }
         super.onRevoke()
     }
 
     override fun onDestroy() {
         if (current === this) current = null
         if (!stopped && !worker.isShutdown) {
-            worker.execute { shutdown() }
+            executeWorker { shutdown() }
         }
         worker.shutdown()
         super.onDestroy()
@@ -187,18 +219,57 @@ class FipsVpnService : VpnService() {
             .build()
     }
 
+    private fun promote(detail: String) {
+        // POST_NOTIFICATIONS is not a prerequisite for foreground-service
+        // correctness on Android 13+: a denied notification permission hides
+        // the drawer notification but Android still exposes the FGS in Task
+        // Manager. VPN consent is the only runtime permission requested here.
+        startForeground(NOTIFICATION_ID, notification(detail))
+    }
+
+    private fun safeShutdown() {
+        runCatching { shutdown() }
+            .onFailure { Log.e(TAG, "shutdown_failed (${it.javaClass.simpleName})") }
+    }
+
+    private fun executeWorker(task: () -> Unit): Boolean = try {
+        if (worker.isShutdown) false else {
+            worker.execute { runCatching(task).onFailure { recordFailure("service_worker_failed", "The embedded FIPS VPN stopped unexpectedly.", it) } }
+            true
+        }
+    } catch (_: RejectedExecutionException) {
+        false
+    }
+
+    private fun recordFailure(code: String, detail: String, failure: Throwable? = null) {
+        FipsVpnServiceFailure.record(code, detail)
+        if (failure == null) Log.e(TAG, code)
+        else Log.e(TAG, "$code (${failure.javaClass.simpleName})")
+    }
+
     companion object {
         private const val ACTION_STOP = "com.wingmanbefree.wingman_app.fips.STOP"
         private const val CHANNEL_ID = "wmapp_fips_vpn"
         private const val NOTIFICATION_ID = 2121
+        private const val TAG = "WMAppFipsVpn"
         @Volatile private var current: FipsVpnService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, FipsVpnService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            FipsVpnServiceFailure.clear()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (failure: Throwable) {
+                FipsVpnServiceFailure.record(
+                    "service_launch_failed",
+                    "Android blocked the embedded FIPS VPN from starting. Please retry from WM-App.",
+                )
+                Log.e(TAG, "service_launch_failed (${failure.javaClass.simpleName})")
+                throw failure
             }
         }
 

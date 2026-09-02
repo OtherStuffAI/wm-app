@@ -18,10 +18,13 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   int startCalls = 0;
   int peerCalls = 0;
   Completer<void>? startGate;
+  Object? inspectError;
+  Object? startError;
 
   @override
   Future<Map<String, dynamic>> inspect() async {
     inspectCalls += 1;
+    inspectError?.letThrow();
     return status;
   }
 
@@ -29,6 +32,7 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   Future<Map<String, dynamic>> start({bool repair = false}) async {
     startCalls += 1;
     await startGate?.future;
+    startError?.letThrow();
     status = startStatus;
     return startStatus;
   }
@@ -53,6 +57,10 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
     status = const {'state': 'notInstalled', 'detail': 'Stopped.'};
     return status;
   }
+}
+
+extension on Object {
+  Never letThrow() => throw this;
 }
 
 void main() {
@@ -116,5 +124,39 @@ void main() {
 
     expect((await runtime.probe(npub)).ok, isTrue);
     expect((await runtime.stop()).state, FipsRuntimeState.notInstalled);
+  });
+
+  test('unexpected Android inspection errors become recoverable failures',
+      () async {
+    final channel = FakeAndroidFipsRuntime()
+      ..inspectError = StateError('private channel payload');
+    final runtime = service(channel);
+
+    final first = await runtime.ensureReadyForAppAccess();
+    expect(first.state, FipsRuntimeState.failed);
+    expect(first.detail, contains('Please retry'));
+    expect(first.detail, isNot(contains('private channel payload')));
+
+    channel.inspectError = null;
+    channel.status = channel.startStatus;
+    final retry = await runtime.ensureReadyForAppAccess();
+    expect(retry.state, FipsRuntimeState.running);
+  });
+
+  test('unexpected Android start errors clear operation state for retry',
+      () async {
+    final channel = FakeAndroidFipsRuntime()
+      ..startError = ArgumentError('sensitive start detail');
+    final runtime = service(channel);
+
+    final first = await runtime.installOrRepair();
+    expect(first.state, FipsRuntimeState.failed);
+    expect(first.detail, contains('Please retry'));
+    expect(first.detail, isNot(contains('sensitive start detail')));
+
+    channel.startError = null;
+    final retry = await runtime.installOrRepair();
+    expect(retry.state, FipsRuntimeState.running);
+    expect(channel.startCalls, 2);
   });
 }

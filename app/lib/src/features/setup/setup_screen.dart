@@ -660,10 +660,10 @@ class _SetupScreenState extends State<SetupScreen> {
       setState(() {
         _message = message;
       });
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
-        _message = error.toString();
+        _message = 'The operation failed unexpectedly. Please retry.';
       });
     } finally {
       if (mounted) {

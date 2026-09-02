@@ -255,7 +255,15 @@ class _ShellHomeState extends State<ShellHome> {
   }
 
   Future<String?> _prepareFipsNavigation(String url) async {
-    final status = await _fipsRuntime.ensureReadyForAppAccess();
+    late FipsRuntimeStatus status;
+    try {
+      status = await _fipsRuntime.ensureReadyForAppAccess();
+    } catch (_) {
+      status = const FipsRuntimeStatus(
+        state: FipsRuntimeState.failed,
+        detail: 'Embedded FIPS failed unexpectedly. Open Setup to retry.',
+      );
+    }
     if (status.canAttemptAppAccess) return null;
     if (!mounted) return status.detail;
 
