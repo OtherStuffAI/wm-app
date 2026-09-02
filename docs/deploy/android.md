@@ -209,7 +209,13 @@ JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/H
 ```
 
 `zapstore.yaml` intentionally uses the APK-extracted launcher icon. No release
-screenshots are currently maintained, so the first listing has no screenshots.
-Zapstore publication uses `zsp` with Rick's npub to prepare unsigned events and
-assets. Sign and publish those events through the running agent session's Nostr
-MCP tools; never use a raw Nostr key, bunker, or browser Tier 2 fallback.
+screenshots are currently maintained, so the listing has no screenshots. The
+canonical handoff inputs are `zapstore.yaml`, `app-release.apk`, the extracted
+`app-release_icon.png`, and the versioned release-notes file.
+
+Publication is an owner-only action in the WMAPP Zapstore Publisher WApp. Pete
+reviews the pinned artifact hashes there and approves the publication with his
+NIP-07 browser signature. Do not ask Rick, a backend, an agent, or an MCP route
+to sign or publish the release. Never enter, export, copy, or expose a raw Nostr
+private key; there is no raw-key fallback. Preparing and validating these local
+inputs does not authorize publication or a restart of the publisher WApp.
