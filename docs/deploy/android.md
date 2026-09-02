@@ -198,20 +198,36 @@ The release APK is written to:
 app/build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Verify its metadata and certificate before publishing:
+Snapshot the signed build into the local, versioned Zapstore release catalog:
 
 ```bash
-zsp utils extract-apk app/build/app/outputs/flutter-apk/app-release.apk
-zsp publish --check zapstore.yaml
-JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}" \
-  "${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}/build-tools/36.1.0/apksigner" \
-  verify --verbose --print-certs app/build/app/outputs/flutter-apk/app-release.apk
+./tools/prepare_zapstore_release.py
 ```
+
+Run this immediately after `build_android_release.sh`, while `HEAD` is still the
+commit that produced the APK. For an already-built artifact, pass its actual
+source commit explicitly with `--source-commit <commit>`. The script derives the
+package, version, code, SDK levels, and ARM64 ABI from the APK; validates its
+signature, established certificate, FIPS native library, and compiled VPN
+service declaration; and uses installed Zapstore `zsp` tooling to reconcile that
+metadata and verify the APK-extracted icon byte-for-byte. It then copies the APK,
+icon, and release notes into
+`app/build/zapstore-releases/<version>+<code>/` by atomic rename.
+
+Each immutable release directory contains `release.json`, `app-release.apk`,
+`app-release_icon.png`, and `release-notes-<version>+<code>.md`. The non-secret
+manifest is the publisher WApp discovery record: `releaseId` gives the stable
+directory ID, `createdAt` records its first preparation time, and `files`
+contains exact sizes and SHA-256 hashes. An identical rerun preserves
+`createdAt`; changed bytes or metadata for an existing ID fail without replacing
+history. The entire catalog is generated below ignored `app/build/` output and
+must not be committed.
 
 `zapstore.yaml` intentionally uses the APK-extracted launcher icon. No release
 screenshots are currently maintained, so the listing has no screenshots. The
-canonical handoff inputs are `zapstore.yaml`, `app-release.apk`, the extracted
-`app-release_icon.png`, and the versioned release-notes file.
+publisher should discover canonical inputs from the immutable local catalog,
+not from the mutable Flutter output directory. `zsp publish --check` remains a
+separate publication-time check and is not run by catalog preparation.
 
 Publication is an owner-only action in the WMAPP Zapstore Publisher WApp. Pete
 reviews the pinned artifact hashes there and approves the publication with his
