@@ -17,6 +17,7 @@ import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
 import 'signer_store.dart';
+import 'webview_file_picker.dart';
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
@@ -557,7 +558,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   WebViewController _createWebViewController(int id) {
-    return WebViewController()
+    final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
         'WingmanSigner',
@@ -574,6 +575,8 @@ class BrowserScreenState extends State<BrowserScreen> {
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
+    unawaited(configureWebViewFilePicker(controller));
+    return controller;
   }
 
   void _createTab(
