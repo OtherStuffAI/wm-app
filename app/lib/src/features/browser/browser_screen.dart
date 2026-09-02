@@ -563,6 +563,10 @@ class BrowserScreenState extends State<BrowserScreen> {
         'WingmanSigner',
         onMessageReceived: (message) => _onSignerMessage(id, message),
       )
+      ..addJavaScriptChannel(
+        'WingmanTitle',
+        onMessageReceived: (message) => _onTitleMessage(id, message),
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) => _onNavigationRequest(id, request),
@@ -1155,9 +1159,6 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome = false;
       tab.currentUrl = url;
       tab.addressController.text = url;
-      if (_isLocalFlightDeckUrl(url)) {
-        tab.title = _flightDeckTitle;
-      }
     });
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
@@ -1171,23 +1172,78 @@ class BrowserScreenState extends State<BrowserScreen> {
       await _injectTabCapture(tab);
       return;
     }
-    final title = await tab.controller.getTitle();
+    String? title;
+    try {
+      title = await tab.controller.getTitle();
+    } catch (_) {}
+    if (!mounted || _tabById(tabId) != tab) return;
     setState(() {
       tab.isHome = false;
       tab.currentUrl = url;
       tab.addressController.text = url;
-      tab.title = _isLocalFlightDeckUrl(url)
-          ? _flightDeckTitle
-          : title?.trim().isNotEmpty == true
-              ? title!.trim()
-              : _titleForUrl(url);
+      tab.title = _resolvedPageTitle(title, url);
     });
     await _refreshNavigationState(tab);
     await _applyFlightDeckDisplayDefaults(tab, url);
     await _injectTabCapture(tab);
+    await _injectTitleObserver(tab);
     await _injectIfTrusted(tab);
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
+  }
+
+  String _resolvedPageTitle(String? title, String url) {
+    final normalized = title?.trim() ?? '';
+    return normalized.isNotEmpty ? normalized : _titleForUrl(url);
+  }
+
+  void _onTitleMessage(int tabId, JavaScriptMessage message) {
+    if (!mounted) return;
+    final tab = _tabById(tabId);
+    if (tab == null || tab.isHome) return;
+    final url = tab.currentUrl ?? tab.addressController.text;
+    final title = _resolvedPageTitle(message.message, url);
+    if (tab.title == title) return;
+    setState(() {
+      tab.title = title;
+    });
+    _schedulePersistTabs();
+  }
+
+  Future<void> _injectTitleObserver(BrowserTab tab) async {
+    try {
+      await tab.controller.runJavaScript(_titleObserverScript());
+    } catch (_) {}
+  }
+
+  String _titleObserverScript() {
+    return '''
+(() => {
+  const target = document.head || document.documentElement;
+  if (window.__wingmanTitleObserver || !target) return;
+  let lastTitle = null;
+  let publishQueued = false;
+  const publish = () => {
+    publishQueued = false;
+    const title = String(document.title || '');
+    if (title === lastTitle) return;
+    lastTitle = title;
+    if (window.WingmanTitle) WingmanTitle.postMessage(title);
+  };
+  const schedulePublish = () => {
+    if (publishQueued) return;
+    publishQueued = true;
+    Promise.resolve().then(publish);
+  };
+  window.__wingmanTitleObserver = new MutationObserver(schedulePublish);
+  window.__wingmanTitleObserver.observe(target, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  schedulePublish();
+})();
+''';
   }
 
   Future<void> _applyFlightDeckDisplayDefaults(

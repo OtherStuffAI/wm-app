@@ -388,7 +388,8 @@ void main() {
     expect(fakeClearCookieCalls, 1);
   });
 
-  testWidgets('packaged Flight Deck opens first and reopens from its bookmark',
+  testWidgets(
+      'packaged Flight Deck uses live titles, fallbacks, and SPA updates',
       (tester) async {
     const flightDeckUrl = 'http://127.0.0.1:47831/';
     await tester.pumpWidget(
@@ -410,7 +411,44 @@ void main() {
     await tester.pump();
 
     expect(fakeLoadedRequestUrls.single, flightDeckUrl);
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('127.0.0.1'), findsOneWidget);
+
+    setFakePageTitle(
+      controllerIndex: 0,
+      title: '  Tasks · Pete Workspace  ',
+    );
+    submitFakePageFinished(controllerIndex: 0, url: flightDeckUrl);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tasks · Pete Workspace'), findsOneWidget);
+    expect(
+      fakeExecutedJavaScripts,
+      contains(predicate<String>((script) =>
+          script.contains('MutationObserver') &&
+          script.contains('WingmanTitle.postMessage'))),
+    );
+
+    submitFakeJavaScriptMessage(
+      controllerIndex: 0,
+      channel: 'WingmanTitle',
+      message: '  Sessions · Wingman  ',
+    );
+    await tester.pump();
+    expect(find.text('Sessions · Wingman'), findsOneWidget);
+
+    submitFakeJavaScriptMessage(
+      controllerIndex: 0,
+      channel: 'WingmanTitle',
+      message: '   ',
+    );
+    await tester.pump();
+    expect(find.text('127.0.0.1'), findsOneWidget);
+
+    setFakeTitleRetrievalFailure(controllerIndex: 0, fails: true);
+    submitFakePageFinished(controllerIndex: 0, url: flightDeckUrl);
+    await tester.pumpAndSettle();
+    expect(find.text('127.0.0.1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('Close tab'));
     await tester.pump();
@@ -431,8 +469,58 @@ void main() {
     );
     await tester.pump();
 
+    setFakePageTitle(controllerIndex: 1, title: 'Overview · Pete Workspace');
+    submitFakePageFinished(controllerIndex: 1, url: flightDeckUrl);
+    await tester.pumpAndSettle();
+
     expect(fakeLoadedRequestUrls.last, flightDeckUrl);
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('Overview · Pete Workspace'), findsOneWidget);
+  });
+
+  testWidgets('restored generic web labels are replaced by the live title',
+      (tester) async {
+    const signer = 'npub-restored-live-title';
+    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    final preferences = SharedPreferencesAsync();
+    await preferences.setString('wingman.browser.last_signer_npub.v1', signer);
+    await preferences.setString(
+      'wingman.browser.tabs.v1.$signer',
+      '{"version":2,"active_index":0,"tabs":['
+          '{"title":"Flight Deck","url":"$flightDeckUrl","is_home":false}'
+          ']}',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BrowserScreen(
+            config: AppConfig.defaults().copyWith(deviceNpub: signer),
+            localFlightDeckUrl: flightDeckUrl,
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final restoredController = fakeWebViewControllerCreationCount - 1;
+    setFakePageTitle(
+      controllerIndex: restoredController,
+      title: 'Board · Restored Workspace',
+    );
+    submitFakePageFinished(
+      controllerIndex: restoredController,
+      url: flightDeckUrl,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Board · Restored Workspace'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsNothing);
   });
 
   testWidgets('existing browser state seeds packaged Flight Deck only once',
@@ -464,7 +552,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('127.0.0.1'), findsOneWidget);
     expect(find.text('New Tab'), findsOneWidget);
     expect(activeBrowserStackIndex(tester), 0);
 

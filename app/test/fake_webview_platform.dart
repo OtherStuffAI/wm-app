@@ -37,6 +37,27 @@ void submitFakeJavaScriptMessage({
   );
 }
 
+void setFakePageTitle({
+  required int controllerIndex,
+  required String? title,
+}) {
+  _fakeWebViewControllers[controllerIndex]._title = title;
+}
+
+void setFakeTitleRetrievalFailure({
+  required int controllerIndex,
+  required bool fails,
+}) {
+  _fakeWebViewControllers[controllerIndex]._titleRetrievalFails = fails;
+}
+
+void submitFakePageFinished({
+  required int controllerIndex,
+  required String url,
+}) {
+  _fakeWebViewControllers[controllerIndex].finish(url);
+}
+
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
   fakeLoadedRequestUrls.clear();
@@ -87,6 +108,8 @@ class _FakePlatformWebViewController extends PlatformWebViewController
 
   _FakePlatformNavigationDelegate? _navigationDelegate;
   String? _currentUrl;
+  String? _title;
+  bool _titleRetrievalFails = false;
   final Map<String, void Function(JavaScriptMessage)> _javaScriptChannels = {};
 
   @override
@@ -158,7 +181,10 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   }
 
   @override
-  Future<String?> getTitle() async => null;
+  Future<String?> getTitle() async {
+    if (_titleRetrievalFails) throw StateError('Fake title retrieval failure');
+    return _title;
+  }
 
   Future<NavigationDecision?> requestNavigation(
     NavigationRequest request,
@@ -173,6 +199,11 @@ class _FakePlatformWebViewController extends PlatformWebViewController
 
   void postJavaScriptMessage(String channel, String message) {
     _javaScriptChannels[channel]?.call(JavaScriptMessage(message: message));
+  }
+
+  void finish(String url) {
+    _currentUrl = url;
+    _navigationDelegate?.finish(url);
   }
 }
 
