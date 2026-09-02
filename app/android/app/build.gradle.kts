@@ -30,6 +30,10 @@ val buildFipsRustArm64 by tasks.registering(Exec::class) {
             .filter(String::isNotBlank)
             .joinToString(File.pathSeparator),
     )
+    // rustup otherwise re-evaluates dependency-owned rust-toolchain files from
+    // Cargo's per-crate working directories, mixing compiler versions in one
+    // Android build. Keep the durable native build on one installed toolchain.
+    environment("RUSTUP_TOOLCHAIN", "stable")
     commandLine(
         "cargo", "ndk", "-t", "arm64-v8a", "-o", fipsNativeOutput.absolutePath,
         "build", "--locked", "--release", "-p", "wmapp-fips-android",
