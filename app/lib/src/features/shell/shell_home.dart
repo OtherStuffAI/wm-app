@@ -17,6 +17,7 @@ class ShellHome extends StatefulWidget {
     required this.config,
     this.localFlightDeckUrl = '',
     this.flightDeckUpdates,
+    this.fipsRuntime,
     required this.bridge,
     required this.signerStore,
     required this.onConfigChanged,
@@ -27,6 +28,7 @@ class ShellHome extends StatefulWidget {
   final AppConfig config;
   final String localFlightDeckUrl;
   final FlightDeckUpdateController? flightDeckUpdates;
+  final FipsRuntimeService? fipsRuntime;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
@@ -45,7 +47,9 @@ class _ShellHomeState extends State<ShellHome> {
   final ValueNotifier<BrowserBookmarkMenuState> _bookmarkMenuState =
       ValueNotifier(const BrowserBookmarkMenuState.unavailable());
   final MacOSMenuBridge _macOSMenuBridge = MacOSMenuBridge();
-  late final FipsRuntimeService _fipsRuntime = FipsRuntimeService();
+  late final FipsRuntimeService _fipsRuntime =
+      widget.fipsRuntime ?? FipsRuntimeService();
+  bool _fipsDiagnosticsExportBusy = false;
 
   @override
   void initState() {
@@ -267,16 +271,44 @@ class _ShellHomeState extends State<ShellHome> {
     if (status.canAttemptAppAccess) return null;
     if (!mounted) return status.detail;
 
+    final supportsExport = _fipsRuntime.supportsDiagnosticsExport;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(status.detail),
+        content: Row(
+          children: [
+            Expanded(child: Text(status.detail)),
+            if (supportsExport)
+              TextButton(
+                key: const ValueKey('fips-failure-open-setup'),
+                onPressed: () => _selectSurface(ShellSurface.setup),
+                child: const Text('Setup'),
+              ),
+          ],
+        ),
         action: SnackBarAction(
-          label: 'Setup',
-          onPressed: () => _selectSurface(ShellSurface.setup),
+          label: supportsExport ? 'Export' : 'Setup',
+          onPressed: supportsExport
+              ? _exportFipsDiagnosticsFromFailure
+              : () => _selectSurface(ShellSurface.setup),
         ),
       ),
     );
     return status.detail;
+  }
+
+  Future<void> _exportFipsDiagnosticsFromFailure() async {
+    if (_fipsDiagnosticsExportBusy) return;
+    _fipsDiagnosticsExportBusy = true;
+    final result = await _fipsRuntime.exportDiagnostics();
+    _fipsDiagnosticsExportBusy = false;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.outcome == FipsDiagnosticsExportOutcome.cancelled
+            ? 'Diagnostics export cancelled.'
+            : result.detail),
+      ),
+    );
   }
 
   int _surfaceIndex(ShellSurface surface) {

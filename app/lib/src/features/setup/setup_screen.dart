@@ -42,7 +42,9 @@ class _SetupScreenState extends State<SetupScreen> {
   late bool _rememberNip98Approvals;
   late bool _displayExperimentalFlightDeckDriveSync;
   String? _message;
+  String? _fipsMessage;
   bool _busy = false;
+  bool _exportBusy = false;
   FipsRuntimeStatus? _fipsStatus;
 
   @override
@@ -290,6 +292,26 @@ class _SetupScreenState extends State<SetupScreen> {
                     icon: const Icon(Icons.admin_panel_settings_outlined),
                     label: const Text('Install or repair'),
                   ),
+                if (widget.fipsRuntime.supportsDiagnosticsExport)
+                  OutlinedButton.icon(
+                    key: const ValueKey('fips-export-diagnostics'),
+                    onPressed: _exportBusy ? null : _exportFipsDiagnostics,
+                    icon: _exportBusy
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share_outlined),
+                    label:
+                        Text(_exportBusy ? 'Exporting…' : 'Export diagnostics'),
+                  ),
+                if (widget.fipsRuntime.supportsDiagnosticsExport)
+                  TextButton.icon(
+                    key: const ValueKey('fips-clear-diagnostics'),
+                    onPressed: _exportBusy ? null : _clearFipsDiagnostics,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Clear diagnostics'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _openFipsApp,
                   icon: const Icon(Icons.open_in_browser),
@@ -297,6 +319,10 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ],
             ),
+            if (_fipsMessage != null) ...[
+              const SizedBox(height: 10),
+              Text(_fipsMessage!),
+            ],
           ],
         ),
       ),
@@ -327,6 +353,10 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _installOrRepairFips() async {
+    if (_fipsStatus?.state == FipsRuntimeState.failed) {
+      await widget.fipsRuntime.recordUiRetry();
+      if (!mounted) return;
+    }
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -354,6 +384,33 @@ class _SetupScreenState extends State<SetupScreen> {
         });
       }
       return status.detail;
+    });
+  }
+
+  Future<void> _exportFipsDiagnostics() async {
+    if (_exportBusy) return;
+    setState(() {
+      _exportBusy = true;
+      _fipsMessage = 'Choose where to save FIPS diagnostics…';
+    });
+    final result = await widget.fipsRuntime.exportDiagnostics();
+    if (!mounted) return;
+    setState(() {
+      _exportBusy = false;
+      _fipsMessage = switch (result.outcome) {
+        FipsDiagnosticsExportOutcome.success => result.detail,
+        FipsDiagnosticsExportOutcome.cancelled =>
+          'Diagnostics export cancelled.',
+        FipsDiagnosticsExportOutcome.failed => result.detail,
+      };
+    });
+  }
+
+  Future<void> _clearFipsDiagnostics() async {
+    final detail = await widget.fipsRuntime.clearDiagnostics();
+    if (!mounted) return;
+    setState(() {
+      _fipsMessage = detail;
     });
   }
 

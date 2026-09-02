@@ -1,6 +1,7 @@
 package com.wingmanbefree.wingman_app.fips
 
 import android.content.Intent
+import android.net.Uri
 import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
@@ -18,12 +19,33 @@ import java.util.concurrent.TimeUnit
 internal class FipsRuntimeCoordinator(
     private val activity: MainActivity,
     private val launchConsent: (Intent) -> Unit,
+    private val launchDiagnosticsExport: (String) -> Unit,
 ) : MethodChannel.MethodCallHandler {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val timer: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var alive = true
     private var preparedConsentIntent: Intent? = null
+    private val journal = FipsDiagnostics.get(activity.applicationContext)
+
+    private val exportOperation = FipsDiagnosticsExportOperation(object : FipsDiagnosticsExportEnvironment {
+        override fun hasActivity() = alive && !activity.isFinishing && !activity.isDestroyed
+        override fun launch(filename: String): Boolean {
+            launchDiagnosticsExport(filename)
+            FipsDiagnostics.record(activity, "export_picker_launched", phase = "export")
+            return true
+        }
+        override fun runBackground(task: () -> Unit) = execute(worker, task)
+        override fun runMain(task: () -> Unit) = postMain(task)
+        override fun contents() = journal.exportText()
+        override fun record(eventCode: String) =
+            FipsDiagnostics.record(activity, eventCode, phase = "export")
+        override fun write(destination: String, contents: String) {
+            val stream = activity.contentResolver.openOutputStream(Uri.parse(destination), "wt")
+                ?: throw IllegalStateException("output unavailable")
+            stream.bufferedWriter(Charsets.UTF_8).use { it.write(contents) }
+        }
+    })
 
     private val startOperation = FipsStartOperation(object : FipsStartEnvironment {
         override fun runBackground(task: () -> Unit): Boolean = execute(worker, task)
@@ -35,17 +57,20 @@ internal class FipsRuntimeCoordinator(
         }
 
         override fun resetForStart() {
+            log("reset_started")
             FipsVpnServiceFailure.clear()
             FipsVpnService.resetForStart(activity.applicationContext)
+            log("reset_completed")
         }
 
         override fun prepareNative(): String {
+            log("native_prepare_started")
             val fipsDir = File(activity.filesDir, "fips")
             if (!fipsDir.exists() && !fipsDir.mkdirs()) throw IllegalStateException("directory unavailable")
             return FipsNative.nativePrepare(
                 File(fipsDir, "fips.machine.key").absolutePath,
                 File(fipsDir, "control.sock").absolutePath,
-            )
+            ).also { log("native_prepare_completed") }
         }
 
         override fun prepareVpnConsent(): Boolean {
@@ -79,6 +104,12 @@ internal class FipsRuntimeCoordinator(
         override fun log(event: String, failure: Throwable?) {
             if (failure == null) Log.i(TAG, event)
             else Log.e(TAG, "$event (${failure.javaClass.simpleName})")
+            FipsDiagnostics.record(
+                activity, event, phase = phaseFor(event),
+                fipsStatus = statusFor(event), consentState = consentFor(event),
+                errorCode = errorFor(event), serviceState = serviceFor(event), failure = failure,
+                critical = event in CRITICAL_EVENTS,
+            )
         }
     })
 
@@ -87,6 +118,19 @@ internal class FipsRuntimeCoordinator(
             when (call.method) {
                 "inspect" -> inspect(result)
                 "start", "repair" -> startOperation.start(result.asCompletion())
+                "exportDiagnostics" -> exportOperation.start(result.asCompletion())
+                "clearDiagnostics" -> backgroundMap(result) {
+                    journal.clear()
+                    mapOf("outcome" to "success", "code" to "diagnostics_cleared", "detail" to "FIPS diagnostics cleared.")
+                }
+                "journalEvent" -> {
+                    val event = call.argument<String>("eventCode")
+                    if (event !in DART_EVENTS) safeSuccess(result, mapOf("outcome" to "failed", "code" to "invalid_event", "detail" to "Diagnostic event rejected."))
+                    else {
+                        FipsDiagnostics.record(activity, event!!, phase = "dart_boundary")
+                        safeSuccess(result, mapOf("outcome" to "success", "code" to "event_recorded", "detail" to "Diagnostic event recorded."))
+                    }
+                }
                 "stop" -> backgroundStatus(result) {
                     FipsVpnService.stop(activity.applicationContext)
                     FipsStatus.fromNative(FipsNative.nativeInspect(), "Embedded FIPS could not stop safely.")
@@ -117,10 +161,13 @@ internal class FipsRuntimeCoordinator(
     }
 
     fun onVpnConsentResult(granted: Boolean): Boolean = startOperation.onVpnConsentResult(granted)
+    fun onDiagnosticsDestination(destination: String?) = exportOperation.onDestination(destination)
 
     fun destroy() {
         if (!alive) return
         startOperation.destroy()
+        exportOperation.destroy()
+        FipsDiagnostics.record(activity, "activity_destroyed", phase = "activity", critical = true)
         alive = false
         preparedConsentIntent = null
         worker.shutdownNow()
@@ -251,7 +298,46 @@ internal class FipsRuntimeCoordinator(
         // Event codes plus exception classes are actionable in logcat without
         // exposing native payloads, identities, secrets, or filesystem paths.
         Log.e(TAG, "$event (${failure.javaClass.simpleName})")
+        FipsDiagnostics.record(
+            activity, event, phase = phaseFor(event), fipsStatus = "failed",
+            errorCode = event, failure = failure,
+        )
     }
 
-    companion object { private const val TAG = "WMAppFips" }
+    private fun phaseFor(event: String) = when {
+        event.contains("consent") -> "consent"
+        event.contains("service") || event.contains("foreground") -> "service"
+        event.contains("ready") || event.contains("readiness") || event.contains("poll") -> "readiness"
+        event.contains("prepare") || event.contains("reset") -> "native_prepare"
+        event.contains("timeout") -> "timeout"
+        event.contains("destroy") -> "activity"
+        else -> "coordinator"
+    }
+    private fun statusFor(event: String) = when {
+        event == "native_ready" -> "running"
+        event.contains("failed") || event.contains("timeout") || event.contains("interrupted") -> "failed"
+        event.contains("start") || event.contains("prepare") || event.contains("poll") -> "starting"
+        else -> "unknown"
+    }
+    private fun consentFor(event: String) = when (event) {
+        "consent_launched" -> "launched"
+        "consent_granted" -> "granted"
+        "consent_cancelled" -> "cancelled"
+        "consent_not_required" -> "already_granted"
+        else -> "unknown"
+    }
+    private fun errorFor(event: String) =
+        event.takeIf { it.contains("failed") || it.contains("timeout") || it.contains("cancelled") }
+            ?: "none"
+    private fun serviceFor(event: String) = when {
+        event == "service_launch_requested" -> "requested"
+        event.contains("service") && event.contains("failed") -> "failed"
+        else -> "unknown"
+    }
+
+    companion object {
+        private const val TAG = "WMAppFips"
+        private val CRITICAL_EVENTS = setOf("native_prepare_started", "service_launch_requested", "start_timeout", "activity_destroyed")
+        private val DART_EVENTS = setOf("dart_inspect_failed", "dart_start_requested", "dart_start_failed", "dart_ui_retry", "dart_export_requested", "dart_export_failed")
+    }
 }

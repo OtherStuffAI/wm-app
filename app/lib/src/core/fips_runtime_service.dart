@@ -49,6 +49,15 @@ class FipsProbeResult {
   final String detail;
 }
 
+enum FipsDiagnosticsExportOutcome { success, cancelled, failed }
+
+class FipsDiagnosticsExportResult {
+  const FipsDiagnosticsExportResult(
+      {required this.outcome, required this.detail});
+  final FipsDiagnosticsExportOutcome outcome;
+  final String detail;
+}
+
 class FipsCommand {
   const FipsCommand(this.executable, this.arguments);
 
@@ -62,6 +71,9 @@ abstract class FipsAndroidRuntimeChannel {
   Future<Map<String, dynamic>> stop();
   Future<Map<String, dynamic>> peerStatus();
   Future<Map<String, dynamic>> probe(String npub);
+  Future<Map<String, dynamic>> exportDiagnostics();
+  Future<Map<String, dynamic>> clearDiagnostics();
+  Future<Map<String, dynamic>> journalEvent(String eventCode);
 }
 
 class MethodChannelFipsAndroidRuntime implements FipsAndroidRuntimeChannel {
@@ -87,6 +99,18 @@ class MethodChannelFipsAndroidRuntime implements FipsAndroidRuntimeChannel {
   @override
   Future<Map<String, dynamic>> probe(String npub) =>
       _invoke('probe', {'npub': npub});
+
+  @override
+  Future<Map<String, dynamic>> exportDiagnostics() =>
+      _invoke('exportDiagnostics');
+
+  @override
+  Future<Map<String, dynamic>> clearDiagnostics() =>
+      _invoke('clearDiagnostics');
+
+  @override
+  Future<Map<String, dynamic>> journalEvent(String eventCode) =>
+      _invoke('journalEvent', {'eventCode': eventCode});
 
   Future<Map<String, dynamic>> _invoke(
     String method, [
@@ -150,7 +174,67 @@ class FipsRuntimeService {
   final Future<bool> Function(String path) _fileExists;
   final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
+  bool _diagnosticsExportInProgress = false;
   Future<FipsRuntimeStatus>? _ensureReadyOperation;
+
+  bool get supportsDiagnosticsExport => _isAndroid;
+
+  Future<FipsDiagnosticsExportResult> exportDiagnostics() async {
+    if (!_isAndroid) {
+      return const FipsDiagnosticsExportResult(
+        outcome: FipsDiagnosticsExportOutcome.failed,
+        detail: 'FIPS diagnostics export is available on Android.',
+      );
+    }
+    if (_diagnosticsExportInProgress) {
+      return const FipsDiagnosticsExportResult(
+        outcome: FipsDiagnosticsExportOutcome.failed,
+        detail: 'A diagnostics export is already in progress.',
+      );
+    }
+    _diagnosticsExportInProgress = true;
+    try {
+      await _recordAndroidEvent('dart_export_requested');
+      final value = await _androidRuntime.exportDiagnostics();
+      final outcome = switch (value['outcome']) {
+        'success' => FipsDiagnosticsExportOutcome.success,
+        'cancelled' => FipsDiagnosticsExportOutcome.cancelled,
+        _ => FipsDiagnosticsExportOutcome.failed,
+      };
+      return FipsDiagnosticsExportResult(
+        outcome: outcome,
+        detail: value['detail']?.toString() ??
+            'Diagnostics export failed. Please retry.',
+      );
+    } catch (_) {
+      await _recordAndroidEvent('dart_export_failed');
+      return const FipsDiagnosticsExportResult(
+        outcome: FipsDiagnosticsExportOutcome.failed,
+        detail: 'Diagnostics export failed unexpectedly. Please retry.',
+      );
+    } finally {
+      _diagnosticsExportInProgress = false;
+    }
+  }
+
+  Future<String> clearDiagnostics() async {
+    if (!_isAndroid) return 'FIPS diagnostics are only retained on Android.';
+    try {
+      final value = await _androidRuntime.clearDiagnostics();
+      return value['detail']?.toString() ?? 'FIPS diagnostics cleared.';
+    } catch (_) {
+      return 'FIPS diagnostics could not be cleared. Please retry.';
+    }
+  }
+
+  Future<void> recordUiRetry() => _recordAndroidEvent('dart_ui_retry');
+
+  Future<void> _recordAndroidEvent(String eventCode) async {
+    if (!_isAndroid) return;
+    try {
+      await _androidRuntime.journalEvent(eventCode);
+    } catch (_) {}
+  }
 
   static String defaultBundledPackagePath({bool? isMacOS, bool? isLinux}) {
     final resolvedIsLinux =
@@ -352,6 +436,7 @@ end run
       try {
         return _androidStatus(await _androidRuntime.inspect());
       } catch (error) {
+        await _recordAndroidEvent('dart_inspect_failed');
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
           detail: _androidBoundaryDetail(
@@ -498,12 +583,14 @@ end run
       }
       _operationInProgress = true;
       try {
+        await _recordAndroidEvent('dart_start_requested');
         final current = await _androidRuntime.inspect();
         final repair = current['state'] == 'degraded' ||
             current['state'] == 'failed' ||
             current['state'] == 'running';
         return _androidStatus(await _androidRuntime.start(repair: repair));
       } catch (error) {
+        await _recordAndroidEvent('dart_start_failed');
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
           detail: _androidBoundaryDetail(

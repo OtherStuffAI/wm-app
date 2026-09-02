@@ -41,6 +41,7 @@ internal class FipsStartOperation(
     private var destroyed = false
 
     fun start(completion: FipsCompletion) {
+        environment.log("start_requested")
         val operation = synchronized(this) {
             if (destroyed) {
                 completion.complete(failed("activity_unavailable", ACTIVITY_UNAVAILABLE))
@@ -71,6 +72,7 @@ internal class FipsStartOperation(
             environment.log("late_consent_result")
             return true
         }
+        environment.log(if (granted) "consent_granted" else "consent_cancelled")
         if (!granted) fail(id, "consent_cancelled", CONSENT_CANCELLED, stopNative = true)
         else launchService(id)
         return true
@@ -123,6 +125,7 @@ internal class FipsStartOperation(
             return
         }
         if (!required) {
+            environment.log("consent_not_required")
             launchService(id)
             return
         }
@@ -159,6 +162,7 @@ internal class FipsStartOperation(
     }
 
     private fun awaitReady(id: Long) {
+        environment.log("readiness_poll_started")
         repeat(pollAttempts) {
             if (!isPending(id)) return
             FipsVpnServiceFailure.consume()?.let {
@@ -173,7 +177,7 @@ internal class FipsStartOperation(
                 return
             }
             when (status["state"]) {
-                "running" -> { finish(id, status); return }
+                "running" -> { environment.log("native_ready"); finish(id, status); return }
                 "failed" -> { fail(id, "native_start_failed", NATIVE_START_FAILED, stopNative = true); return }
             }
             try {

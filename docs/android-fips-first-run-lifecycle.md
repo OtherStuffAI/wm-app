@@ -26,3 +26,11 @@ No physical-device logcat exists for the reported failure, so none of these is c
 ## Notification permission
 
 `POST_NOTIFICATIONS` is not required for foreground-service launch correctness on Android 13 and later. A user denial can suppress the notification from the notification drawer, while Android still surfaces the foreground service in Task Manager. WMAPP therefore does not add a notification permission prompt to this first-run flow; Android VPN consent remains the only required system interaction.
+
+## Exporting startup diagnostics
+
+After reproducing a failed start, Pete can export without Tower, a WebView, or a running FIPS node: open the profile/avatar menu, select **Setup**, find **FIPS transport**, and tap **Export diagnostics**. Android opens its document picker with a name such as `wmapp-fips-diagnostics-20260902-123456Z.txt`; choose a destination, then attach that file to the diagnostic report. A failed `.fips` navigation also offers an immediate **Export** action, while **Setup** remains available for retry or repair.
+
+The UTF-8 file starts with the WMAPP release/build, generation time, privacy notice, and retention policy. Each following JSON line contains only UTC time, release/build, Android/API and safe manufacturer/model metadata, event code, lifecycle phase, FIPS status/error code, consent/service state, and an exception class when it matches the strict class-name allowlist. It does not read system logcat and never includes private keys, nsec, raw Nostr events, NIP-98 or Authorization tokens, bunker/NWC/capability material, certificate or identity secrets, full sensitive paths, request/response payloads, browsing history, arbitrary WebView URLs, exception messages, stack traces, or a broad Android bug report.
+
+The app-private journal survives process restarts and retains only the newest 200 records with a 128 KiB cap. Writes are serialized and atomically replace the prior journal; malformed or truncated lines are ignored during recovery. Normal events run off the activity thread, while a small set of immediately pre-crash lifecycle checkpoints is flushed synchronously. **Clear diagnostics** removes all retained records. Export cancellation, unavailable activity, picker/provider failure, lifecycle destruction, and duplicate taps return concise recoverable outcomes and do not disable **Install or repair**.

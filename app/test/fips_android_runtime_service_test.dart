@@ -17,9 +17,17 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   int inspectCalls = 0;
   int startCalls = 0;
   int peerCalls = 0;
+  int exportCalls = 0;
+  final journalEvents = <String>[];
   Completer<void>? startGate;
   Object? inspectError;
   Object? startError;
+  Object? exportError;
+  Completer<void>? exportGate;
+  Map<String, dynamic> exportResult = const {
+    'outcome': 'success',
+    'detail': 'FIPS diagnostics exported.'
+  };
 
   @override
   Future<Map<String, dynamic>> inspect() async {
@@ -56,6 +64,24 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   Future<Map<String, dynamic>> stop() async {
     status = const {'state': 'notInstalled', 'detail': 'Stopped.'};
     return status;
+  }
+
+  @override
+  Future<Map<String, dynamic>> exportDiagnostics() async {
+    exportCalls += 1;
+    await exportGate?.future;
+    exportError?.letThrow();
+    return exportResult;
+  }
+
+  @override
+  Future<Map<String, dynamic>> clearDiagnostics() async =>
+      const {'outcome': 'success', 'detail': 'FIPS diagnostics cleared.'};
+
+  @override
+  Future<Map<String, dynamic>> journalEvent(String eventCode) async {
+    journalEvents.add(eventCode);
+    return const {'outcome': 'success', 'detail': 'recorded'};
   }
 }
 
@@ -158,5 +184,71 @@ void main() {
     final retry = await runtime.installOrRepair();
     expect(retry.state, FipsRuntimeState.running);
     expect(channel.startCalls, 2);
+  });
+
+  test('maps diagnostics method-channel success cancellation and failure',
+      () async {
+    final channel = FakeAndroidFipsRuntime();
+    final runtime = service(channel);
+
+    expect((await runtime.exportDiagnostics()).outcome,
+        FipsDiagnosticsExportOutcome.success);
+    channel.exportResult = const {
+      'outcome': 'cancelled',
+      'detail': 'Diagnostics export cancelled.',
+    };
+    expect((await runtime.exportDiagnostics()).outcome,
+        FipsDiagnosticsExportOutcome.cancelled);
+    channel.exportResult = const {
+      'outcome': 'failed',
+      'detail': 'Android could not write the diagnostics file. Please retry.',
+    };
+    final failed = await runtime.exportDiagnostics();
+    expect(failed.outcome, FipsDiagnosticsExportOutcome.failed);
+    expect(failed.detail, contains('Please retry'));
+    expect(channel.journalEvents, everyElement('dart_export_requested'));
+  });
+
+  test('unexpected diagnostics method-channel error is private and retryable',
+      () async {
+    final channel = FakeAndroidFipsRuntime()
+      ..exportError = StateError('Authorization: Nostr private-token');
+    final runtime = service(channel);
+
+    final failed = await runtime.exportDiagnostics();
+    expect(failed.outcome, FipsDiagnosticsExportOutcome.failed);
+    expect(failed.detail, contains('unexpectedly'));
+    expect(failed.detail, isNot(contains('private-token')));
+
+    channel.exportError = null;
+    expect((await runtime.exportDiagnostics()).outcome,
+        FipsDiagnosticsExportOutcome.success);
+  });
+
+  test('duplicate diagnostics export calls invoke native channel once',
+      () async {
+    final channel = FakeAndroidFipsRuntime()..exportGate = Completer<void>();
+    final runtime = service(channel);
+    final first = runtime.exportDiagnostics();
+    await Future<void>.delayed(Duration.zero);
+
+    final duplicate = await runtime.exportDiagnostics();
+    expect(duplicate.outcome, FipsDiagnosticsExportOutcome.failed);
+    expect(duplicate.detail, contains('already in progress'));
+    expect(channel.exportCalls, 1);
+
+    channel.exportGate!.complete();
+    expect((await first).outcome, FipsDiagnosticsExportOutcome.success);
+  });
+
+  test('unsupported platforms do not advertise diagnostics export', () async {
+    final runtime = FipsRuntimeService(
+      isMacOS: false,
+      isLinux: true,
+      isAndroid: false,
+    );
+    expect(runtime.supportsDiagnosticsExport, isFalse);
+    expect((await runtime.exportDiagnostics()).outcome,
+        FipsDiagnosticsExportOutcome.failed);
   });
 }

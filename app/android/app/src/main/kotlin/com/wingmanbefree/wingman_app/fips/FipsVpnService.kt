@@ -27,10 +27,12 @@ class FipsVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        diagnostic("service_create_started", serviceState = "creating", critical = true)
         try {
             promote("Starting embedded FIPS mesh…")
             current = this
             Log.i(TAG, "service_created")
+            diagnostic("foreground_promoted", serviceState = "foreground", critical = true)
         } catch (failure: Throwable) {
             creationFailed = true
             recordFailure("foreground_start_failed", "Android could not show the FIPS VPN foreground service.", failure)
@@ -72,6 +74,7 @@ class FipsVpnService : VpnService() {
     @Synchronized
     private fun establishAndRun() {
         if (stopped || tun != null) return
+        diagnostic("vpn_establish_started", phase = "vpn", serviceState = "starting", critical = true)
         val metadata = JSONObject(FipsNative.nativeInspect())
         val ipv6 = metadata.optString("ipv6")
         if (ipv6.isBlank()) {
@@ -107,7 +110,9 @@ class FipsVpnService : VpnService() {
             return
         }
         tun = descriptor
+        diagnostic("vpn_established", phase = "vpn", serviceState = "established", critical = true)
 
+        diagnostic("native_start_started", phase = "native_start", fipsStatus = "starting", critical = true)
         val started = JSONObject(FipsNative.nativeStartNode())
         val sockets = started.optJSONArray("transportSockets")
         if (!started.optBoolean("ok") || sockets == null || sockets.length() == 0) {
@@ -130,6 +135,7 @@ class FipsVpnService : VpnService() {
             failClosed("native_run_failed", "Embedded FIPS did not enter its running state.")
             return
         }
+        diagnostic("native_running", phase = "readiness", fipsStatus = "running", serviceState = "running", critical = true)
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification("Routing fd00::/8 and .fips DNS"))
     }
@@ -179,11 +185,13 @@ class FipsVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        diagnostic("vpn_revoked", phase = "vpn", consentState = "revoked", serviceState = "stopping")
         executeWorker { shutdown() }
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        diagnostic("service_destroyed", serviceState = "destroyed", critical = true)
         if (current === this) current = null
         if (!stopped && !worker.isShutdown) {
             executeWorker { shutdown() }
@@ -243,9 +251,23 @@ class FipsVpnService : VpnService() {
 
     private fun recordFailure(code: String, detail: String, failure: Throwable? = null) {
         FipsVpnServiceFailure.record(code, detail)
+        diagnostic(code, fipsStatus = "failed", errorCode = code, serviceState = "failed", failure = failure, critical = true)
         if (failure == null) Log.e(TAG, code)
         else Log.e(TAG, "$code (${failure.javaClass.simpleName})")
     }
+
+    private fun diagnostic(
+        event: String,
+        phase: String = "service",
+        fipsStatus: String = "unknown",
+        errorCode: String = "unknown",
+        consentState: String = "unknown",
+        serviceState: String = "unknown",
+        failure: Throwable? = null,
+        critical: Boolean = false,
+    ) = FipsDiagnostics.record(
+        this, event, phase, fipsStatus, errorCode, consentState, serviceState, failure, critical,
+    )
 
     companion object {
         private const val ACTION_STOP = "com.wingmanbefree.wingman_app.fips.STOP"
@@ -269,6 +291,7 @@ class FipsVpnService : VpnService() {
                     "Android blocked the embedded FIPS VPN from starting. Please retry from WM-App.",
                 )
                 Log.e(TAG, "service_launch_failed (${failure.javaClass.simpleName})")
+                FipsDiagnostics.record(context, "service_launch_failed", phase = "service", fipsStatus = "failed", errorCode = "service_launch_failed", serviceState = "failed", failure = failure, critical = true)
                 throw failure
             }
         }

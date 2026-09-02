@@ -18,9 +18,17 @@ class MainActivity : FlutterFragmentActivity() {
         fipsCoordinator?.onVpnConsentResult(activityResult.resultCode == Activity.RESULT_OK)
     }
 
+    private val diagnosticsExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri -> fipsCoordinator?.onDiagnosticsDestination(uri?.toString()) }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        val coordinator = FipsRuntimeCoordinator(this) { vpnConsentLauncher.launch(it) }
+        val coordinator = FipsRuntimeCoordinator(
+            this,
+            launchConsent = { vpnConsentLauncher.launch(it) },
+            launchDiagnosticsExport = { diagnosticsExportLauncher.launch(it) },
+        )
         fipsCoordinator = coordinator
         fipsChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
