@@ -411,7 +411,7 @@ void main() {
     await tester.pump();
 
     expect(fakeLoadedRequestUrls.single, flightDeckUrl);
-    expect(find.text('127.0.0.1'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsOneWidget);
 
     setFakePageTitle(
       controllerIndex: 0,
@@ -442,12 +442,12 @@ void main() {
       message: '   ',
     );
     await tester.pump();
-    expect(find.text('127.0.0.1'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsOneWidget);
 
     setFakeTitleRetrievalFailure(controllerIndex: 0, fails: true);
     submitFakePageFinished(controllerIndex: 0, url: flightDeckUrl);
     await tester.pumpAndSettle();
-    expect(find.text('127.0.0.1'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('Close tab'));
@@ -552,7 +552,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('127.0.0.1'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsOneWidget);
     expect(find.text('New Tab'), findsOneWidget);
     expect(activeBrowserStackIndex(tester), 0);
 

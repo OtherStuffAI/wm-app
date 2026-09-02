@@ -964,7 +964,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.isHome = false;
       tab.currentUrl = uri.toString();
       tab.addressController.text = tab.currentUrl!;
-      tab.title = _titleForUrl(tab.currentUrl!);
+      tab.title = _resolvedPageTitle(null, tab.currentUrl!);
       tab.message = null;
       if (hideAddressBarAfterLoad) {
         _addressBarHideTimer?.cancel();
@@ -1194,7 +1194,9 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   String _resolvedPageTitle(String? title, String url) {
     final normalized = title?.trim() ?? '';
-    return normalized.isNotEmpty ? normalized : _titleForUrl(url);
+    if (normalized.isNotEmpty) return normalized;
+    if (_isLocalFlightDeckUrl(url)) return _flightDeckTitle;
+    return _titleForUrl(url);
   }
 
   void _onTitleMessage(int tabId, JavaScriptMessage message) {
