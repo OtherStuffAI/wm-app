@@ -16,6 +16,8 @@ Active development uses the private repository
 `https://github.com/OtherStuffAI/wm-app` checked out at
 `~/code/wm/wmapp`. Its Flight Deck bundle updater defaults to the sibling
 `~/code/wm/flightdeck` checkout; set `FLIGHT_DECK_DIR` to use another source.
+Pass `--use-existing-dist` when packaging a previously verified build without
+rebuilding or mutating its source checkout.
 
 The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
 should not be used for new changes.

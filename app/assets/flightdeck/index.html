@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260903-0210-2-1870">
+  <meta name="flightdeck-build-id" content="20260903-0542-2-1870">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -113,7 +113,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-cagnGOaa.js"></script>
+  <script type="module" crossorigin src="/assets/index-DBm0cRjM.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DaVAVcKw.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -4396,9 +4396,6 @@
                   <div><strong>Editing reply</strong><span x-show="$store.chat.messageEdit.error" x-text="$store.chat.messageEdit.error"></span></div>
                   <button type="button" @click="$store.chat.cancelMessageEdit()" :disabled="$store.chat.messageEdit.submitting">Cancel</button>
                 </div>
-                <p class="thread-branch-recipient" x-show="$store.chat.getActiveBranchRecipientNpub()" x-cloak aria-live="polite">
-                  First message starts a fresh Agent Direct session with <strong x-text="$store.chat.getSenderName($store.chat.getActiveBranchRecipientNpub())"></strong>.
-                </p>
                 <div class="recent-mention-chips" x-show="$store.chat.getRecentMentionChips('thread').length" x-cloak aria-label="Recently mentioned participants">
                   <template x-for="person in $store.chat.getRecentMentionChips('thread')" :key="person.id">
                     <div class="recent-mention-chip-group">
