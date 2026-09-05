@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260905-0819-6-1877">
+  <meta name="flightdeck-build-id" content="20260905-0845-7-1878">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -113,7 +113,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BwoI91Ur.js"></script>
+  <script type="module" crossorigin src="/assets/index-DtHO9ojX.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DTCpEY4j.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -1968,7 +1968,7 @@
                   </div>
                 </template>
               </div>
-              <p class="settings-field-help inbox-no-results" x-show="$store.chat.filteredAutopilotOverviewInbox.length === 0" role="status" x-text="$store.chat.inboxActivityLoading ? 'Loading activity…' : ($store.chat.deckInboxSearchQuery.trim() ? 'No Inbox cards match your search.' : 'No matching activity.')"></p>
+              <p class="settings-field-help inbox-no-results" x-show="$store.chat.filteredAutopilotOverviewInbox.length === 0" role="status" x-text="$store.chat.inboxActivityLoading ? 'Loading activity…' : ($store.chat.hasMoreAutopilotOverviewInbox ? 'No matches in this page. Load older activity to keep looking.' : ($store.chat.deckInboxSearchQuery.trim() ? 'No Inbox cards match your search.' : 'No matching activity.'))"></p>
               <button type="button" class="inbox-load-more" :disabled="$store.chat.inboxActivityLoading" x-show="$store.chat.hasMoreAutopilotOverviewInbox" x-cloak @click="$store.chat.revealMoreDeckInbox()" aria-label="Load 50 more Inbox cards or older activity">Load older activity</button>
             </section>
 
