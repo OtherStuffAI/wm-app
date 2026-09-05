@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="20260905-0845-7-1878">
+  <meta name="flightdeck-build-id" content="20260905-1046-11-1882">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -113,7 +113,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-DtHO9ojX.js"></script>
+  <script type="module" crossorigin src="/assets/index-CYOnj2T2.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DTCpEY4j.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -4180,6 +4180,13 @@
                 <p>Your first message starts this thread in <strong x-text="'#' + ($store.chat.getChannelLabel($store.chat.activeThreadChannel) || 'channel')"></strong>.</p>
               </div>
               <div class="thread-replies" data-thread-replies x-show="!$store.chat.deckThreadComposerOpen">
+                <template x-if="$store.chat.navSection === 'status'">
+                  <div>
+                    <p x-show="$store.chat.threadHistoryLoading" role="status">Loading conversation history…</p>
+                    <p x-show="$store.chat.threadHistoryError" x-text="$store.chat.threadHistoryError" role="alert"></p>
+                    <button type="button" class="thread-load-more-btn" x-show="$store.chat.threadHistoryCursor || $store.chat.threadHistoryError" :disabled="$store.chat.threadHistoryLoading" @click="$store.chat.loadDeckThreadHistoryPage()">Load more conversation history</button>
+                  </div>
+                </template>
                 <button
                   type="button"
                   class="thread-load-more-btn"
