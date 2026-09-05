@@ -543,7 +543,8 @@ class BrowserScreenState extends State<BrowserScreen> {
         epoch != _profileEpoch) {
       return;
     }
-    final cached = await _profileStore.saveRemote(deviceNpub, fetched);
+    final cached = await _profileStore.saveRemote(deviceNpub, fetched.profile,
+        createdAt: fetched.createdAt);
     if (!mounted ||
         widget.config.deviceNpub != deviceNpub ||
         epoch != _profileEpoch) {

@@ -83,3 +83,12 @@ During development, the old mandatory-import first-run expectation was updated, 
 - `app/lib/src/features/setup/setup_screen.dart`: immutable identity fields and explicit configured Tower registration.
 - `app/test/avatar_onboarding_test.dart`, `nostr_profile_publication_test.dart`, `signer_vault_test.dart`, `widget_test.dart`: focused and regression coverage.
 - `app/README.md` and this preserved handoff: flow documentation, evidence and limitations.
+
+## Review correction: profile refresh after publication
+
+The permanent local-authorship policy described in the original worker handoff
+above is superseded by the focused correction in
+[2026-09-05-avatar-profile-refresh-followup.md](2026-09-05-avatar-profile-refresh-followup.md).
+Unsent drafts remain protected; acknowledgement of the current revision permits
+strictly newer remote kind-0 profiles. See that handoff for correction validation
+and limitations. Original implementation evidence above is historical.

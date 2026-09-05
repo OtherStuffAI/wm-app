@@ -33,11 +33,12 @@ class ObservedVault extends SignerVault {
 
 class FakeProfileRelays extends NostrProfileRelayClient {
   FakeProfileRelays() : super(relays: []);
-  final refresh = Completer<NostrProfile?>();
+  final refresh = Completer<NostrProfileRelayResult?>();
   final events = <Map<String, dynamic>>[];
   bool accept = false;
   @override
-  Future<NostrProfile?> fetchProfile(String publicKeyHex) => refresh.future;
+  Future<NostrProfileRelayResult?> fetchProfile(String publicKeyHex) =>
+      refresh.future;
   @override
   Future<ProfilePublishResult> publish(Map<String, dynamic> event) async {
     events.add(event);
@@ -179,7 +180,8 @@ void main() {
     await tester.pumpAndSettle();
     await openAvatar(tester, 'Edit profile');
     await tester.enterText(field('Display name'), 'Local draft');
-    relays.refresh.complete(const NostrProfile(displayName: 'Stale remote'));
+    relays.refresh.complete(const NostrProfileRelayResult(
+        profile: NostrProfile(displayName: 'Stale remote'), createdAt: 100));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sign and publish'));
     await tester.pumpAndSettle();
@@ -236,7 +238,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pumpWidget(browser(second));
     await tester.pumpAndSettle();
-    relays.refresh.complete(const NostrProfile(displayName: 'Late result'));
+    relays.refresh.complete(const NostrProfileRelayResult(
+        profile: NostrProfile(displayName: 'Late result'), createdAt: 100));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();

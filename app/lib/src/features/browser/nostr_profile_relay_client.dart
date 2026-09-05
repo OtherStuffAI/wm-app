@@ -64,7 +64,7 @@ class NostrProfileRelayClient {
     );
   }
 
-  Future<NostrProfile?> fetchProfile(String publicKeyHex) async {
+  Future<NostrProfileRelayResult?> fetchProfile(String publicKeyHex) async {
     final trimmed = publicKeyHex.trim().toLowerCase();
     if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(trimmed) || relays.isEmpty) {
       return null;
@@ -78,7 +78,7 @@ class NostrProfileRelayClient {
         latest = result;
       }
     }
-    return latest?.profile;
+    return latest;
   }
 
   Future<NostrProfileRelayResult?> _fetchFromRelay(

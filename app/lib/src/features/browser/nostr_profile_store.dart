@@ -19,18 +19,72 @@ class NostrProfileStore {
     return NostrProfile.tryParse(raw) ?? const NostrProfile();
   }
 
-  // Serialize writes across store instances so a delayed refresh cannot win
-  // against an edit. Authored profiles remain authoritative across restarts.
+  // Serialize read/modify/write operations across store instances per identity.
   static final Map<String, Future<void>> _writes = {};
 
   Future<NostrProfile> save(String npub, NostrProfile profile) =>
-      _save(npub, profile, localEdit: true);
+      _mutate(npub, (state) async {
+        _setDraft(state, profile);
+        return profile;
+      });
 
-  Future<NostrProfile> saveRemote(String npub, NostrProfile profile) =>
-      _save(npub, profile, localEdit: false);
+  /// Atomically save this draft and reserve its event timestamp before signing.
+  Future<ProfilePublication> preparePublication(
+          String npub, NostrProfile profile, int nowSeconds) =>
+      _mutate(npub, (state) async {
+        final last = _timestamp(state, 'last_publish_created_at');
+        final remote = _timestamp(state, 'remote_created_at');
+        var createdAt = nowSeconds;
+        if (createdAt <= last) createdAt = last + 1;
+        if (createdAt <= remote) createdAt = remote + 1;
+        _setDraft(state, profile);
+        state['last_publish_created_at'] = createdAt;
+        return ProfilePublication(
+            revision: state['draft_revision'] as int, createdAt: createdAt);
+      });
 
-  Future<NostrProfile> _save(String npub, NostrProfile profile,
-      {required bool localEdit}) async {
+  Future<void> acknowledgePublication(
+          String npub, ProfilePublication publication) =>
+      _mutate(npub, (state) async {
+        if (publication.createdAt > _timestamp(state, 'published_created_at')) {
+          state['published_created_at'] = publication.createdAt;
+        }
+        // A delayed OK must never mark a subsequent edit as published.
+        if (state['draft_revision'] == publication.revision &&
+            state['last_publish_created_at'] == publication.createdAt) {
+          state['local_edit'] = false;
+        }
+      });
+
+  Future<NostrProfile> saveRemote(String npub, NostrProfile profile,
+          {required int createdAt}) =>
+      _mutate(npub, (state) async {
+        // Legacy records without authorship metadata are unsent drafts.
+        if (state.isNotEmpty && state['local_edit'] != false ||
+            createdAt <= _timestamp(state, 'published_created_at') ||
+            createdAt <= _timestamp(state, 'remote_created_at')) {
+          return NostrProfile.tryParse(jsonEncode(state)) ??
+              const NostrProfile();
+        }
+        final cached = await _withCachedAvatar(profile);
+        state.addAll(cached.toJson());
+        state['local_edit'] = false;
+        state['remote_created_at'] = createdAt;
+        return cached;
+      });
+
+  static int _timestamp(Map<String, dynamic> state, String key) =>
+      state[key] is int ? state[key] as int : 0;
+
+  void _setDraft(Map<String, dynamic> state, NostrProfile profile) {
+    final revision = _timestamp(state, 'draft_revision') + 1;
+    state.addAll(profile.toJson());
+    state['local_edit'] = true;
+    state['draft_revision'] = revision;
+  }
+
+  Future<T> _mutate<T>(
+      String npub, Future<T> Function(Map<String, dynamic>) update) async {
     final key = _keyFor(npub);
     if (key == null) {
       throw StateError('An identity is required to save a profile.');
@@ -41,30 +95,12 @@ class NostrProfileStore {
     await previous;
     try {
       final raw = await _preferences.getString(key);
-      if (!localEdit && raw != null) {
-        final decoded = jsonDecode(raw);
-        // Legacy saved profiles may also be local edits: preserve them.
-        if (decoded is Map && decoded['local_edit'] != false) {
-          return NostrProfile.tryParse(raw) ?? profile;
-        }
-      }
-      // Persist the draft before any optional network image work.
-      await _preferences.setString(
-          key,
-          jsonEncode({
-            ...profile.toJson(),
-            'local_edit': localEdit,
-          }));
-      final cached = localEdit ? profile : await _withCachedAvatar(profile);
-      if (!identical(cached, profile)) {
-        await _preferences.setString(
-            key,
-            jsonEncode({
-              ...cached.toJson(),
-              'local_edit': localEdit,
-            }));
-      }
-      return cached;
+      final state = raw == null
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final result = await update(state);
+      await _preferences.setString(key, jsonEncode(state));
+      return result;
     } finally {
       done.complete();
       if (identical(_writes[key], done.future)) _writes.remove(key);
@@ -104,6 +140,12 @@ class NostrProfileStore {
       return profile.copyWithCachedAvatar(url: '', base64: '');
     }
   }
+}
+
+class ProfilePublication {
+  const ProfilePublication({required this.revision, required this.createdAt});
+  final int revision;
+  final int createdAt;
 }
 
 class NostrProfile {

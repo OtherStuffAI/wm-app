@@ -52,9 +52,11 @@ a local draft. **Sign and publish** explicitly authorizes a public Nostr kind-0
 event on the existing profile relays (Damus and Primal). The UI reports which
 relays accepted that exact event; failed or missing acknowledgements retain the
 draft and offer **Retry publication**. Publication does not verify NIP-05 or
-register a Tower account/device. Local edits, including legacy saved profiles,
-remain authoritative on this device; automatic relay refresh never replaces
-them, even after restarting or switching identities.
+register a Tower account/device. Unpublished local edits, including legacy saved profiles,
+remain protected across restarts and identity switches. After acknowledgement
+of the current draft, automatic refresh accepts strictly newer remote profiles.
+Delayed acknowledgements cannot clear subsequent edits; publication timestamps
+increase even when multiple publishes occur within the same second.
 
 If Tower URL, workspace service npub, and device identity are configured, Setup
 also exposes **Register device** through the existing desktop native-core path.
