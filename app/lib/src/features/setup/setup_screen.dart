@@ -144,11 +144,13 @@ class _SetupScreenState extends State<SetupScreen> {
         _field(
           controller: _deviceNpubController,
           label: 'Device npub',
+          readOnly: true,
           icon: Icons.fingerprint,
         ),
         _field(
           controller: _devicePublicKeyHexController,
           label: 'Device public key hex',
+          readOnly: true,
           icon: Icons.tag,
         ),
         ListTile(
@@ -162,10 +164,18 @@ class _SetupScreenState extends State<SetupScreen> {
           subtitle: Text(
             widget.config.hasDeviceSecret
                 ? 'Unlocked for this app session. The nsec is not shown or saved in settings.'
-                : 'Locked. Restart the app and unlock the signer vault.',
+                : 'Locked. Open the browser avatar menu to create, import or unlock your identity.',
           ),
         ),
-        if (_displayExperimentalFlightDeckDriveSync)
+        if (widget.config.canRegisterDevice)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Text(
+                'Optional Tower device registration: ${widget.config.towerUrl}. '
+                'This uses the desktop native core and is separate from publishing your public Nostr profile.'),
+          ),
+        if (_displayExperimentalFlightDeckDriveSync ||
+            widget.config.canRegisterDevice)
           _field(
             controller: _registrationSecretController,
             label: 'Registration signer key',
@@ -199,7 +209,8 @@ class _SetupScreenState extends State<SetupScreen> {
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save'),
             ),
-            if (_displayExperimentalFlightDeckDriveSync) ...[
+            if (_displayExperimentalFlightDeckDriveSync ||
+                widget.config.canRegisterDevice) ...[
               OutlinedButton.icon(
                 onPressed: _busy ? null : _registerDevice,
                 icon: const Icon(Icons.how_to_reg_outlined),
@@ -610,6 +621,7 @@ class _SetupScreenState extends State<SetupScreen> {
     required String label,
     required IconData icon,
     bool obscureText = false,
+    bool readOnly = false,
     int maxLines = 1,
   }) {
     return Padding(
@@ -617,6 +629,7 @@ class _SetupScreenState extends State<SetupScreen> {
       child: TextField(
         controller: controller,
         obscureText: obscureText,
+        readOnly: readOnly,
         maxLines: obscureText ? 1 : maxLines,
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
@@ -647,11 +660,11 @@ class _SetupScreenState extends State<SetupScreen> {
       workspaceId: _workspaceController.text.trim(),
       workspaceServiceNpub: _workspaceServiceController.text.trim(),
       channelId: _channelController.text.trim(),
-      deviceNpub: _deviceNpubController.text.trim(),
+      deviceNpub: widget.config.deviceNpub,
       deviceSecret: widget.config.deviceSecret,
       registrationSecret: _registrationSecretController.text.trim(),
       rememberNip98Approvals: _rememberNip98Approvals,
-      devicePublicKeyHex: _devicePublicKeyHexController.text.trim(),
+      devicePublicKeyHex: widget.config.devicePublicKeyHex,
       displayExperimentalFlightDeckDriveSync:
           _displayExperimentalFlightDeckDriveSync,
     );

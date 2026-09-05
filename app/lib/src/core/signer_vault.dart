@@ -20,6 +20,7 @@ class SignerVault {
 
   final SignerVaultLocalStore _localStore;
   final SignerVaultSecretStore _secretStore;
+  static bool _creating = false;
 
   Future<SignerVaultRecord?> loadRecord() async {
     final raw = await _localStore.getString(_vaultRecordKey);
@@ -33,40 +34,58 @@ class SignerVault {
     required String nsec,
     required String pin,
   }) async {
-    _validatePin(pin);
-    final identity = NostrCrypto.importIdentity(nsec);
-    final deviceSecret = await _loadOrCreateDeviceSecret();
-    final salt = _randomBytes(16);
-    final nonce = _randomBytes(12);
-    final secretKey = await _deriveKey(
-      pin: pin,
-      deviceSecret: deviceSecret,
-      salt: salt,
-      iterations: _iterations,
-    );
-    final secretBox = await AesGcm.with256bits().encrypt(
-      utf8.encode(identity.nsec),
-      secretKey: secretKey,
-      nonce: nonce,
-    );
-    final record = SignerVaultRecord(
-      version: 1,
-      kdf: 'pbkdf2-hmac-sha256',
-      iterations: _iterations,
-      salt: base64.encode(salt),
-      nonce: base64.encode(secretBox.nonce),
-      ciphertext: base64.encode(secretBox.cipherText),
-      mac: base64.encode(secretBox.mac.bytes),
-      npub: identity.npub,
-      publicKeyHex: identity.publicKeyHex,
-      createdAt: DateTime.now().toUtc(),
-    );
-    await _localStore.setString(_vaultRecordKey, jsonEncode(record.toJson()));
-    return SignerVaultUnlock(
-      nsec: identity.nsec,
-      npub: identity.npub,
-      publicKeyHex: identity.publicKeyHex,
-    );
+    if (_creating) {
+      throw const SignerVaultException(
+          'Identity creation is already in progress.');
+    }
+    _creating = true;
+    try {
+      // Refuse even an unreadable record: creation must never replace a vault.
+      if (await _localStore.getString(_vaultRecordKey) != null) {
+        throw const SignerVaultException(
+            'A signer vault already exists. Unlock it or explicitly reset it first.');
+      }
+      _validatePin(pin);
+      final identity = NostrCrypto.importIdentity(nsec);
+      final deviceSecret = await _loadOrCreateDeviceSecret();
+      final salt = _randomBytes(16);
+      final nonce = _randomBytes(12);
+      final secretKey = await _deriveKey(
+        pin: pin,
+        deviceSecret: deviceSecret,
+        salt: salt,
+        iterations: _iterations,
+      );
+      final secretBox = await AesGcm.with256bits().encrypt(
+        utf8.encode(identity.nsec),
+        secretKey: secretKey,
+        nonce: nonce,
+      );
+      final record = SignerVaultRecord(
+        version: 1,
+        kdf: 'pbkdf2-hmac-sha256',
+        iterations: _iterations,
+        salt: base64.encode(salt),
+        nonce: base64.encode(secretBox.nonce),
+        ciphertext: base64.encode(secretBox.cipherText),
+        mac: base64.encode(secretBox.mac.bytes),
+        npub: identity.npub,
+        publicKeyHex: identity.publicKeyHex,
+        createdAt: DateTime.now().toUtc(),
+      );
+      if (await _localStore.getString(_vaultRecordKey) != null) {
+        throw const SignerVaultException(
+            'A signer vault already exists. Unlock it instead.');
+      }
+      await _localStore.setString(_vaultRecordKey, jsonEncode(record.toJson()));
+      return SignerVaultUnlock(
+        nsec: identity.nsec,
+        npub: identity.npub,
+        publicKeyHex: identity.publicKeyHex,
+      );
+    } finally {
+      _creating = false;
+    }
   }
 
   Future<SignerVaultUnlock> unlock({required String pin}) async {

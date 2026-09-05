@@ -19,6 +19,51 @@ class NostrProfileRelayClient {
   final List<String> relays;
   final Duration timeout;
 
+  /// Only an OK for this exact event with accepted=true counts as publication.
+  Future<ProfilePublishResult> publish(Map<String, dynamic> event) async {
+    final accepted = await Future.wait(relays.map((relay) async {
+      WebSocketChannel? channel;
+      StreamSubscription<dynamic>? subscription;
+      try {
+        channel = WebSocketChannel.connect(Uri.parse(relay));
+        final ack = Completer<bool>();
+        subscription = channel.stream.listen((message) {
+          try {
+            final data = jsonDecode(message as String);
+            if (data is List &&
+                data.length >= 3 &&
+                data[0] == 'OK' &&
+                data[1] == event['id'] &&
+                !ack.isCompleted) {
+              ack.complete(data[2] == true);
+            }
+          } catch (_) {/* Ignore unrelated or malformed relay frames. */}
+        }, onError: (_) {
+          if (!ack.isCompleted) ack.complete(false);
+        }, onDone: () {
+          if (!ack.isCompleted) ack.complete(false);
+        });
+        await channel.ready.timeout(timeout);
+        channel.sink.add(jsonEncode(['EVENT', event]));
+        return await ack.future.timeout(timeout, onTimeout: () => false);
+      } catch (_) {
+        return false;
+      } finally {
+        await subscription?.cancel();
+        try {
+          await channel?.sink.close().timeout(timeout);
+        } catch (_) {}
+      }
+    }));
+    return ProfilePublishResult(
+      acceptedRelays: [
+        for (var i = 0; i < relays.length; i++)
+          if (accepted[i]) relays[i]
+      ],
+      totalRelays: relays.length,
+    );
+  }
+
   Future<NostrProfile?> fetchProfile(String publicKeyHex) async {
     final trimmed = publicKeyHex.trim().toLowerCase();
     if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(trimmed) || relays.isEmpty) {
@@ -89,7 +134,7 @@ class NostrProfileRelayClient {
       return await completer.future;
     } catch (_) {
       try {
-        await channel?.sink.close();
+        await channel?.sink.close().timeout(timeout);
       } catch (_) {}
       return null;
     }
@@ -150,4 +195,16 @@ class NostrProfileRelayResult {
 
   final NostrProfile profile;
   final int createdAt;
+}
+
+class ProfilePublishResult {
+  const ProfilePublishResult(
+      {required this.acceptedRelays, required this.totalRelays});
+  final List<String> acceptedRelays;
+  final int totalRelays;
+  bool get published => acceptedRelays.isNotEmpty;
+  String get message => published
+      ? 'Published: ${acceptedRelays.length}/$totalRelays relays accepted your profile. '
+          '${acceptedRelays.join(', ')}'
+      : 'Draft saved on this device. No relay confirmed publication. Check your connection and retry.';
 }

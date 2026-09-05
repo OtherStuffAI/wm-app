@@ -8,8 +8,8 @@ import 'core/app_config.dart';
 import 'core/flight_deck_update_manager.dart';
 import 'core/native_core_bridge.dart';
 import 'core/signer_vault.dart';
+import 'features/browser/nostr_profile_relay_client.dart';
 import 'features/browser/signer_store.dart';
-import 'features/onboarding/signer_onboarding_screen.dart';
 import 'features/shell/shell_home.dart';
 
 class WingmanApp extends StatefulWidget {
@@ -18,6 +18,7 @@ class WingmanApp extends StatefulWidget {
     this.signerVault,
     this.localFlightDeckUrl = '',
     this.flightDeckUpdates,
+    this.profileRelayClient,
     super.key,
   });
 
@@ -25,6 +26,7 @@ class WingmanApp extends StatefulWidget {
   final SignerVault? signerVault;
   final String localFlightDeckUrl;
   final FlightDeckUpdateController? flightDeckUpdates;
+  final NostrProfileRelayClient? profileRelayClient;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -37,7 +39,6 @@ class _WingmanAppState extends State<WingmanApp> {
   late final NativeCoreBridge _bridge = NativeCoreBridge();
   late final SignerStore _signerStore = SignerStore();
   late final SignerVault _signerVault = widget.signerVault ?? SignerVault();
-  SignerVaultRecord? _vaultRecord;
   bool _checkingVault = true;
 
   @override
@@ -63,10 +64,9 @@ class _WingmanAppState extends State<WingmanApp> {
     setState(() {
       _config = savedConfig.copyWith(
         deviceSecret: _config.deviceSecret,
-        deviceNpub: _config.deviceNpub,
-        devicePublicKeyHex: _config.devicePublicKeyHex,
+        deviceNpub: record?.npub ?? _config.deviceNpub,
+        devicePublicKeyHex: record?.publicKeyHex ?? _config.devicePublicKeyHex,
       );
-      _vaultRecord = record;
       _checkingVault = false;
     });
   }
@@ -175,21 +175,17 @@ class _WingmanAppState extends State<WingmanApp> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
-    if (widget.useSignerVault && !_config.hasDeviceSecret) {
-      return SignerOnboardingScreen(
-        vault: _signerVault,
-        record: _vaultRecord,
-        onUnlocked: _unlockSigner,
-      );
-    }
     return ShellHome(
       config: _config,
       localFlightDeckUrl: widget.localFlightDeckUrl,
       flightDeckUpdates: widget.flightDeckUpdates,
+      profileRelayClient: widget.profileRelayClient,
       bridge: _bridge,
       signerStore: _signerStore,
       onConfigChanged: _updateConfig,
-      onLogOut: _logOutSigner,
+      onLogOut: _config.hasDeviceSecret ? _logOutSigner : null,
+      signerVault: widget.useSignerVault ? _signerVault : null,
+      onUnlocked: _unlockSigner,
     );
   }
 }

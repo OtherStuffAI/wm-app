@@ -41,4 +41,33 @@ void main() {
       throwsA(isA<SignerVaultException>()),
     );
   });
+  test('creation cannot overwrite an existing or unreadable vault', () async {
+    final local = MemorySignerVaultLocalStore();
+    final secrets = MemorySignerVaultSecretStore();
+    final vault = SignerVault(localStore: local, secretStore: secrets);
+    final first = await vault.create(nsec: secretHex, pin: '1234');
+    final before = await local.getString('wingman.signer.vault.v1');
+    await expectLater(vault.create(nsec: '2'.padLeft(64, '0'), pin: '5678'),
+        throwsA(isA<SignerVaultException>()));
+    expect(await local.getString('wingman.signer.vault.v1'), before);
+    expect((await vault.unlock(pin: '1234')).npub, first.npub);
+    expect(before, isNot(contains(first.nsec)));
+    expect(before, isNot(contains(secretHex)));
+    await local.setString('wingman.signer.vault.v1', 'unreadable');
+    await expectLater(vault.create(nsec: secretHex, pin: '1234'),
+        throwsA(isA<SignerVaultException>()));
+    expect(await local.getString('wingman.signer.vault.v1'), 'unreadable');
+  });
+
+  test('simultaneous creation cannot replace the first identity', () async {
+    final local = MemorySignerVaultLocalStore();
+    final secrets = MemorySignerVaultSecretStore();
+    final vault = SignerVault(localStore: local, secretStore: secrets);
+    final other = SignerVault(localStore: local, secretStore: secrets);
+    final first = vault.create(nsec: secretHex, pin: '1234');
+    await expectLater(other.create(nsec: '2'.padLeft(64, '0'), pin: '5678'),
+        throwsA(isA<SignerVaultException>()));
+    final created = await first;
+    expect((await vault.unlock(pin: '1234')).npub, created.npub);
+  });
 }

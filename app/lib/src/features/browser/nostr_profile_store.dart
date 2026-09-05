@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -18,12 +19,56 @@ class NostrProfileStore {
     return NostrProfile.tryParse(raw) ?? const NostrProfile();
   }
 
-  Future<NostrProfile> save(String npub, NostrProfile profile) async {
+  // Serialize writes across store instances so a delayed refresh cannot win
+  // against an edit. Authored profiles remain authoritative across restarts.
+  static final Map<String, Future<void>> _writes = {};
+
+  Future<NostrProfile> save(String npub, NostrProfile profile) =>
+      _save(npub, profile, localEdit: true);
+
+  Future<NostrProfile> saveRemote(String npub, NostrProfile profile) =>
+      _save(npub, profile, localEdit: false);
+
+  Future<NostrProfile> _save(String npub, NostrProfile profile,
+      {required bool localEdit}) async {
     final key = _keyFor(npub);
-    if (key == null) return profile;
-    final cached = await _withCachedAvatar(profile);
-    await _preferences.setString(key, jsonEncode(cached.toJson()));
-    return cached;
+    if (key == null) {
+      throw StateError('An identity is required to save a profile.');
+    }
+    final previous = _writes[key] ?? Future<void>.value();
+    final done = Completer<void>();
+    _writes[key] = done.future;
+    await previous;
+    try {
+      final raw = await _preferences.getString(key);
+      if (!localEdit && raw != null) {
+        final decoded = jsonDecode(raw);
+        // Legacy saved profiles may also be local edits: preserve them.
+        if (decoded is Map && decoded['local_edit'] != false) {
+          return NostrProfile.tryParse(raw) ?? profile;
+        }
+      }
+      // Persist the draft before any optional network image work.
+      await _preferences.setString(
+          key,
+          jsonEncode({
+            ...profile.toJson(),
+            'local_edit': localEdit,
+          }));
+      final cached = localEdit ? profile : await _withCachedAvatar(profile);
+      if (!identical(cached, profile)) {
+        await _preferences.setString(
+            key,
+            jsonEncode({
+              ...cached.toJson(),
+              'local_edit': localEdit,
+            }));
+      }
+      return cached;
+    } finally {
+      done.complete();
+      if (identical(_writes[key], done.future)) _writes.remove(key);
+    }
   }
 
   String? _keyFor(String npub) {

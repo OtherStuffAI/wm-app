@@ -1449,6 +1449,47 @@ void main() {
     expect(preservedTowerField.controller?.text, 'https://tower.example');
   });
 
+  testWidgets(
+      'configured Tower registration is explicit without enabling experimental Drive',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: ShellHome(
+      config: AppConfig.defaults().copyWith(
+          towerUrl: 'https://tower.example',
+          workspaceServiceNpub: 'npub-service',
+          deviceNpub: 'npub-device'),
+      bridge: NativeCoreBridge(),
+      signerStore: SignerStore(),
+      onConfigChanged: (_) {},
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Setup'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Register device'), 250,
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView), matching: find.byType(Scrollable))
+            .first);
+    expect(find.text('Register device'), findsOneWidget);
+    expect(
+        find.textContaining(
+            'Optional Tower device registration: https://tower.example'),
+        findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
+    final identityFinder = find.byWidgetPredicate((widget) =>
+        widget is TextField && widget.decoration?.labelText == 'Device npub');
+    await tester.scrollUntilVisible(identityFinder, -250,
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView), matching: find.byType(Scrollable))
+            .first);
+    final identityField = tester.widget<TextField>(identityFinder);
+    expect(identityField.readOnly, isTrue);
+    expect(identityField.controller!.text, 'npub-device');
+  });
+
   testWidgets('legacy saved configuration keeps experimental Drive UI off',
       (tester) async {
     await SharedPreferencesAsync().setString(
@@ -1520,7 +1561,7 @@ void main() {
     expect(find.text('Drive'), findsOneWidget);
   });
 
-  testWidgets('Wingman app prompts for signer vault on first launch',
+  testWidgets('first launch opens create and import from the browser avatar',
       (tester) async {
     await tester.pumpWidget(
       WingmanApp(
@@ -1532,7 +1573,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.byTooltip('Profile'), findsOneWidget);
+    await tester.tap(find.byTooltip('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create identity / Import key'));
+    await tester.pumpAndSettle();
     expect(find.text('Set Up Wingman Signer'), findsOneWidget);
+    expect(find.text('Create identity'), findsOneWidget);
+    await tester.tap(find.text('Import key'));
+    await tester.pumpAndSettle();
     expect(find.text('Nostr private key'), findsOneWidget);
     expect(find.text('PIN'), findsOneWidget);
     expect(find.text('Confirm PIN'), findsOneWidget);

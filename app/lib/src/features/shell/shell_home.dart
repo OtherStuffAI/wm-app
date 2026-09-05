@@ -4,11 +4,14 @@ import '../../core/app_config.dart';
 import '../../core/fips_runtime_service.dart';
 import '../../core/flight_deck_update_manager.dart';
 import '../../core/native_core_bridge.dart';
+import '../../core/signer_vault.dart';
 import '../browser/browser_screen.dart';
+import '../browser/nostr_profile_relay_client.dart';
 import '../browser/signer_store.dart';
 import '../drive/drive_screen.dart';
-import '../signer/signer_screen.dart';
+import '../onboarding/signer_onboarding_screen.dart';
 import '../setup/setup_screen.dart';
+import '../signer/signer_screen.dart';
 import '../status/status_screen.dart';
 import 'macos_menu_bridge.dart';
 
@@ -17,22 +20,28 @@ class ShellHome extends StatefulWidget {
     required this.config,
     this.localFlightDeckUrl = '',
     this.flightDeckUpdates,
+    this.profileRelayClient,
     this.fipsRuntime,
     required this.bridge,
     required this.signerStore,
     required this.onConfigChanged,
     this.onLogOut,
+    this.signerVault,
+    this.onUnlocked,
     super.key,
   });
 
   final AppConfig config;
   final String localFlightDeckUrl;
   final FlightDeckUpdateController? flightDeckUpdates;
+  final NostrProfileRelayClient? profileRelayClient;
   final FipsRuntimeService? fipsRuntime;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
   final ValueChanged<AppConfig> onConfigChanged;
   final VoidCallback? onLogOut;
+  final SignerVault? signerVault;
+  final ValueChanged<SignerVaultUnlock>? onUnlocked;
 
   @override
   State<ShellHome> createState() => _ShellHomeState();
@@ -254,8 +263,26 @@ class _ShellHomeState extends State<ShellHome> {
       onFocusModeChanged: (focused) => _browserFocusMode.value = focused,
       onBookmarkMenuStateChanged: (state) => _bookmarkMenuState.value = state,
       onPrepareFipsNavigation: _prepareFipsNavigation,
+      profileRelayClient: widget.profileRelayClient,
+      onOpenIdentity: widget.signerVault == null ? null : _openIdentity,
       onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );
+  }
+
+  Future<void> _openIdentity() async {
+    final vault = widget.signerVault!;
+    final record = await vault.loadRecord();
+    if (!mounted || widget.config.hasDeviceSecret) return;
+    final unlocked = await Navigator.of(context).push<SignerVaultUnlock>(
+      MaterialPageRoute(
+          builder: (context) => SignerOnboardingScreen(
+                vault: vault,
+                record: record,
+                onUnlocked: (identity) => Navigator.of(context).pop(identity),
+              )),
+    );
+    if (!mounted || unlocked == null) return;
+    widget.onUnlocked?.call(unlocked);
   }
 
   Future<String?> _prepareFipsNavigation(String url) async {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/signer_vault.dart';
+import '../../core/nostr_crypto.dart';
 
 class SignerOnboardingScreen extends StatefulWidget {
   const SignerOnboardingScreen({
@@ -23,6 +24,7 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
   final TextEditingController _pinController = TextEditingController();
   final TextEditingController _confirmPinController = TextEditingController();
   bool _busy = false;
+  bool _createIdentity = true;
   bool _obscureNsec = true;
   bool _obscurePin = true;
   String? _message;
@@ -47,123 +49,152 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.all(24),
-              children: [
-                Text(
-                  _hasVault ? 'Unlock Wingman' : 'Set Up Wingman Signer',
-                  style: theme.textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _hasVault
-                      ? 'Enter your PIN to unlock the local signer for this session.'
-                      : 'Paste the nsec you want this app to sign with, then choose a local PIN.',
-                  style: theme.textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 24),
-                if (_hasVault) ...[
-                  _IdentitySummary(record: _record!),
-                  const SizedBox(height: 18),
-                ] else ...[
+    return PopScope(
+      canPop: !_busy,
+      child: Scaffold(
+        appBar: AppBar(
+            title: const Text('Identity'), automaticallyImplyLeading: !_busy),
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(24),
+                children: [
+                  Text(
+                    _hasVault ? 'Unlock Wingman' : 'Set Up Wingman Signer',
+                    style: theme.textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _hasVault
+                        ? 'Enter your PIN to unlock the local signer for this session.'
+                        : 'Create a Nostr identity or import your existing key. Your key is encrypted on this device with a 4–12 digit PIN. No Tower account is required.',
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 24),
+                  if (_hasVault) ...[
+                    _IdentitySummary(record: _record!),
+                    const SizedBox(height: 18),
+                  ] else ...[
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                            value: true, label: Text('Create identity')),
+                        ButtonSegment(value: false, label: Text('Import key')),
+                      ],
+                      selected: {_createIdentity},
+                      onSelectionChanged: _busy
+                          ? null
+                          : (value) => setState(() {
+                                _createIdentity = value.single;
+                                _message = null;
+                                _nsecController.clear();
+                              }),
+                    ),
+                    const SizedBox(height: 14),
+                    if (_createIdentity)
+                      const Text(
+                          'A new key will be generated securely when you continue. Keep this device and PIN safe; losing the vault can mean losing this identity.'),
+                    if (!_createIdentity)
+                      TextField(
+                        controller: _nsecController,
+                        obscureText: _obscureNsec,
+                        enableSuggestions: false,
+                        autocorrect: false,
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          labelText: 'Nostr private key',
+                          hintText: 'nsec1...',
+                          prefixIcon: const Icon(Icons.key_outlined),
+                          suffixIcon: IconButton(
+                            tooltip: _obscureNsec ? 'Show key' : 'Hide key',
+                            onPressed: () {
+                              setState(() {
+                                _obscureNsec = !_obscureNsec;
+                              });
+                            },
+                            icon: Icon(
+                              _obscureNsec
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                  ],
                   TextField(
-                    controller: _nsecController,
-                    obscureText: _obscureNsec,
+                    controller: _pinController,
+                    obscureText: _obscurePin,
+                    keyboardType: TextInputType.number,
                     enableSuggestions: false,
                     autocorrect: false,
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
-                      labelText: 'Nostr private key',
-                      hintText: 'nsec1...',
-                      prefixIcon: const Icon(Icons.key_outlined),
+                      labelText: 'PIN',
+                      prefixIcon: const Icon(Icons.pin_outlined),
                       suffixIcon: IconButton(
-                        tooltip: _obscureNsec ? 'Show key' : 'Hide key',
+                        tooltip: _obscurePin ? 'Show PIN' : 'Hide PIN',
                         onPressed: () {
                           setState(() {
-                            _obscureNsec = !_obscureNsec;
+                            _obscurePin = !_obscurePin;
                           });
                         },
                         icon: Icon(
-                          _obscureNsec
+                          _obscurePin
                               ? Icons.visibility_outlined
                               : Icons.visibility_off_outlined,
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                ],
-                TextField(
-                  controller: _pinController,
-                  obscureText: _obscurePin,
-                  keyboardType: TextInputType.number,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    labelText: 'PIN',
-                    prefixIcon: const Icon(Icons.pin_outlined),
-                    suffixIcon: IconButton(
-                      tooltip: _obscurePin ? 'Show PIN' : 'Hide PIN',
-                      onPressed: () {
-                        setState(() {
-                          _obscurePin = !_obscurePin;
-                        });
-                      },
-                      icon: Icon(
-                        _obscurePin
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                      ),
-                    ),
-                  ),
-                  onSubmitted: (_) => _submit(),
-                ),
-                if (!_hasVault) ...[
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _confirmPinController,
-                    obscureText: _obscurePin,
-                    keyboardType: TextInputType.number,
-                    enableSuggestions: false,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      labelText: 'Confirm PIN',
-                      prefixIcon: Icon(Icons.pin_outlined),
-                    ),
                     onSubmitted: (_) => _submit(),
                   ),
-                ],
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: _busy ? null : _submit,
-                  icon: Icon(
-                    _hasVault
-                        ? Icons.lock_open_outlined
-                        : Icons.enhanced_encryption_outlined,
+                  if (!_hasVault) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _confirmPinController,
+                      obscureText: _obscurePin,
+                      keyboardType: TextInputType.number,
+                      enableSuggestions: false,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Confirm PIN',
+                        prefixIcon: Icon(Icons.pin_outlined),
+                      ),
+                      onSubmitted: (_) => _submit(),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _submit,
+                    icon: Icon(
+                      _hasVault
+                          ? Icons.lock_open_outlined
+                          : Icons.enhanced_encryption_outlined,
+                    ),
+                    label: Text(_hasVault
+                        ? 'Unlock'
+                        : _createIdentity
+                            ? 'Create and encrypt identity'
+                            : 'Encrypt and Continue'),
                   ),
-                  label: Text(_hasVault ? 'Unlock' : 'Encrypt and Continue'),
-                ),
-                if (_hasVault) ...[
-                  const SizedBox(height: 10),
-                  TextButton.icon(
-                    onPressed: _busy ? null : _resetVault,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Reset local signer vault'),
-                  ),
+                  if (_hasVault) ...[
+                    const SizedBox(height: 10),
+                    TextButton.icon(
+                      onPressed: _busy ? null : _resetVault,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Reset local signer vault'),
+                    ),
+                  ],
+                  if (_message != null) ...[
+                    const SizedBox(height: 16),
+                    Text(_message!),
+                  ],
                 ],
-                if (_message != null) ...[
-                  const SizedBox(height: 16),
-                  Text(_message!),
-                ],
-              ],
+              ),
             ),
           ),
         ),
@@ -172,6 +203,7 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
   }
 
   Future<void> _submit() async {
+    if (_busy) return;
     final pin = _pinController.text.trim();
     if (!_hasVault && pin != _confirmPinController.text.trim()) {
       setState(() {
@@ -187,7 +219,9 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
       final unlocked = _hasVault
           ? await widget.vault.unlock(pin: pin)
           : await widget.vault.create(
-              nsec: _nsecController.text.trim(),
+              nsec: _createIdentity
+                  ? NostrCrypto.generateIdentity().nsec
+                  : _nsecController.text.trim(),
               pin: pin,
             );
       _nsecController.clear();
@@ -198,7 +232,9 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _message = error.toString();
+        _message = error is SignerVaultException
+            ? error.message
+            : 'Unable to open the signer. Check the key and PIN, then retry.';
       });
     } finally {
       if (mounted) {
@@ -215,7 +251,7 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
           builder: (context) => AlertDialog(
             title: const Text('Reset signer vault?'),
             content: const Text(
-              'This removes the encrypted local signer. You will need to paste the nsec again.',
+              'This permanently removes the encrypted local signer. Without a separate backup of your key you will lose access to this identity.',
             ),
             actions: [
               TextButton(
