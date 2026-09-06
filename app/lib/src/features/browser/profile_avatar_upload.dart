@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/nostr_crypto.dart';
 
@@ -20,29 +22,69 @@ class ProfileAvatarUpload {
   static const maxUploadBytes = 2 * 1024 * 1024;
   static const server = 'blossom.primal.net';
 
+  ProfileAvatarUpload({
+    ImagePicker? imagePicker,
+    Future<XFile?> Function()? selectFile,
+  })  : _imagePicker = imagePicker ?? ImagePicker(),
+        _selectFile = selectFile ?? _pickFile;
+
+  final ImagePicker _imagePicker;
+  final Future<XFile?> Function() _selectFile;
+
   Future<Uint8List?> pick() async {
-    final file = await openFile(acceptedTypeGroups: const [
-      XTypeGroup(label: 'Profile image', extensions: [
-        'jpg',
-        'jpeg',
-        'png',
-        'webp'
-      ], mimeTypes: [
-        'image/jpeg',
-        'image/png',
-        'image/webp'
-      ], uniformTypeIdentifiers: [
-        'public.jpeg',
-        'public.png',
-        'org.webmproject.webp'
-      ]),
-    ]);
-    if (file == null) return null;
-    if (await file.length() > maxInputBytes) {
-      throw const AvatarUploadException('Choose an image no larger than 5 MB.');
+    try {
+      final file = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+          // Native resizing also converts HEIC to JPEG before Dart validation.
+          // Avoid requesting library-wide access or original photo metadata.
+          ? await _imagePicker.pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 512,
+              maxHeight: 512,
+              imageQuality: 90,
+              requestFullMetadata: false,
+            )
+          : await _selectFile();
+      if (file == null) return null;
+      if (await file.length() > maxInputBytes) {
+        throw const AvatarUploadException(
+            'Choose an image no larger than 5 MB.');
+      }
+      return await prepare(await file.readAsBytes());
+    } on AvatarUploadException {
+      rethrow;
+    } on PlatformException catch (error) {
+      if (error.code == 'photo_access_denied' ||
+          error.code == 'photo_access_restricted') {
+        throw const AvatarUploadException(
+          'Photo library access is unavailable. Check Wingman App permissions in Settings.',
+        );
+      }
+      throw const AvatarUploadException(
+        'Could not open or read the selected photo. Please retry.',
+      );
+    } on Exception {
+      throw const AvatarUploadException(
+        'Could not read this image. Try another photo.',
+      );
     }
-    return prepare(await file.readAsBytes());
   }
+
+  static Future<XFile?> _pickFile() => openFile(acceptedTypeGroups: const [
+        XTypeGroup(label: 'Profile image', extensions: [
+          'jpg',
+          'jpeg',
+          'png',
+          'webp'
+        ], mimeTypes: [
+          'image/jpeg',
+          'image/png',
+          'image/webp'
+        ], uniformTypeIdentifiers: [
+          'public.jpeg',
+          'public.png',
+          'org.webmproject.webp'
+        ]),
+      ]);
 
   static Future<Uint8List> prepare(Uint8List bytes) async {
     if (bytes.isEmpty || bytes.length > maxInputBytes) {
