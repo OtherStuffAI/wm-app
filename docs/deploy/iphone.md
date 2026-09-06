@@ -132,12 +132,56 @@ cd ios
 pod install
 ```
 
-## Later: TestFlight
+## TestFlight
 
-For a build other people can install without Xcode:
+`build_ios_release.sh` produces a development-signed device app; it does not
+publish to TestFlight. Use the separate archive/export helper:
 
-1. Set the final bundle identifier.
-2. Set app icons, display name, version, and build number.
-3. Archive from Xcode: `Product -> Archive`.
-4. Upload through Xcode Organizer.
-5. Add testers in App Store Connect TestFlight.
+```bash
+./build_ios_testflight.sh
+```
+
+This uses `app/pubspec.yaml` for the version/build and preserves bundle
+`com.wingmanbefree.wingmanApp`, team `N5DRUM6S94`, and the existing app icon.
+Before uploading, check the app's existing App Store Connect builds and increase
+the build number if already used. Local version increments alone cannot prove
+uniqueness in App Store Connect.
+
+The helper produces `app/build/ios/archive/Runner.xcarchive` and, when distribution
+signing succeeds, an IPA under `app/build/ios/ipa/`. It checks for a newly exported
+IPA because Flutter can exit 0 after a successful archive but failed export.
+`docs/deploy/TestFlightExportOptions.plist` requests App Store Connect export,
+automatic signing for the existing team, internal testing only, and no automatic
+version rewriting. Local export does not upload or select a tester group.
+
+To retry export of an existing archive after restoring Xcode account access:
+
+```bash
+xcodebuild -exportArchive \
+  -archivePath app/build/ios/archive/Runner.xcarchive \
+  -exportPath app/build/ios/ipa \
+  -exportOptionsPlist docs/deploy/TestFlightExportOptions.plist \
+  -allowProvisioningUpdates
+```
+
+This requires authorized Apple Developer Program distribution access, an App
+Store Connect app record for the existing bundle, and working Xcode account or
+App Store Connect API authentication. A development signing identity by itself
+does not establish distribution eligibility. Do not replace the bundle/team to
+work around an account failure.
+
+For upload using the signed-in Xcode account, open the archive in Xcode Organizer,
+validate it, then distribute using **TestFlight Internal Only**. A CLI upload can
+use a copy of the export plist with `destination` set to `upload`, retaining
+`testFlightInternalTestingOnly=true`. Keep credentials out of repo files and logs.
+
+After Apple accepts the upload, separately verify processing completion, answer
+export-compliance questions based on the app's actual encryption, and add the
+build only to Pete's existing private/internal testing group. Do not infer that
+upload acceptance means the build is available to Pete. Do not create a public
+link or invite additional people. Record the Apple receipt/build ID, processing
+state and tester availability in the release handoff.
+
+Official references: [Flutter iOS release guide](https://docs.flutter.dev/deployment/ios),
+[Apple distribution workflow](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases),
+and [Apple internal testers](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers).
