@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,6 +75,83 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+      'saved vault gates restored tabs and same identity unlock preserves them',
+      (tester) async {
+    final vault = ObservedVault();
+    late SignerVaultUnlock identity;
+    await tester.runAsync(() async {
+      identity = await vault.create(nsec: '1'.padLeft(64, '0'), pin: '1234');
+    });
+    final prefs = SharedPreferencesAsync();
+    final tabsKey = 'wingman.browser.tabs.v1.${identity.npub}';
+    final snapshot = jsonEncode({
+      'version': 2,
+      'active_index': 1,
+      'tabs': [
+        {'title': 'deck.test', 'url': 'https://deck.test', 'is_home': false},
+        {'title': 'other.test', 'url': 'https://other.test', 'is_home': false},
+      ]
+    });
+    await prefs.setString('wingman.browser.last_signer_npub.v1', identity.npub);
+    await prefs.setString(tabsKey, snapshot);
+    await tester.pumpWidget(WingmanApp(
+        signerVault: vault, profileRelayClient: FakeProfileRelays()));
+    await tester.pumpAndSettle();
+    expect(find.text('Unlock'), findsOneWidget);
+    expect(find.byType(BrowserScreen), findsNothing);
+    expect(fakeWebViewControllerCreationCount, 0);
+    expect(await prefs.getString(tabsKey), snapshot);
+    await tester.enterText(field('PIN'), '1234');
+    await submit(tester, 'Unlock', vault);
+    expect(fakeLoadedRequestUrls,
+        containsAll(['https://deck.test', 'https://other.test']));
+    expect(fakeClearCookieCalls, 0);
+    final browser = tester.widget<BrowserScreen>(find.byType(BrowserScreen));
+    expect(
+        (await browser.bridge.signEvent(
+                config: browser.config,
+                event: {'kind': 1, 'content': 'fixture', 'tags': []}))
+            .ok,
+        isTrue);
+    final controllers = fakeWebViewControllerCreationCount;
+    await openAvatar(tester, 'Log out');
+    await tester.tap(find.widgetWithText(FilledButton, 'Log out'));
+    await tester.pumpAndSettle();
+    final locked = tester.widget<BrowserScreen>(find.byType(BrowserScreen));
+    expect(
+        (await locked.bridge.signNip98(
+                config: locked.config, method: 'GET', url: 'https://deck.test'))
+            .error,
+        NativeCoreBridge.signerLockedError);
+    for (final method in ['signEvent', 'signNip98']) {
+      submitFakeJavaScriptMessage(
+          controllerIndex: controllers - 1,
+          channel: 'WingmanSigner',
+          message: jsonEncode({'id': method, 'method': method, 'params': {}}));
+      await tester.pumpAndSettle();
+      expect(fakeExecutedJavaScripts.last, contains('Signer is locked'));
+    }
+    await openAvatar(tester, 'Unlock identity');
+    await tester.enterText(field('PIN'), '1234');
+    await submit(tester, 'Unlock', vault);
+    expect(fakeWebViewControllerCreationCount, controllers);
+    expect(fakeReloadCalls, 2);
+    expect(fakeClearCookieCalls, 0);
+    final recovered = tester.widget<BrowserScreen>(find.byType(BrowserScreen));
+    expect(
+        (await recovered.bridge.signNip98(
+                config: recovered.config,
+                method: 'GET',
+                url: 'https://deck.test'))
+            .ok,
+        isTrue);
+    expect((jsonDecode((await prefs.getString(tabsKey))!) as Map)['tabs'],
+        (jsonDecode(snapshot) as Map)['tabs']);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
   for (final size in [const Size(390, 844), const Size(1280, 900)]) {
     testWidgets(
         'avatar create, cancel, profile setup and vault unlock at $size',
@@ -95,12 +174,24 @@ void main() {
       final record = await vault.loadRecord();
       expect(record, isNotNull);
       expect(find.text('Edit profile'), findsOneWidget);
+      expect(
+          tester.widget<Text>(find.byKey(const ValueKey('profile-npub'))).data,
+          '${record!.npub.substring(0, 10)}…${record.npub.substring(record.npub.length - 5)}');
+      expect(find.byTooltip('Copy npub'), findsOneWidget);
+      expect(find.byTooltip('Upload image'), findsOneWidget);
+      expect(find.text('Export private key (nsec)'), findsOneWidget);
+      expect(find.text('Sign and publish'), findsNothing);
+      expect(
+          tester.getBottomLeft(find.widgetWithText(FilledButton, 'Save')).dy -
+              tester.getTopLeft(find.text('Edit profile')).dy,
+          lessThan(620));
+      relays.accept = true;
       await tester.enterText(field('Display name'), 'New User');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
-      expect((await NostrProfileStore().load(record!.npub)).displayName,
+      expect((await NostrProfileStore().load(record.npub)).displayName,
           'New User');
-      expect(relays.events, isEmpty);
+      expect(relays.events, hasLength(1));
       await openAvatar(tester, 'Log out');
       await tester.tap(find.widgetWithText(FilledButton, 'Log out'));
       await tester.pumpAndSettle();
@@ -183,20 +274,18 @@ void main() {
     relays.refresh.complete(const NostrProfileRelayResult(
         profile: NostrProfile(displayName: 'Stale remote'), createdAt: 100));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign and publish'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
-    expect(
-        find.textContaining('No relay confirmed publication'), findsOneWidget);
+    expect(find.textContaining('Could not publish.'), findsOneWidget);
     expect((await NostrProfileStore().load(identity.npub)).displayName,
         'Local draft');
     expect(relays.events.single['pubkey'], identity.publicKeyHex);
     relays.accept = true;
-    await tester.tap(find.text('Retry publication'));
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Published: 1/1'), findsOneWidget);
+    expect(find.text('Profile saved.'), findsOneWidget);
     expect(relays.events, hasLength(2));
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
     await openAvatar(tester, 'Edit profile');
     expect(tester.widget<TextField>(field('Display name')).controller!.text,
         'Local draft');

@@ -264,6 +264,7 @@ class _ShellHomeState extends State<ShellHome> {
       onBookmarkMenuStateChanged: (state) => _bookmarkMenuState.value = state,
       onPrepareFipsNavigation: _prepareFipsNavigation,
       profileRelayClient: widget.profileRelayClient,
+      signerVault: widget.signerVault,
       onOpenIdentity: widget.signerVault == null ? null : _openIdentity,
       onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );

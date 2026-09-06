@@ -12,6 +12,9 @@ import '../../core/app_config.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
+import '../../core/signer_vault.dart';
+import 'profile_avatar_upload.dart';
+import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
 import 'nostr_profile_publisher.dart';
 import 'nostr_profile_relay_client.dart';
@@ -36,6 +39,7 @@ class BrowserScreen extends StatefulWidget {
     this.onLogOut,
     this.onOpenIdentity,
     this.profileRelayClient,
+    this.signerVault,
     super.key,
   });
 
@@ -53,6 +57,7 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback? onLogOut;
   final VoidCallback? onOpenIdentity;
   final NostrProfileRelayClient? profileRelayClient;
+  final SignerVault? signerVault;
 
   @override
   State<BrowserScreen> createState() => BrowserScreenState();
@@ -123,6 +128,13 @@ class BrowserScreenState extends State<BrowserScreen> {
         }
       }));
       unawaited(_switchSignerTabs(oldWidget.config.deviceNpub));
+    } else if (!oldWidget.config.hasDeviceSecret &&
+        widget.config.hasDeviceSecret) {
+      // Keep the same controllers, tabs and storage; retry authentication now
+      // that the existing identity can actually sign.
+      for (final tab in _tabs) {
+        if (!tab.isHome) unawaited(tab.controller.reload());
+      }
     }
   }
 
@@ -562,14 +574,45 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     _profileEpoch++;
-    await showDialog<void>(
+    final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => _EditNostrProfileDialog(
         deviceNpub: deviceNpub,
         profile: _profile,
-        relays: _profileRelayClient.relays,
-        onSave: (profile, publish) async {
+        onUploadAvatar: () async {
+          final uploader = ProfileAvatarUpload();
+          final bytes = await uploader.pick();
+          if (bytes == null) return null;
+          if (!mounted ||
+              widget.config.deviceNpub != deviceNpub ||
+              !widget.config.hasDeviceSecret) {
+            throw const AvatarUploadException(
+                'Identity changed. Reopen the profile editor.');
+          }
+          final url = await uploader.upload(bytes,
+              secret: widget.config.deviceSecret, npub: deviceNpub);
+          if (!mounted ||
+              widget.config.deviceNpub != deviceNpub ||
+              !widget.config.hasDeviceSecret) {
+            throw const AvatarUploadException(
+                'Identity changed. Image uploaded for the original identity; profile not changed.');
+          }
+          return url;
+        },
+        onExportKey: widget.signerVault == null
+            ? null
+            : (pin) async {
+                final unlocked = await widget.signerVault!.unlock(pin: pin);
+                if (!mounted ||
+                    widget.config.deviceNpub != deviceNpub ||
+                    !widget.config.hasDeviceSecret ||
+                    unlocked.npub != deviceNpub) {
+                  throw StateError('Identity changed.');
+                }
+                return unlocked.nsec;
+              },
+        onSave: (profile) async {
           if (!mounted ||
               widget.config.deviceNpub != deviceNpub ||
               !widget.config.hasDeviceSecret) {
@@ -584,19 +627,20 @@ class BrowserScreenState extends State<BrowserScreen> {
                 'Identity changed. Draft retained for its original identity.');
           }
           setState(() => _profile = cached);
-          if (!publish) {
-            return 'Draft saved on this device. It has not been published.';
-          }
           final result = await NostrProfilePublisher(
                   store: _profileStore, relays: _profileRelayClient)
               .publish(
                   npub: deviceNpub,
                   secret: widget.config.deviceSecret,
                   profile: cached);
-          return result.message;
+          return result;
         },
       ),
     );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Profile saved.')));
+    }
   }
 
   bool _handleKeyboardEvent(KeyEvent event) {
@@ -1718,6 +1762,13 @@ class BrowserScreenState extends State<BrowserScreen> {
         requestId,
         {'result': widget.config.devicePublicKeyHex},
       );
+      return;
+    }
+
+    if ((method == 'signEvent' || method == 'signNip98') &&
+        !widget.config.hasDeviceSecret) {
+      await _resolveSignerRequest(
+          tab, requestId, {'error': NativeCoreBridge.signerLockedError});
       return;
     }
 
@@ -2856,13 +2907,15 @@ class _EditNostrProfileDialog extends StatefulWidget {
     required this.deviceNpub,
     required this.profile,
     required this.onSave,
-    required this.relays,
+    required this.onUploadAvatar,
+    this.onExportKey,
   });
 
+  final Future<String?> Function() onUploadAvatar;
+  final Future<String> Function(String pin)? onExportKey;
   final String deviceNpub;
   final NostrProfile profile;
-  final Future<String> Function(NostrProfile profile, bool publish) onSave;
-  final List<String> relays;
+  final Future<ProfilePublishResult> Function(NostrProfile profile) onSave;
 
   @override
   State<_EditNostrProfileDialog> createState() =>
@@ -2878,30 +2931,95 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
   late final TextEditingController _aboutController;
 
   bool _busy = false;
-  bool _attemptedPublication = false;
-  String? _message;
+  bool _uploading = false;
+  OverlayEntry? _toast;
+  Timer? _toastTimer;
 
-  Future<void> _save(bool publish) async {
+  void _showToast(String message) {
+    _toastTimer?.cancel();
+    _toast?.remove();
+    _toast?.dispose();
+    final colors = Theme.of(context).colorScheme;
+    _toast = OverlayEntry(
+        builder: (_) => Positioned(
+              left: 24,
+              right: 24,
+              bottom: 24,
+              child: IgnorePointer(
+                  child: SafeArea(
+                      child: Center(
+                          child: Material(
+                elevation: 6,
+                color: colors.inverseSurface,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    child: Semantics(
+                        liveRegion: true,
+                        child: Text(message,
+                            style: TextStyle(color: colors.onInverseSurface)))),
+              )))),
+            ));
+    Overlay.of(context, rootOverlay: true).insert(_toast!);
+    _toastTimer = Timer(const Duration(seconds: 5), () {
+      _toast?.remove();
+      _toast?.dispose();
+      _toast = null;
+    });
+  }
+
+  Future<void> _uploadAvatar() async {
     if (_busy) return;
     setState(() {
       _busy = true;
-      if (publish) _attemptedPublication = true;
-      _message = publish ? 'Saving draft and publishing…' : 'Saving draft…';
+      _uploading = true;
     });
     try {
-      final message = await widget.onSave(_currentProfile(), publish);
+      final url = await widget.onUploadAvatar();
+      if (!mounted || url == null) return;
+      setState(() => _pictureController.text = url);
+      _showToast('Image uploaded. Save to update your profile.');
+    } catch (error) {
+      if (mounted) {
+        _showToast(error is AvatarUploadException
+            ? error.message
+            : 'Upload failed. Check the image and connection, then retry.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _uploading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _exportKey() async {
+    final unlock = widget.onExportKey;
+    if (unlock == null || _busy) return;
+    await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ProfileKeyExportDialog(unlock: unlock));
+  }
+
+  Future<void> _save() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final result = await widget.onSave(_currentProfile());
       if (!mounted) return;
-      if (!publish) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+      if (result.published) {
+        Navigator.of(context).pop(true);
       } else {
-        setState(() => _message = message);
+        _showToast('Could not publish. Your draft is safe. Tap Save to retry.');
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _message =
-            'Save or publication failed. Your entries are still here. Check the unlocked identity and connection, then retry.');
+        _showToast(
+            'Could not save. Check your identity and connection, then retry.');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -2922,6 +3040,9 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
 
   @override
   void dispose() {
+    _toastTimer?.cancel();
+    _toast?.remove();
+    _toast?.dispose();
     _displayNameController.dispose();
     _nameController.dispose();
     _pictureController.dispose();
@@ -2935,10 +3056,18 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
   Widget build(BuildContext context) {
     final preview = _currentProfile();
     final label = preview.labelFor(widget.deviceNpub);
+    final npub = widget.deviceNpub;
+    final shortNpub = npub.length > 20
+        ? '${npub.substring(0, 10)}…${npub.substring(npub.length - 5)}'
+        : npub;
     return PopScope(
       canPop: !_busy,
       child: AlertDialog(
         title: const Text('Edit profile'),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         content: SizedBox(
           width: 440,
           child: SingleChildScrollView(
@@ -2947,7 +3076,7 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
               children: [
                 Row(
                   children: [
-                    _ProfileAvatar(profile: preview, label: label, radius: 28),
+                    _ProfileAvatar(profile: preview, label: label, radius: 24),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -2959,26 +3088,30 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
-                          if (preview.nip05.trim().isNotEmpty)
-                            Text(
-                              preview.nip05.trim(),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                          Row(children: [
+                            Flexible(
+                                child: Text(shortNpub,
+                                    key: const ValueKey('profile-npub'),
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                    overflow: TextOverflow.ellipsis)),
+                            IconButton(
+                                tooltip: 'Copy npub',
+                                visualDensity: VisualDensity.compact,
+                                iconSize: 16,
+                                onPressed: () async {
+                                  await Clipboard.setData(
+                                      ClipboardData(text: widget.deviceNpub));
+                                  if (mounted) _showToast('Public key copied.');
+                                },
+                                icon: const Icon(Icons.copy)),
+                          ]),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
-                Text(
-                    'Save keeps a local draft. Sign and publish makes these fields public on Nostr using ${widget.relays.join(', ')}. This does not register a Tower device or verify your NIP-05 address.'),
-                if (_message != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(_message!,
-                        key: const ValueKey('profile-save-status')),
-                  ),
+                const SizedBox(height: 12),
                 _field(
                   controller: _displayNameController,
                   label: 'Display name',
@@ -2993,6 +3126,16 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
                   controller: _pictureController,
                   label: 'Avatar URL',
                   icon: Icons.image_outlined,
+                  suffixIcon: IconButton(
+                    tooltip: 'Upload image',
+                    onPressed: _busy ? null : _uploadAvatar,
+                    icon: _uploading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.upload_outlined),
+                  ),
                 ),
                 _field(
                   controller: _nip05Controller,
@@ -3008,8 +3151,13 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
                   controller: _aboutController,
                   label: 'About',
                   icon: Icons.notes_outlined,
-                  maxLines: 3,
+                  maxLines: 2,
                 ),
+                if (widget.onExportKey != null)
+                  TextButton.icon(
+                      onPressed: _busy ? null : _exportKey,
+                      icon: const Icon(Icons.key),
+                      label: const Text('Export private key (nsec)')),
               ],
             ),
           ),
@@ -3019,19 +3167,9 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
             onPressed: _busy ? null : () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
           ),
-          FilledButton.icon(
-            onPressed: _busy ? null : () => _save(false),
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Save'),
-          ),
-          FilledButton.icon(
-            onPressed: _busy ? null : () => _save(true),
-            icon: const Icon(Icons.publish),
-            label: Text(!_attemptedPublication
-                ? 'Sign and publish'
-                : (_message?.startsWith('Published:') ?? false)
-                    ? 'Publish again'
-                    : 'Retry publication'),
+          FilledButton(
+            onPressed: _busy ? null : _save,
+            child: Text(_busy && !_uploading ? 'Saving…' : 'Save'),
           ),
         ],
       ),
@@ -3043,9 +3181,10 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
     required String label,
     required IconData icon,
     int maxLines = 1,
+    Widget? suffixIcon,
   }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
         enabled: !_busy,
         controller: controller,
@@ -3053,7 +3192,10 @@ class _EditNostrProfileDialogState extends State<_EditNostrProfileDialog> {
         onChanged: (_) => setState(() {}),
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
-          prefixIcon: Icon(icon),
+          prefixIcon: Icon(icon, size: 20),
+          suffixIcon: suffixIcon,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           labelText: label,
           isDense: true,
         ),

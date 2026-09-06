@@ -42,16 +42,19 @@ the browser without requiring Tower configuration. Use the avatar menu's
 **Create identity / Import key** action to generate a key securely in Dart or
 import your existing nsec. Choose a PIN; the existing vault encrypts the key with
 the PIN plus a per-install secure-storage secret. The clear nsec stays in memory
-after unlock. An existing vault offers **Unlock identity** and cannot be replaced
-without an explicit destructive reset. Keep the vault and PIN safe: this flow
-does not provide a key backup/export step.
+after unlock. On startup, an existing vault requires its PIN before saved browser
+tabs open and authenticate. After logout, **Unlock identity** retries authentication
+in the existing tabs without clearing browser storage. An existing vault offers **Unlock identity** and cannot be replaced
+without an explicit destructive reset. Keep the vault and PIN safe. **Edit profile → Export private key (nsec)**
+requires a risk acknowledgement and PIN confirmation. The key is hidden after
+60 seconds or when the app loses focus; copying is explicit and the clipboard
+is not automatically cleared.
 
 New identities continue to profile setup. The avatar's **Edit profile** supports
-name, display name, avatar URL, NIP-05 address, website, and about. **Save** keeps
-a local draft. **Sign and publish** explicitly authorizes a public Nostr kind-0
-event on the existing profile relays (Damus and Primal). The UI reports which
-relays accepted that exact event; failed or missing acknowledgements retain the
-draft and offer **Retry publication**. Publication does not verify NIP-05 or
+name, display name, avatar URL, NIP-05 address, website, and about. **Save** signs and
+publishes a public Nostr kind-0 event on the existing profile relays (Damus and
+Primal). A successful acknowledgement closes the editor. Failed publication
+keeps the draft and editor open; tap **Save** to retry. Status appears in toasts. Publication does not verify NIP-05 or
 register a Tower account/device. Unpublished local edits, including legacy saved profiles,
 remain protected across restarts and identity switches. After acknowledgement
 of the current draft, automatic refresh accepts strictly newer remote profiles.
@@ -62,3 +65,15 @@ If Tower URL, workspace service npub, and device identity are configured, Setup
 also exposes **Register device** through the existing desktop native-core path.
 Mobile still reports this process-backed operation as unavailable. Public Nostr
 profile publication works without Tower and does not require the native core.
+
+The profile editor displays a shortened npub with an icon that copies the full key.
+The upload icon in the **Avatar URL** field accepts JPEG, PNG and WebP files up to 5 MiB and 40 megapixels.
+Images are resized proportionally to fit 512 × 512 pixels and re-encoded as PNG
+without source metadata, with a 2 MiB output cap. Animated images use the first
+frame. Uploads go to `https://blossom.primal.net/upload` using a short-lived,
+hash-scoped Blossom authorization event; the private key stays on the device.
+The server receipt must match the uploaded hash, size and Primal HTTPS URL.
+Uploading makes the image public immediately; Save signs and publishes the
+updated Nostr profile. Cancelling does not delete
+an uploaded image. Primal storage/payment errors leave existing profile fields
+intact and allow retry.

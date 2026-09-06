@@ -11,6 +11,7 @@ import 'core/signer_vault.dart';
 import 'features/browser/nostr_profile_relay_client.dart';
 import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
+import 'features/onboarding/signer_onboarding_screen.dart';
 
 class WingmanApp extends StatefulWidget {
   const WingmanApp({
@@ -40,6 +41,7 @@ class _WingmanAppState extends State<WingmanApp> {
   late final SignerStore _signerStore = SignerStore();
   late final SignerVault _signerVault = widget.signerVault ?? SignerVault();
   bool _checkingVault = true;
+  SignerVaultRecord? _startupVault;
 
   @override
   void initState() {
@@ -67,6 +69,7 @@ class _WingmanAppState extends State<WingmanApp> {
         deviceNpub: record?.npub ?? _config.deviceNpub,
         devicePublicKeyHex: record?.publicKeyHex ?? _config.devicePublicKeyHex,
       );
+      _startupVault = record;
       _checkingVault = false;
     });
   }
@@ -138,6 +141,7 @@ class _WingmanAppState extends State<WingmanApp> {
 
   void _unlockSigner(SignerVaultUnlock unlocked) {
     setState(() {
+      _startupVault = null;
       _config = _config.copyWith(
         deviceSecret: unlocked.nsec,
         deviceNpub: unlocked.npub,
@@ -173,6 +177,13 @@ class _WingmanAppState extends State<WingmanApp> {
     if (_checkingVault) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_startupVault != null) {
+      return SignerOnboardingScreen(
+        vault: _signerVault,
+        record: _startupVault,
+        onUnlocked: _unlockSigner,
       );
     }
     return ShellHome(

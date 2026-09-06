@@ -5,6 +5,9 @@ import 'app_config.dart';
 import 'nostr_crypto.dart';
 
 class NativeCoreBridge {
+  static const signerLockedError =
+      'Signer is locked. Unlock your identity with your PIN and retry.';
+
   String debugResolveRepoRoot() => _repoRoot();
 
   Future<CoreStatus> status(AppConfig config) async {
@@ -139,6 +142,13 @@ class NativeCoreBridge {
     required String url,
     String? body,
   }) async {
+    if (!config.hasDeviceSecret) {
+      return const CoreCommandResult(
+        ok: false,
+        json: {},
+        error: signerLockedError,
+      );
+    }
     try {
       final signed = NostrCrypto.signNip98(
         secret: config.deviceSecret,
@@ -166,6 +176,13 @@ class NativeCoreBridge {
     required AppConfig config,
     required Map<String, dynamic> event,
   }) async {
+    if (!config.hasDeviceSecret) {
+      return const CoreCommandResult(
+        ok: false,
+        json: {},
+        error: signerLockedError,
+      );
+    }
     try {
       return CoreCommandResult(
         ok: true,

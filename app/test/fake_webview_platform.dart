@@ -6,6 +6,7 @@ final fakeLoadedHtmlStrings = <String>[];
 final fakeLoadedRequestUrls = <String>[];
 final fakeExecutedJavaScripts = <String>[];
 int fakeClearCookieCalls = 0;
+int fakeReloadCalls = 0;
 int fakeWebViewControllerCreationCount = 0;
 final _fakeWebViewControllers = <_FakePlatformWebViewController>[];
 
@@ -63,6 +64,7 @@ void installFakeWebViewPlatform() {
   fakeLoadedRequestUrls.clear();
   fakeExecutedJavaScripts.clear();
   fakeClearCookieCalls = 0;
+  fakeReloadCalls = 0;
   fakeWebViewControllerCreationCount = 0;
   _fakeWebViewControllers.clear();
   WebViewPlatform.instance = _FakeWebViewPlatform();
@@ -167,7 +169,9 @@ class _FakePlatformWebViewController extends PlatformWebViewController
   Future<void> goForward() async {}
 
   @override
-  Future<void> reload() async {}
+  Future<void> reload() async {
+    fakeReloadCalls++;
+  }
 
   @override
   Future<void> clearCache() async {}

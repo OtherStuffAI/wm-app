@@ -11,6 +11,8 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wingman_app/src/app.dart';
 import 'package:wingman_app/src/core/app_config.dart';
+import 'package:wingman_app/src/core/nostr_crypto.dart';
+import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/signer_vault.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
@@ -19,6 +21,16 @@ import 'package:wingman_app/src/features/shell/shell_home.dart';
 import 'package:wingman_app/src/features/shell/macos_menu_bridge.dart';
 
 import 'fake_webview_platform.dart';
+
+class _AcceptProfileRelays extends NostrProfileRelayClient {
+  @override
+  Future<NostrProfileRelayResult?> fetchProfile(String publicKeyHex) async =>
+      null;
+  @override
+  Future<ProfilePublishResult> publish(Map<String, dynamic> event) async =>
+      const ProfilePublishResult(
+          acceptedRelays: ['wss://test.invalid'], totalRelays: 1);
+}
 
 void main() {
   int activeBrowserStackIndex(WidgetTester tester) {
@@ -1233,18 +1245,20 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('Wingman browser edits and persists local Nostr profile',
+  testWidgets('Wingman browser saves and publishes Nostr profile',
       (tester) async {
+    final identity = NostrCrypto.importIdentity('1'.padLeft(64, '0'));
     final config = AppConfig.defaults().copyWith(
-      deviceSecret: 'nsec-placeholder',
-      deviceNpub: 'npub-profile',
-      devicePublicKeyHex: 'abcdef',
+      deviceSecret: identity.nsec,
+      deviceNpub: identity.npub,
+      devicePublicKeyHex: identity.publicKeyHex,
     );
 
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
           config: config,
+          profileRelayClient: _AcceptProfileRelays(),
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
           onConfigChanged: (_) {},
@@ -1284,6 +1298,7 @@ void main() {
       MaterialApp(
         home: ShellHome(
           config: config,
+          profileRelayClient: _AcceptProfileRelays(),
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
           onConfigChanged: (_) {},
