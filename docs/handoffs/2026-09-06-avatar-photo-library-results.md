@@ -90,6 +90,15 @@ Local machine-readable evidence is under `/tmp/wmapp-{iphone,ipad}-` with
 `/tmp/wmapp-avatar-release-build.log`, `/tmp/wmapp-avatar-flutter-tests.log`,
 `/tmp/wmapp-avatar-targeted.log`, and `/tmp/wmapp-avatar-analysis.log`.
 
+Final process queries at **2026-09-06 15:15:42 +0800** confirmed the original
+launch PIDs and executable paths on both devices: iPhone **51666** after **76
+seconds**, iPad **1652** after **66 seconds**, without a debugger.
+
+Native implementation/bundle commit: **44ff507** on `main`, descended from
+signer repair `4e278d9`. The subsequent evidence-only commit records this final
+persistence check; it does not change the installed build. Manager can use the
+source/version/hash and device identifiers above for independent verification.
+
 ## Remaining manual visual check
 
 Pete/manager should confirm the first Flutter screen renders on each device and,
