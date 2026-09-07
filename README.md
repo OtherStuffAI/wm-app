@@ -82,6 +82,11 @@ The `mount --dry-run` command prints the read-only Drive tree that the FUSE/macF
 
 ## Flutter Shell
 
+Right-click a browser tab to choose its colour or set a prefix. Enter `WORK`
+to display `WORK: Page title`; the page title continues to update as you browse.
+Choose **Default colour** or save an empty prefix to remove the customization.
+These settings are saved with your tabs for the current identity.
+
 The Flutter shell lives at `app/`. It defines setup, Drive, browser, and status screens plus a `NativeCoreBridge` local-process bridge to the existing Rust core.
 
 The current desktop build can register a device through Tower, validate a configured channel, trigger one-shot sync, list local Drive metadata, and inject a `window.nostr` bridge into WebView pages. Device key generation/import, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart so they work in the Flutter app on desktop and mobile without shelling out to Rust.

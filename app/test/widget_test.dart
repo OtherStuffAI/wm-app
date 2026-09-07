@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -487,6 +488,100 @@ void main() {
 
     expect(fakeLoadedRequestUrls.last, flightDeckUrl);
     expect(find.text('Overview · Pete Workspace'), findsOneWidget);
+  });
+
+  testWidgets('tab colours and prefixes survive title changes and restore',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      const storageKey = 'wingman.browser.tabs.v1.npub-tab-appearance';
+      Widget browser() => MaterialApp(
+              home: Scaffold(
+                  body: BrowserScreen(
+            config: AppConfig.defaults()
+                .copyWith(deviceNpub: 'npub-tab-appearance'),
+            localFlightDeckUrl: 'http://127.0.0.1:47831/',
+            bridge: NativeCoreBridge(),
+            signerStore: SignerStore(),
+            onOpenDrawer: () {},
+            onOpenSetup: () {},
+            onOpenSigner: () {},
+            onOpenStatus: () {},
+          )));
+      Future<void> menu() async {
+        await tester.tap(find.byKey(const ValueKey('tab-1')),
+            buttons: kSecondaryMouseButton);
+        await tester.pumpAndSettle();
+        expect(find.text('Set tab prefix…'), findsOneWidget);
+      }
+
+      Future<void> editPrefix(String value, {bool cancel = false}) async {
+        await menu();
+        await tester.tap(find.text('Set tab prefix…'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextFormField), value);
+        await tester.tap(find.text(cancel ? 'Cancel' : 'Save'));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.pumpWidget(browser());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('New tab'));
+      await tester.pumpAndSettle();
+      await menu();
+      await tester
+          .tap(find.widgetWithText(CheckedPopupMenuItem<String>, 'Blue'));
+      await tester.pumpAndSettle();
+      expect(activeBrowserStackIndex(tester), 1);
+      await editPrefix(' WORK:  ');
+      expect(find.text('WORK: Flight Deck'), findsOneWidget);
+      setFakePageTitle(controllerIndex: 0, title: 'Tasks');
+      submitFakePageFinished(
+          controllerIndex: 0, url: 'http://127.0.0.1:47831/');
+      await tester.pumpAndSettle();
+      expect(find.text('WORK: Tasks'), findsOneWidget);
+      final saved =
+          jsonDecode((await SharedPreferencesAsync().getString(storageKey))!)
+              as Map;
+      expect(saved['tabs'][0]['prefix'], 'WORK');
+      expect(saved['tabs'][0]['colour'], 'Blue');
+      expect(saved['tabs'][0]['title'], 'Tasks');
+      expect(saved['tabs'][1].containsKey('prefix'), isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      installFakeWebViewPlatform();
+      await tester.pumpWidget(browser());
+      await tester.pumpAndSettle();
+      expect(find.text('WORK: Flight Deck'), findsOneWidget);
+      setFakePageTitle(controllerIndex: 1, title: 'Tasks');
+      submitFakePageFinished(
+          controllerIndex: 1, url: 'http://127.0.0.1:47831/');
+      await tester.pumpAndSettle();
+      expect(find.text('WORK: Tasks'), findsOneWidget);
+      await menu();
+      expect(
+          tester
+              .widget<CheckedPopupMenuItem<String>>(
+                  find.widgetWithText(CheckedPopupMenuItem<String>, 'Blue'))
+              .checked,
+          isTrue);
+      await tester.tap(
+          find.widgetWithText(CheckedPopupMenuItem<String>, 'Default colour'));
+      await tester.pumpAndSettle();
+      await editPrefix('Discarded', cancel: true);
+      expect(find.text('WORK: Tasks'), findsOneWidget);
+      await editPrefix('');
+      expect(find.text('Tasks'), findsOneWidget);
+      final cleared =
+          jsonDecode((await SharedPreferencesAsync().getString(storageKey))!)
+              as Map;
+      expect(cleared['tabs'][0].containsKey('prefix'), isFalse);
+      expect(cleared['tabs'][0].containsKey('colour'), isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('restored generic web labels are replaced by the live title',

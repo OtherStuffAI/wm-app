@@ -250,6 +250,9 @@ class BrowserScreenState extends State<BrowserScreen> {
                     final button = _BrowserTabButton(
                       title: tab.label,
                       active: active,
+                      tabColour: _tabColours[tab.colour],
+                      onSecondaryTapUp: (details) =>
+                          _showTabMenu(tab, details.globalPosition),
                       fipsTransport: tab.isFips,
                       closeable: true,
                       width: tabWidth,
@@ -440,7 +443,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     } else {
       _bookmarks = [
         ..._bookmarks,
-        BrowserBookmark(title: tab.label, url: url),
+        BrowserBookmark(title: tab.pageLabel, url: url),
       ];
     }
     await _persistBookmarks();
@@ -753,6 +756,82 @@ class BrowserScreenState extends State<BrowserScreen> {
     _createTab(url);
   }
 
+  Future<void> _showTabMenu(BrowserTab tab, Offset position) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(
+          overlay.globalToLocal(position).dx,
+          overlay.globalToLocal(position).dy,
+          0,
+          0,
+        ),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem(value: 'prefix', child: Text('Set tab prefix…')),
+        const PopupMenuDivider(),
+        CheckedPopupMenuItem(
+          value: 'default',
+          checked: tab.colour == null,
+          child: const Text('Default colour'),
+        ),
+        for (final entry in _tabColours.entries)
+          CheckedPopupMenuItem(
+            value: entry.key,
+            checked: tab.colour == entry.key,
+            child: Row(
+              children: [
+                Icon(Icons.circle, color: entry.value, size: 16),
+                const SizedBox(width: 12),
+                Text(entry.key),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (!mounted || !_tabs.contains(tab) || action == null) return;
+    if (action == 'prefix') {
+      var prefix = tab.prefix;
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Tab prefix'),
+          content: TextFormField(
+            initialValue: prefix,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Prefix',
+              hintText: 'WORK',
+              helperText: 'Shown as WORK: Page title. Leave blank to remove.',
+              helperMaxLines: 2,
+            ),
+            onChanged: (value) => prefix = value,
+            onFieldSubmitted: (value) => Navigator.pop(context, value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, prefix),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || !_tabs.contains(tab) || result == null) return;
+      setState(() {
+        tab.prefix = result.trim().replaceFirst(RegExp(r'[:\s]+$'), '');
+      });
+    } else {
+      setState(() => tab.colour = action == 'default' ? null : action);
+    }
+    _schedulePersistTabs();
+  }
+
   void _activateTab(int id) {
     if (_activeTabId == id) {
       _revealTab(id);
@@ -965,6 +1044,8 @@ class BrowserScreenState extends State<BrowserScreen> {
         _createTab(tab.url!, activate: false, persistState: false);
       }
       final restored = _tabs.last;
+      restored.prefix = tab.prefix;
+      restored.colour = tab.colour;
       if (tab.title != null && tab.title!.trim().isNotEmpty) {
         restored.title = tab.title!.trim();
       }
@@ -1007,6 +1088,8 @@ class BrowserScreenState extends State<BrowserScreen> {
         for (final tab in _tabs)
           _BrowserTabSnapshot(
             title: tab.title,
+            prefix: tab.prefix,
+            colour: tab.colour,
             url: tab.isHome
                 ? null
                 : (tab.currentUrl ?? tab.addressController.text).trim(),
@@ -2599,6 +2682,16 @@ class _TabReorderHandle extends StatelessWidget {
   }
 }
 
+const _tabColours = <String, Color>{
+  'Red': Colors.red,
+  'Orange': Colors.orange,
+  'Yellow': Colors.amber,
+  'Green': Colors.green,
+  'Blue': Colors.blue,
+  'Purple': Colors.purple,
+  'Pink': Colors.pink,
+};
+
 class _BrowserTabButton extends StatelessWidget {
   const _BrowserTabButton({
     required this.title,
@@ -2607,6 +2700,8 @@ class _BrowserTabButton extends StatelessWidget {
     required this.closeable,
     required this.onPressed,
     required this.onClose,
+    required this.onSecondaryTapUp,
+    this.tabColour,
     this.width = 190,
   });
 
@@ -2617,6 +2712,8 @@ class _BrowserTabButton extends StatelessWidget {
   final VoidCallback onPressed;
   final VoidCallback onClose;
   final double width;
+  final Color? tabColour;
+  final GestureTapUpCallback onSecondaryTapUp;
 
   @override
   Widget build(BuildContext context) {
@@ -2625,11 +2722,17 @@ class _BrowserTabButton extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Material(
-        color: active ? colors.surface : Colors.transparent,
+        color: tabColour == null
+            ? (active ? colors.surface : Colors.transparent)
+            : Color.alphaBlend(
+                tabColour!.withValues(alpha: active ? 0.28 : 0.14),
+                active ? colors.surface : colors.surfaceContainerHighest,
+              ),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
         child: InkWell(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
           onTap: onPressed,
+          onSecondaryTapUp: onSecondaryTapUp,
           child: Container(
             width: width,
             height: 34,
@@ -2638,9 +2741,11 @@ class _BrowserTabButton extends StatelessWidget {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(6),
               ),
-              border: active
-                  ? Border.all(color: colors.outlineVariant)
-                  : Border.all(color: Colors.transparent),
+              border: Border.all(
+                color: tabColour ??
+                    (active ? colors.outlineVariant : Colors.transparent),
+                width: active && tabColour != null ? 2 : 1,
+              ),
             ),
             child: Row(
               children: [
@@ -3264,17 +3369,23 @@ class _BrowserTabSnapshot {
     required this.title,
     required this.url,
     required this.isHome,
+    this.prefix = '',
+    this.colour,
   });
 
   final String? title;
   final String? url;
   final bool isHome;
+  final String prefix;
+  final String? colour;
 
   Map<String, dynamic> toJson() {
     return {
       'title': title,
       'url': url,
       'is_home': isHome,
+      if (prefix.isNotEmpty) 'prefix': prefix,
+      if (colour != null) 'colour': colour,
     };
   }
 
@@ -3286,6 +3397,10 @@ class _BrowserTabSnapshot {
       title: value['title']?.toString(),
       url: url == null || url.isEmpty ? null : url,
       isHome: isHome,
+      prefix: value['prefix'] is String ? value['prefix'] as String : '',
+      colour: _tabColours.containsKey(value['colour'])
+          ? value['colour'] as String
+          : null,
     );
   }
 }
@@ -3305,13 +3420,17 @@ class BrowserTab {
   final TextEditingController addressController;
   final FocusNode addressFocusNode;
   String title;
+  String prefix = '';
+  String? colour;
   String? currentUrl;
   String? message;
   bool isHome;
   bool canGoBack = false;
   bool canGoForward = false;
 
-  String get label {
+  String get label => prefix.isEmpty ? pageLabel : '$prefix: $pageLabel';
+
+  String get pageLabel {
     final trimmed = title.trim();
     if (trimmed.isNotEmpty) return trimmed;
     final uri = Uri.tryParse(currentUrl ?? '');
