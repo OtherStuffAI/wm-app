@@ -61,11 +61,20 @@ if [[ "$USE_EXISTING_DIST" == false ]]; then
       mkdir -p "$TEMP_BUILD_DIR/tmp"
       export TMPDIR="$TEMP_BUILD_DIR/tmp"
       export FLIGHT_DECK_PG_APP_NPUB="${FLIGHT_DECK_PG_APP_NPUB:-npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5}"
-      # Rebuild the committed version, rather than incrementing its release number.
+      # Source commits can include the next release notes before a build updates
+      # .build-meta.json. Use the newer recorded number without inventing a release.
       FLIGHTDECK_BUILD_NUMBER="$(node -e '
         const meta = require("./.build-meta.json");
         if (!Number.isSafeInteger(meta.absoluteVersion) || meta.absoluteVersion < 1) process.exit(1);
-        console.log(meta.absoluteVersion);
+        const manifest = require("./release-notes.json");
+        if (!Array.isArray(manifest.releases)) throw new Error("Invalid Flight Deck release notes");
+        const version = manifest.releases.reduce((latest, release) => {
+          if (!Number.isSafeInteger(release.buildNumber) || release.buildNumber < 1) {
+            throw new Error("Invalid Flight Deck release build number");
+          }
+          return Math.max(latest, release.buildNumber);
+        }, meta.absoluteVersion);
+        console.log(version);
       ')"
       SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
       FLIGHTDECK_BUILD_ID="wmapp-$(git rev-parse --short=12 HEAD)-$FLIGHTDECK_BUILD_NUMBER"

@@ -29,6 +29,7 @@ cp "$SCRIPT" "$fixture/repo/tools/"
 cp "$REPO_DIR"/build_*.sh "$fixture/repo/"
 printf '{}\n' > "$fixture/source/package.json"
 printf '{"absoluteVersion":1888}\n' > "$fixture/source/.build-meta.json"
+printf '{"releases":[{"buildNumber":1888}]}\n' > "$fixture/source/release-notes.json"
 printf 'stale\n' > "$fixture/repo/app/assets/flightdeck/stale.txt"
 cat > "$fixture/bin/bun" <<'STUB'
 #!/usr/bin/env bash
@@ -45,14 +46,14 @@ if [[ "$*" == 'run verify:dist' ]]; then
 fi
 [[ "$*" == 'run build' ]]
 if [[ -z "${FLIGHT_DECK_DIR:-}" ]]; then
-  [[ "$FLIGHTDECK_BUILD_NUMBER" == 1888 ]]
+  [[ "$FLIGHTDECK_BUILD_NUMBER" == "${EXPECTED_BUILD_NUMBER:-1888}" ]]
   [[ -n "$FLIGHT_DECK_PG_APP_NPUB" ]]
 else
   [[ "$PWD" == "$FLIGHT_DECK_DIR" ]]
 fi
 printf 'flightdeck\n' >> "$BUILD_TEST_LOG"
 [[ "${FAIL_FLIGHTDECK:-0}" != 1 ]] || exit 23
-printf '{"buildNumber":1888}\n' > dist/version.json
+printf '{"buildNumber":%s}\n' "${FLIGHTDECK_BUILD_NUMBER:-1888}" > dist/version.json
 STUB
 cat > "$fixture/bin/flutter" <<'STUB'
 #!/usr/bin/env bash
@@ -152,3 +153,17 @@ for failure in none FAIL_CLONE FAIL_INSTALL FAIL_FLIGHTDECK FAIL_VERIFY; do
 done
 [[ -f "$TEST_SOURCE/package.json" ]]
 printf 'GitHub source, dependency install, version preservation and cleanup checks passed\n'
+
+# A source release can be committed before its build metadata is incremented.
+# Also preserve a later metadata number when the last user-facing note is older.
+for versions in '1891 1892 1892' '1892 1892 1892' '1893 1892 1893'; do
+  read -r metadata_version notes_version expected_version <<< "$versions"
+  printf '{"absoluteVersion":%s}\n' "$metadata_version" > "$TEST_SOURCE/.build-meta.json"
+  printf '{"releases":[{"buildNumber":%s}]}\n' "$notes_version" > "$TEST_SOURCE/release-notes.json"
+  EXPECTED_BUILD_NUMBER="$expected_version" TMPDIR="$EXPECTED_TEMP_ROOT" "$fixture/repo/tools/update_flightdeck_bundle.sh" > "$fixture/output" 2>&1 || {
+    cat "$fixture/output" >&2; exit 1;
+  }
+  [[ "$(node -p "require(process.argv[1]).buildNumber" "$fixture/repo/app/assets/flightdeck/version.json")" == "$expected_version" ]]
+  [[ -z "$(ls -A "$EXPECTED_TEMP_ROOT")" ]]
+done
+printf 'Release notes ahead of, equal to, and behind build metadata passed\n'
