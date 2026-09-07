@@ -19,6 +19,17 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 if [[ "$USE_EXISTING_DIST" == false ]]; then
+  [[ -f "$FLIGHT_DECK_DIR/package.json" ]] || {
+    printf 'Flight Deck checkout missing at %s; set FLIGHT_DECK_DIR to its location.\n' "$FLIGHT_DECK_DIR" >&2
+    exit 1
+  }
+  for tool in bun node rsync; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      printf '%s is required to build and bundle Flight Deck.\n' "$tool" >&2
+      exit 1
+    }
+  done
+  printf 'Building Flight Deck from %s...\n' "$FLIGHT_DECK_DIR"
   (
     cd "$FLIGHT_DECK_DIR"
     bun run build

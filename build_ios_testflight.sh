@@ -13,6 +13,8 @@ command -v flutter >/dev/null 2>&1 || {
   exit 1
 }
 
+"$REPO_DIR/tools/update_flightdeck_bundle.sh"
+
 # Flutter can exit successfully after archiving even when IPA export fails.
 # Use a timestamp marker so a stale IPA cannot be reported as this build.
 mkdir -p "$APP_DIR/build/ios"

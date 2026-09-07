@@ -2,7 +2,7 @@
 
 ## Fastest Path
 
-Use the root helper script. It pulls the latest `main`, fetches Flutter dependencies, builds the macOS debug app, and launches it.
+Use the root helper script. It pulls WMApp with `git pull --ff-only`, rebuilds and bundles the local Flight Deck checkout, fetches Flutter dependencies, builds the macOS debug app, and launches it. See the [shared prerequisites](../../README.md#repository-checkout) for Flight Deck source and tooling setup.
 
 ```bash
 cd ~/code/wm/wmapp

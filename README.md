@@ -16,8 +16,24 @@ Active development uses the private repository
 `https://github.com/OtherStuffAI/wm-app` checked out at
 `~/code/wm/wmapp`. Its Flight Deck bundle updater defaults to the sibling
 `~/code/wm/flightdeck` checkout; set `FLIGHT_DECK_DIR` to use another source.
-Pass `--use-existing-dist` when packaging a previously verified build without
-rebuilding or mutating its source checkout.
+Every root `build_*.sh` script rebuilds Flight Deck from that checkout and copies
+its generated assets into WMApp before building Flutter. “Latest” means the
+current local Flight Deck source, including uncommitted edits; the scripts do
+not pull or switch the Flight Deck branch. No separate central build or WMApp
+commit/push is needed. Keep the Flight Deck checkout current yourself when you
+want newer remote changes.
+
+Install Bun, Node.js and rsync, and run `bun install --frozen-lockfile` in the
+Flight Deck checkout after cloning or changing its dependencies. Its normal
+build configuration must also be available. A missing checkout or failed Flight
+Deck build stops the app build instead of silently packaging old assets.
+
+For example, `FLIGHT_DECK_DIR=/path/to/flightdeck ./build_runapp.sh` builds from
+an alternate checkout. The rebuild updates tracked `app/assets/flightdeck`
+files locally. `runapp.sh` only launches an existing app and does not rebuild.
+Direct `flutter build` commands still use whichever assets are already bundled.
+Pass `--use-existing-dist` to `tools/update_flightdeck_bundle.sh` only when
+manually packaging a previously verified build without rebuilding its source.
 
 The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
 should not be used for new changes.
@@ -138,7 +154,7 @@ $EDITOR .env.local
 Then launch through the root helper scripts:
 
 ```bash
-./build_runapp.sh  # pull, fetch deps, build, launch
+./build_runapp.sh  # pull WMApp, build Flight Deck, build app, launch
 ./runapp.sh        # launch the existing macOS build
 ```
 
