@@ -7,8 +7,8 @@ These notes cover the easiest current ways to build and run Wingman App on perso
 - [Android Tablet](android.md)
 - [iPhone](iphone.md)
 
-All root `build_*.sh` helpers first rebuild and bundle the current local Flight
-Deck source. See [source selection and prerequisites](../../README.md#repository-checkout).
+All root `build_*.sh` helpers first download, build and bundle the latest Flight
+Deck `main` from GitHub, then remove the temporary checkout and dependencies. See [source selection and prerequisites](../../README.md#repository-checkout).
 A separate Flight Deck build and WMApp commit/push are no longer prerequisites.
 Manual `flutter build` commands do not refresh the bundle.
 

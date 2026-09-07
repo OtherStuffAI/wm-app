@@ -2,12 +2,23 @@
 set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-FLIGHT_DECK_DIR="${FLIGHT_DECK_DIR:-$REPO_DIR/../flightdeck}"
+FLIGHT_DECK_DIR="${FLIGHT_DECK_DIR:-}"
+FLIGHT_DECK_REPOSITORY="https://github.com/OtherStuffAI/wm-flightdeck.git"
+TEMP_BUILD_DIR=""
+
+cleanup() {
+  if [[ -n "$TEMP_BUILD_DIR" ]]; then
+    rm -rf -- "$TEMP_BUILD_DIR"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 TARGET_DIR="$REPO_DIR/app/assets/flightdeck"
 USE_EXISTING_DIST=false
 
 if [[ "${1:-}" == "--print-source" ]]; then
-  printf '%s\n' "$FLIGHT_DECK_DIR"
+  printf '%s\n' "${FLIGHT_DECK_DIR:-$FLIGHT_DECK_REPOSITORY}"
   exit 0
 fi
 
@@ -18,21 +29,52 @@ elif [[ -n "${1:-}" ]]; then
   exit 2
 fi
 
+if [[ "$USE_EXISTING_DIST" == true && -z "$FLIGHT_DECK_DIR" ]]; then
+  echo '--use-existing-dist requires FLIGHT_DECK_DIR pointing to a local checkout.' >&2
+  exit 2
+fi
+
 if [[ "$USE_EXISTING_DIST" == false ]]; then
-  [[ -f "$FLIGHT_DECK_DIR/package.json" ]] || {
-    printf 'Flight Deck checkout missing at %s; set FLIGHT_DECK_DIR to its location.\n' "$FLIGHT_DECK_DIR" >&2
-    exit 1
-  }
-  for tool in bun node rsync; do
+  for tool in git bun node rsync; do
     command -v "$tool" >/dev/null 2>&1 || {
       printf '%s is required to build and bundle Flight Deck.\n' "$tool" >&2
       exit 1
     }
   done
+  if [[ -z "$FLIGHT_DECK_DIR" ]]; then
+    TEMP_BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wmapp-flightdeck.XXXXXX")"
+    FLIGHT_DECK_DIR="$TEMP_BUILD_DIR/source"
+    printf 'Downloading latest Flight Deck main from %s...\n' "$FLIGHT_DECK_REPOSITORY"
+    git clone --depth 1 --single-branch --branch main -- "$FLIGHT_DECK_REPOSITORY" "$FLIGHT_DECK_DIR"
+  fi
+  [[ -f "$FLIGHT_DECK_DIR/package.json" ]] || {
+    printf 'Flight Deck checkout missing at %s; set FLIGHT_DECK_DIR to its location.\n' "$FLIGHT_DECK_DIR" >&2
+    exit 1
+  }
   printf 'Building Flight Deck from %s...\n' "$FLIGHT_DECK_DIR"
   (
     cd "$FLIGHT_DECK_DIR"
+    if [[ -n "$TEMP_BUILD_DIR" ]]; then
+      # Keep downloaded dependencies and transient build files with the clone.
+      export BUN_INSTALL_CACHE_DIR="$TEMP_BUILD_DIR/bun-cache"
+      export npm_config_cache="$TEMP_BUILD_DIR/npm-cache"
+      mkdir -p "$TEMP_BUILD_DIR/tmp"
+      export TMPDIR="$TEMP_BUILD_DIR/tmp"
+      export FLIGHT_DECK_PG_APP_NPUB="${FLIGHT_DECK_PG_APP_NPUB:-npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5}"
+      # Rebuild the committed version, rather than incrementing its release number.
+      FLIGHTDECK_BUILD_NUMBER="$(node -e '
+        const meta = require("./.build-meta.json");
+        if (!Number.isSafeInteger(meta.absoluteVersion) || meta.absoluteVersion < 1) process.exit(1);
+        console.log(meta.absoluteVersion);
+      ')"
+      SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+      FLIGHTDECK_BUILD_ID="wmapp-$(git rev-parse --short=12 HEAD)-$FLIGHTDECK_BUILD_NUMBER"
+      export FLIGHTDECK_BUILD_NUMBER SOURCE_DATE_EPOCH FLIGHTDECK_BUILD_ID
+      printf 'Flight Deck build %s, source %s\n' "$FLIGHTDECK_BUILD_NUMBER" "$FLIGHTDECK_BUILD_ID"
+      bun install --frozen-lockfile
+    fi
     bun run build
+    bun run verify:dist
   )
 fi
 

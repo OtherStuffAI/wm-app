@@ -14,26 +14,29 @@ Tower remains the source of truth for workspace identity, scopes, channels, grou
 
 Active development uses the private repository
 `https://github.com/OtherStuffAI/wm-app` checked out at
-`~/code/wm/wmapp`. Its Flight Deck bundle updater defaults to the sibling
-`~/code/wm/flightdeck` checkout; set `FLIGHT_DECK_DIR` to use another source.
-Every root `build_*.sh` script rebuilds Flight Deck from that checkout and copies
-its generated assets into WMApp before building Flutter. “Latest” means the
-current local Flight Deck source, including uncommitted edits; the scripts do
-not pull or switch the Flight Deck branch. No separate central build or WMApp
-commit/push is needed. Keep the Flight Deck checkout current yourself when you
-want newer remote changes.
+`~/code/wm/wmapp`.
 
-Install Bun, Node.js and rsync, and run `bun install --frozen-lockfile` in the
-Flight Deck checkout after cloning or changing its dependencies. Its normal
-build configuration must also be available. A missing checkout or failed Flight
-Deck build stops the app build instead of silently packaging old assets.
+Every root `build_*.sh` script downloads the latest `main` from
+`https://github.com/OtherStuffAI/wm-flightdeck.git`, installs its locked
+dependencies, builds and verifies Flight Deck, then bundles it before building
+Flutter. No local Flight Deck checkout or separate bundle commit is needed.
+Git, Bun, Node.js, rsync and network access are required; private repository
+access uses your normal Git credentials.
 
-For example, `FLIGHT_DECK_DIR=/path/to/flightdeck ./build_runapp.sh` builds from
-an alternate checkout. The rebuild updates tracked `app/assets/flightdeck`
-files locally. `runapp.sh` only launches an existing app and does not rebuild.
-Direct `flutter build` commands still use whichever assets are already bundled.
-Pass `--use-existing-dist` to `tools/update_flightdeck_bundle.sh` only when
-manually packaging a previously verified build without rebuilding its source.
+The clone, dependencies and temporary dependency caches are removed on success,
+failure or interruption. Only the bundled output in `app/assets/flightdeck`
+is retained. Builds preserve the committed Flight Deck version number and log
+the source commit. The public Flight Deck app identifier is supplied by default;
+`FLIGHT_DECK_PG_APP_NPUB` can override it. A download, install, build or verification
+failure stops the app build instead of silently using an old bundle.
+
+For local development, `FLIGHT_DECK_DIR=/path/to/flightdeck ./build_runapp.sh`
+builds that checkout instead, using its existing dependencies and configuration.
+This explicit override is never deleted or pulled. To manually reuse its built
+assets, run `FLIGHT_DECK_DIR=/path/to/flightdeck ./tools/update_flightdeck_bundle.sh --use-existing-dist`.
+
+`runapp.sh` only launches an existing app. Direct `flutter build` commands still
+use whichever assets are already bundled.
 
 The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
 should not be used for new changes.

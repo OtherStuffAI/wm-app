@@ -4,8 +4,8 @@ set -euo pipefail
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SCRIPT="$REPO_DIR/tools/update_flightdeck_bundle.sh"
 
-default_source="$("$SCRIPT" --print-source)"
-expected_default="$REPO_DIR/../flightdeck"
+default_source="$(FLIGHT_DECK_DIR= "$SCRIPT" --print-source)"
+expected_default="https://github.com/OtherStuffAI/wm-flightdeck.git"
 [[ "$default_source" == "$expected_default" ]] || {
   printf 'expected default source %s, got %s\n' "$expected_default" "$default_source" >&2
   exit 1
@@ -28,12 +28,28 @@ mkdir -p "$fixture/repo/tools" "$fixture/repo/app/assets/flightdeck" "$fixture/s
 cp "$SCRIPT" "$fixture/repo/tools/"
 cp "$REPO_DIR"/build_*.sh "$fixture/repo/"
 printf '{}\n' > "$fixture/source/package.json"
+printf '{"absoluteVersion":1888}\n' > "$fixture/source/.build-meta.json"
 printf 'stale\n' > "$fixture/repo/app/assets/flightdeck/stale.txt"
 cat > "$fixture/bin/bun" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == 'install --frozen-lockfile' ]]; then
+  [[ "$BUN_INSTALL_CACHE_DIR" == "$EXPECTED_TEMP_ROOT/"* ]]
+  mkdir -p "$BUN_INSTALL_CACHE_DIR" "$npm_config_cache" node_modules
+  [[ "${FAIL_INSTALL:-0}" != 1 ]] || exit 24
+  exit 0
+fi
+if [[ "$*" == 'run verify:dist' ]]; then
+  [[ "${FAIL_VERIFY:-0}" != 1 ]] || exit 25
+  exit 0
+fi
 [[ "$*" == 'run build' ]]
-[[ "$PWD" == "$FLIGHT_DECK_DIR" ]]
+if [[ -z "${FLIGHT_DECK_DIR:-}" ]]; then
+  [[ "$FLIGHTDECK_BUILD_NUMBER" == 1888 ]]
+  [[ -n "$FLIGHT_DECK_PG_APP_NPUB" ]]
+else
+  [[ "$PWD" == "$FLIGHT_DECK_DIR" ]]
+fi
 printf 'flightdeck\n' >> "$BUILD_TEST_LOG"
 [[ "${FAIL_FLIGHTDECK:-0}" != 1 ]] || exit 23
 printf '{"buildNumber":1888}\n' > dist/version.json
@@ -54,7 +70,18 @@ printf 'Darwin\n'
 STUB
 cat > "$fixture/bin/git" <<'STUB'
 #!/usr/bin/env bash
-exit 0
+set -euo pipefail
+if [[ "${1:-}" == clone ]]; then
+  [[ "$*" == *'--depth 1 --single-branch --branch main -- https://github.com/OtherStuffAI/wm-flightdeck.git'* ]]
+  destination="${!#}"
+  mkdir -p "$destination"
+  [[ "${FAIL_CLONE:-0}" != 1 ]] || exit 26
+  cp -R "$TEST_SOURCE/." "$destination/"
+elif [[ "${1:-}" == log ]]; then
+  printf '1788753600\n'
+elif [[ "${1:-}" == rev-parse ]]; then
+  printf '123456abcdef\n'
+fi
 STUB
 chmod +x "$fixture/bin/"*
 export PATH="$fixture/bin:$PATH"
@@ -98,3 +125,30 @@ rg -q '^flutter build ios --simulator --debug$' "$BUILD_TEST_LOG"
 [[ ! -s "$BUILD_TEST_LOG" ]]
 
 printf 'All seven platform helpers refresh Flight Deck and stop on build failure; simulator and manual reuse passed\n'
+
+# Default GitHub path: cleanup and preserve old assets on every failure stage.
+export TEST_SOURCE="$fixture/source"
+export EXPECTED_TEMP_ROOT="$fixture/downloads"
+mkdir -p "$EXPECTED_TEMP_ROOT"
+unset FLIGHT_DECK_DIR
+for failure in none FAIL_CLONE FAIL_INSTALL FAIL_FLIGHTDECK FAIL_VERIFY; do
+  : > "$BUILD_TEST_LOG"
+  printf 'preserve\n' > "$fixture/repo/app/assets/flightdeck/sentinel"
+  status=0
+  if [[ "$failure" == none ]]; then
+    TMPDIR="$EXPECTED_TEMP_ROOT" "$fixture/repo/tools/update_flightdeck_bundle.sh" > "$fixture/output" 2>&1 || status=$?
+    [[ "$status" == 0 && ! -f "$fixture/repo/app/assets/flightdeck/sentinel" ]] || {
+      cat "$fixture/output" >&2; exit 1;
+    }
+  else
+    env "$failure=1" TMPDIR="$EXPECTED_TEMP_ROOT" "$fixture/repo/tools/update_flightdeck_bundle.sh" > "$fixture/output" 2>&1 || status=$?
+    [[ "$status" != 0 && -f "$fixture/repo/app/assets/flightdeck/sentinel" ]] || {
+      cat "$fixture/output" >&2; exit 1;
+    }
+  fi
+  [[ -z "$(ls -A "$EXPECTED_TEMP_ROOT")" ]] || {
+    echo "Temporary downloads remained after $failure" >&2; exit 1;
+  }
+done
+[[ -f "$TEST_SOURCE/package.json" ]]
+printf 'GitHub source, dependency install, version preservation and cleanup checks passed\n'
