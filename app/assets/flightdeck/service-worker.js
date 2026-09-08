@@ -1,5 +1,5 @@
 
-const BUILD_ID = "20260906-0507-1-1884";
+const BUILD_ID = "wmapp-db2cde3b7a59-1911";
 const CACHE_PREFIX = 'wingman-fd';
 const CACHE_NAME = `${CACHE_PREFIX}-${BUILD_ID}`;
 const PRECACHE_URLS = [
