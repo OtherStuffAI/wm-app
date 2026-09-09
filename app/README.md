@@ -14,6 +14,7 @@ Flutter platform folders have been generated for macOS, Linux, web, Android,
 and iOS. To run the current shell locally:
 
 ```bash
+../tools/update_flightdeck_bundle.sh
 flutter pub get
 flutter test
 flutter build web

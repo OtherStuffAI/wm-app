@@ -19,13 +19,14 @@ Active development uses the private repository
 Every root `build_*.sh` script downloads the latest `main` from
 `https://github.com/OtherStuffAI/wm-flightdeck.git`, installs its locked
 dependencies, builds and verifies Flight Deck, then bundles it before building
-Flutter. No local Flight Deck checkout or separate bundle commit is needed.
-Git, Bun, Node.js, rsync and network access are required; private repository
-access uses your normal Git credentials.
+Flutter. The bundled output in `app/assets/flightdeck` is generated locally and
+ignored by Git; it should not be committed to this repository. Git, Bun,
+Node.js, rsync and network access are required; private repository access uses
+your normal Git credentials.
 
 The clone, dependencies and temporary dependency caches are removed on success,
 failure or interruption. Only the bundled output in `app/assets/flightdeck`
-is retained. Builds preserve the committed Flight Deck version number and log
+is retained. Refreshes preserve the committed Flight Deck version number and log
 the source commit. The public Flight Deck app identifier is supplied by default;
 `FLIGHT_DECK_PG_APP_NPUB` can override it. A download, install, build or verification
 failure stops the app build instead of silently using an old bundle.
