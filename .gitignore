@@ -22,3 +22,6 @@ node_modules/
 key.properties
 cache/
 tmp/
+crates/wmapp-fips-ios/vendor/
+app/ios/FipsCore/
+app/android/.kotlin/

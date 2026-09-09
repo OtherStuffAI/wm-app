@@ -185,3 +185,10 @@ state and tester availability in the release handoff.
 Official references: [Flutter iOS release guide](https://docs.flutter.dev/deployment/ios),
 [Apple distribution workflow](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases),
 and [Apple internal testers](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers).
+
+## Native FIPS VPN
+
+See [native iPhone FIPS](ios-fips.md) for the pinned Rust build, Packet Tunnel
+signing profiles, split routing, extension-private node identity, diagnostics,
+and physical-device checklist. The native runtime is now included in source;
+Network Extensions provisioning is required before a signed device install.

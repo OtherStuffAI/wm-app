@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="flightdeck-build-id" content="wmapp-c868dcf41906-1913">
+  <meta name="flightdeck-build-id" content="20260909-0637-2-1915">
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
@@ -113,7 +113,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BAh5a6lZ.js"></script>
+  <script type="module" crossorigin src="/assets/index-CVzaAk7o.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-B0BSF0tt.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -7155,6 +7155,25 @@
                 <p>Configure the current workspace backend and transport without leaving Setup.</p>
               </div>
             </div>
+
+            <form class="auth-form" @submit.prevent="$store.chat.saveTowerTransportSettings()" x-show="$store.chat.backendUrl">
+              <label>
+                <span>Tower connection path</span>
+                <select x-model="$store.chat.towerTransportMode" :disabled="$store.chat.towerTransportBusy">
+                  <option value="https">Public HTTPS</option>
+                  <option value="fips">FIPS via WMapp</option>
+                </select>
+              </label>
+              <label x-show="$store.chat.towerTransportMode === 'fips'">
+                <span>Manual Tower FIPS endpoint</span>
+                <input type="url" x-model="$store.chat.towerFipsEndpoint" placeholder="http://npub1….fips:41080/" :disabled="$store.chat.towerTransportBusy" />
+              </label>
+              <p class="settings-field-help">FIPS requires WMapp and an explicitly paired Tower. Applying reloads this page and retains the workspace, local data and queued writes.</p>
+              <p class="settings-field-help" x-show="$store.chat.towerTransportMode === 'fips' && !$store.chat.towerFipsSupported">FIPS is unavailable in this client. Use WMapp with the paired Tower bridge, or select Public HTTPS.</p>
+              <p class="settings-field-help" x-text="$store.chat.towerTransportStatus"></p>
+              <p role="alert" x-show="$store.chat.towerTransportError" x-text="$store.chat.towerTransportError"></p>
+              <button class="auth-option secondary" type="submit" :disabled="$store.chat.towerTransportBusy" x-text="$store.chat.towerTransportBusy ? 'Checking connection…' : 'Apply and reload'"></button>
+            </form>
 
             <div class="cvm-toggle">
               <label>

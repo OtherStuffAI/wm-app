@@ -303,6 +303,16 @@ class _SetupScreenState extends State<SetupScreen> {
                     icon: const Icon(Icons.admin_panel_settings_outlined),
                     label: const Text('Install or repair'),
                   ),
+                if (widget.fipsRuntime.supportsStop &&
+                    (state == FipsRuntimeState.running ||
+                        state == FipsRuntimeState.starting ||
+                        state == FipsRuntimeState.degraded))
+                  OutlinedButton.icon(
+                    key: const ValueKey('fips-stop'),
+                    onPressed: _busy ? null : _stopFips,
+                    icon: const Icon(Icons.stop_circle_outlined),
+                    label: const Text('Stop FIPS'),
+                  ),
                 if (widget.fipsRuntime.supportsDiagnosticsExport)
                   OutlinedButton.icon(
                     key: const ValueKey('fips-export-diagnostics'),
@@ -394,6 +404,14 @@ class _SetupScreenState extends State<SetupScreen> {
           _fipsStatus = status;
         });
       }
+      return status.detail;
+    });
+  }
+
+  Future<void> _stopFips() async {
+    await _run('Stopping FIPS VPN…', () async {
+      final status = await widget.fipsRuntime.stop();
+      if (mounted) setState(() => _fipsStatus = status);
       return status.detail;
     });
   }
