@@ -6,13 +6,17 @@ import '../../app/lib/src/core/tower_fips_proxy.dart';
 import '../../app/lib/src/features/browser/tower_fips_browser_bridge.dart';
 
 Future<void> main(List<String> args) async {
+  var cancellationMessages = 0;
   final tower = await HttpServer.bind(InternetAddress.loopbackIPv4,0);
   tower.listen((r) async {
     if (r.headers.value('host') != 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98.fips:8787' ||
         r.headers.value('origin') != null || r.headers.value('cookie') != null) {
       r.response.statusCode=400; await r.response.close(); return;
     }
-    if (r.uri.path == '/events') {
+    if (r.uri.path == '/cancel-count') {
+      r.response.headers.contentType=ContentType.json;
+      r.response.write(jsonEncode(cancellationMessages)); await r.response.close();
+    } else if (r.uri.path == '/events') {
       r.response.headers.contentType=ContentType('text','event-stream');
       r.response.bufferOutput=false;
       for (final byte in utf8.encode('id: 1\ndata: café\n\n')) {
@@ -52,6 +56,7 @@ Future<void> main(List<String> args) async {
     final message=await utf8.decoder.bind(r).join();
     final decoded = jsonDecode(message) as Map;
     final id=decoded['id'] as String;
+    if (decoded['method'] == 'cancel') cancellationMessages++;
     if (decoded['method'] == 'open' && decoded['params']['url'].endsWith('/slow-open')) {
       await Future<void>.delayed(const Duration(milliseconds:500));
     }

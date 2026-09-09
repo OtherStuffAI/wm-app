@@ -43,16 +43,21 @@
     afterHeaders.abort(new DOMException('test timeout','TimeoutError'));
     let timeoutPreserved=false;try{await reader.read();}catch(e){timeoutPreserved=e.name==='TimeoutError';}
     assert(timeoutPreserved,'TimeoutError after headers');
+    await new Promise(resolve=>setTimeout(resolve,150));
+    const cancelsBefore=await (await bridge.fetch(endpoint+'/cancel-count')).json();
     const source=`onmessage=({data})=>{if(data.type!=='wingman-tower-transport-port')return;
       const p=data.port;let text='';p.onmessage=({data:d})=>{
         if(d.type==='headers'){if(d.status!==200)throw Error('worker status');p.postMessage({type:'pull',id:'sse'});}
-        if(d.type==='chunk'){text+=atob(d.bodyBase64);if(text.includes('\\n\\n')){p.postMessage({type:'cancel',id:'sse'});postMessage('worker SSE streamed');}else p.postMessage({type:'pull',id:'sse'});}
+        if(d.type==='chunk'){text+=atob(d.bodyBase64);if(text.includes('\\n\\n')){postMessage('worker SSE streamed');}else p.postMessage({type:'pull',id:'sse'});}
         if(d.type==='error')postMessage('FAIL worker');};p.start();
       p.postMessage({type:'request',id:'sse',url:${JSON.stringify(endpoint+'/events')},method:'GET',headers:[],bodyBase64:null});};`;
     const worker=new Worker(URL.createObjectURL(new Blob([source],{type:'text/javascript'})));
     const done=new Promise(resolve=>worker.onmessage=({data})=>resolve(data));
     bridge.attachWorker(worker);
-    assert(await done==='worker SSE streamed','worker port/SSE');worker.terminate();
+    assert(await done==='worker SSE streamed','worker port/SSE');bridge.detachWorker(worker);worker.terminate();
+    await new Promise(resolve=>setTimeout(resolve,150));
+    const cancelsAfter=await (await bridge.fetch(endpoint+'/cancel-count')).json();
+    assert(cancelsAfter>cancelsBefore,'detach sends native cancellation before disconnect');
     await bridge.disconnect();
     window.webkit.messageHandlers.Result.postMessage('PASS HTTPS WKWebView native v2: binary 180KB, auth/status/headers, target/redirect rejection, preheaders abort, split UTF8 SSE, worker port streaming/cancel');
   }catch(e){window.webkit.messageHandlers.Result.postMessage('FAIL '+e.name+': '+e.message);}

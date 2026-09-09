@@ -122,6 +122,7 @@ String towerFipsBridgeScript(String documentToken, String pageOrigin) => '''
       return pair;
     },
     fetch:nativeFetch,
+    detachWorker(worker) { workerPorts.get(worker)?.(); workerPorts.delete(worker); },
     attachWorker(worker) {
       workerPorts.get(worker)?.();
       const channel = new MessageChannel();
@@ -140,13 +141,15 @@ String towerFipsBridgeScript(String documentToken, String pageOrigin) => '''
         if (typeof id !== 'string') return;
         try {
           if (data.type === 'request') {
-            if (data.bodyBase64 != null && (typeof data.bodyBase64 !== 'string' || data.bodyBase64.length > 11184812)) throw new Error('Worker upload exceeds 8 MiB');
+            if (data.bodyBase64 != null && (typeof data.bodyBase64 !== 'string' || data.bodyBase64.length > 22369624)) throw new Error('Worker upload exceeds 16 MiB');
             if (requests.has(id) || requests.size >= 64) throw new Error('Duplicate or excessive request');
             const state = {abort:new AbortController(), reader:null, busy:false};
             requests.set(id,state);
+            const body = data.bodyBase64 == null ? undefined : decode(data.bodyBase64);
+            if (body && body.byteLength > 16777216) throw new Error('Worker upload exceeds 16 MiB');
             const response = await nativeFetch(data.url, {
               method:data.method, headers:data.headers,
-              body:data.bodyBase64 == null ? undefined : decode(data.bodyBase64),
+              body,
               signal:state.abort.signal,
             });
             if (requests.get(id) !== state) { await response.body?.cancel(); return; }

@@ -1777,8 +1777,9 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   Future<void> _injectTowerBridge(BrowserTab tab) async {
     if (!(Platform.isMacOS || Platform.isAndroid || Platform.isLinux)) return;
-    if (tab.towerBridge != null || widget.onPrepareFipsNavigation == null)
+    if (tab.towerBridge != null || widget.onPrepareFipsNavigation == null) {
       return;
+    }
     final url = await tab.controller.currentUrl();
     if (!mounted || _tabById(tab.id) != tab || url == null) return;
     final origin = SignerPolicy.normalizeOrigin(url);
@@ -1798,8 +1799,9 @@ class BrowserScreenState extends State<BrowserScreen> {
           _towerPairings.remove(origin, logical, endpoint, identity),
       reply: tab.controller.runJavaScript,
       approve: (endpoint) async {
-        if (await _towerPairings.contains(origin, logical, endpoint, identity))
+        if (await _towerPairings.contains(origin, logical, endpoint, identity)) {
           return true;
+        }
         if (!mounted || _activeTabId != tab.id) return false;
         final approved = await showDialog<bool>(
               context: context,
@@ -2277,8 +2279,9 @@ class BrowserScreenState extends State<BrowserScreen> {
         params['kind'] == 27235 &&
         params['tags'] is List) {
       for (final tag in params['tags'] as List) {
-        if (tag is List && tag.length >= 2 && tag[0] == 'u')
+        if (tag is List && tag.length >= 2 && tag[0] == 'u') {
           urls.add(tag[1].toString());
+        }
       }
     }
     for (final url in urls) {

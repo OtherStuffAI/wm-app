@@ -33,6 +33,7 @@ window.wingmanTowerTransport = {
   }),
   fetch: async (meshUrl, requestInit) => Response,
   attachWorker: worker => undefined,
+  detachWorker: worker => undefined,
   disconnect: async () => undefined,
 };
 ```
@@ -77,9 +78,11 @@ Page replies:
 - `{type:'end', id}` or `{type:'error', id}` (sanitized)
 
 Flight Deck owns the worker SSE parser, cursor/reconnect/recovery and sync state.
-Attaching the same worker again cancels and replaces its old port. Disconnect
+Attaching the same worker again cancels and replaces its old port. Call synchronous
+`detachWorker(worker)` before every Worker termination/replacement; it aborts all
+old native requests/SSE and closes/removes the worker port. Disconnect
 cancels active operations but preserves the port for a later manual reconnect.
-Worker request bodies currently use one base64 message capped at 8 MiB decoded;
+Worker request bodies currently use one base64 message capped at 16 MiB decoded;
 larger bodies are rejected. Page fetch uploads stream without that cap.
 Larger worker-originated uploads require a future upload-chunk port extension;
 ordinary sync writes and SSE are supported without whole-response buffering.
@@ -126,7 +129,11 @@ Dart HttpServer detecting an idle browser-side TCP disconnect.
 
 ## Setup and activation
 
-1. Build WMapp: `cd app && flutter build macos --debug --no-pub`.
+1. For bundled Flight Deck, after the primary finishes and verifies its new dist,
+   refresh only from that local dist (coordinate with the concurrent iOS worker):
+   `FLIGHT_DECK_DIR=/Users/mini/code/wm/flightdeck ./tools/update_flightdeck_bundle.sh --use-existing-dist`.
+   This avoids fetching an older remote snapshot or rebuilding another worker's
+   checkout. Then build WMapp: `cd app && flutter build macos --debug --no-pub`.
    Output: `app/build/macos/Build/Products/Debug/wingman_app.app`.
    Launch/install this built app in the normal user session when coordinated;
    this task does not replace or restart an already-running WMapp instance.
