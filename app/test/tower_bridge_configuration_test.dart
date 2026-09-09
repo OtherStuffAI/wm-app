@@ -40,33 +40,25 @@ void main() {
 
   for (final page in [local, 'https://deck.example/workspace']) {
     testWidgets(
-        'default config needs Save and page finish to inject full bridge at $page',
+        'blank native Tower injects production bridge at eligible $page',
         (tester) async {
-      await tester.pumpWidget(app(AppConfig.defaults()));
+      final config =
+          AppConfig.defaults().copyWith(flightDeckUrl: 'https://deck.example');
+      expect(config.towerUrl, isEmpty);
+      await tester.pumpWidget(app(config));
       await tester.pumpAndSettle();
-      submitFakePageFinished(controllerIndex: 0, url: page);
-      await tester.pumpAndSettle();
-      expect(scripts(), isEmpty);
-      final urls = List<String>.of(fakeLoadedRequestUrls);
-      await tester.pumpWidget(app(AppConfig.defaults().copyWith(
-        towerUrl: 'https://tower.example',
-        flightDeckUrl: 'https://deck.example',
-      )));
-      await tester.pumpAndSettle();
-      expect(scripts(), isEmpty,
-          reason: 'Save does not reload an existing document');
-      expect(fakeReloadCalls, 0);
-      expect(fakeLoadedRequestUrls, urls,
-          reason: 'Configuration does not navigate to another origin');
+      await submitFakeNavigationRequest(
+          controllerIndex: 0, url: page, isMainFrame: true);
+      fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
       final script = scripts().single;
       final token = jsonDecode(
               RegExp(r'const token = (.*);').firstMatch(script)!.group(1)!)
           as String;
-      final uri = Uri.parse(page);
-      expect(script, towerFipsBridgeScript(token, uri.origin));
+      expect(script, towerFipsBridgeScript(token, Uri.parse(page).origin));
       expect(fakeClearCookieCalls, 0);
+      expect(fakeReloadCalls, 0);
     });
   }
 
@@ -80,6 +72,9 @@ void main() {
         (tester) async {
       await tester.pumpWidget(app(AppConfig.defaults()));
       await tester.pumpAndSettle();
+      await submitFakeNavigationRequest(
+          controllerIndex: 0, url: page, isMainFrame: true);
+      fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
       await tester.pumpWidget(app(AppConfig.defaults().copyWith(
@@ -88,6 +83,9 @@ void main() {
         trustedOrigins: [page],
       )));
       await tester.pumpAndSettle();
+      await submitFakeNavigationRequest(
+          controllerIndex: 0, url: page, isMainFrame: true);
+      fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
       expect(scripts(), isEmpty,

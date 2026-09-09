@@ -31,50 +31,25 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('default Setup exposes and saves Tower sync without Drive sync',
+  testWidgets(
+      'default Setup pairs in workspace without native Tower configuration',
       (tester) async {
     AppConfig? saved;
     await pumpSetup(tester, AppConfig.defaults(), (value) => saved = value);
-    await reveal(tester, field('Tower URL'));
-    expect(tester.widget<TextField>(field('Tower URL')).readOnly, isFalse);
-    await tester.enterText(field('Tower URL'), 'https://tower.example');
     await reveal(tester, field('Flight Deck URL'));
+    expect(field('Tower URL'), findsNothing);
+    expect(
+        find.textContaining('No native Tower URL is needed.'), findsOneWidget);
     await tester.enterText(
         field('Flight Deck URL'), 'https://deck.example/app');
-    expect(find.textContaining('Tower bridge configuration incomplete:'),
-        findsNothing);
-    expect(find.textContaining('Built-in Flight Deck: http://localhost:47831'),
-        findsOneWidget);
-    expect(find.text('Flight Deck App npub'), findsNothing);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
     await reveal(tester, find.text('Save'));
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
-    expect(saved!.towerUrl, 'https://tower.example');
+    expect(saved!.towerUrl, isEmpty);
     expect(saved!.flightDeckUrl, 'https://deck.example/app');
     expect(saved!.displayExperimentalFlightDeckDriveSync, isFalse);
-    expect(saved!.trustedOrigins, isEmpty);
-    await reveal(tester, find.textContaining('Configuration saved.'));
-    expect(
-        find.textContaining('Configuration saved. For Tower FIPS sync, reload'),
-        findsOneWidget);
-  });
-
-  testWidgets(
-      'blank and HTTP Tower explain missing prerequisite without blocking Save',
-      (tester) async {
-    AppConfig? saved;
-    await pumpSetup(tester, AppConfig.defaults(), (value) => saved = value);
-    await reveal(tester, field('Tower URL'));
-    expect(find.textContaining('Tower bridge configuration incomplete:'),
-        findsOneWidget);
-    await tester.enterText(field('Tower URL'), 'http://tower.example');
-    expect(find.textContaining('Tower bridge configuration incomplete:'),
-        findsOneWidget);
-    await reveal(tester, find.text('Save'));
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(saved!.towerUrl, 'http://tower.example');
-    expect(saved!.flightDeckUrl, isEmpty);
   });
 
   testWidgets(
@@ -96,9 +71,8 @@ void main() {
     );
     AppConfig? saved;
     await pumpSetup(tester, config, (value) => saved = value);
-    await reveal(tester, field('Tower URL'));
-    expect(tester.widget<TextField>(field('Tower URL')).controller!.text,
-        config.towerUrl);
+    await reveal(tester, field('Flight Deck URL'));
+    expect(field('Tower URL'), findsNothing);
     expect(tester.widget<TextField>(field('Flight Deck URL')).controller!.text,
         config.flightDeckUrl);
     await reveal(tester, find.text('Save'));

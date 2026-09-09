@@ -78,25 +78,15 @@ updated Nostr profile. Cancelling does not delete
 an uploaded image. Primal storage/payment errors leave existing profile fields
 intact and allow retry.
 
-## Tower FIPS sync configuration
+## Tower FIPS sync
 
-Open WMapp **Setup → Tower FIPS sync**. These fields are available without
-experimental Drive sync. **Tower URL** is the public HTTPS URL of the logical
-Tower selected in Flight Deck. **Flight Deck URL** is your existing external
-Flight Deck page URL; its exact origin (scheme, host and port) is allowed to
-request pairing. Leave it blank if you only use built-in Flight Deck. Setup
-shows the built-in origin separately when available.
+In your existing Flight Deck workspace, select FIPS in Connection settings,
+enter the exact mesh endpoint and approve native pairing. The workspace's Tower
+service identity is verified over that mesh route before signing is enabled.
+No native Tower URL or reachable public Tower is required. HTTPS is optional.
 
-Save, then reload the existing Flight Deck tab. Select FIPS in Flight Deck's
-connection settings and enter the manually supplied HTTP `.fips` mesh endpoint
-there. Approve native pairing. The HTTPS Tower identity must match Flight Deck's
-selected Tower; the mesh endpoint is only its transport destination.
-
-Changing either URL revokes existing pairings and active native requests.
-Save does not reload open pages; the bridge is injected on page finish after
-reload. Keep using the same page URL to retain its browser storage. No browser
-data reset or identity replacement is needed. A running FIPS runtime or working
-FIPS WApp alone does not establish these Tower bridge prerequisites. The bridge
-is currently enabled on macOS, Android and Linux, only for the configured
-Flight Deck and available built-in origins. Pairing and signer approval remain
-separate requirements; configuration alone does not verify live Tower access.
+Built-in Flight Deck is eligible by default. For an external Flight Deck page,
+set its URL in native Setup → Flight Deck browser, save and reload the same tab.
+This explicit page-origin boundary remains separate from general signer trust.
+Keep the same page and workspace to retain local data and pending writes.
+Native Drive sync has its own optional Tower configuration.

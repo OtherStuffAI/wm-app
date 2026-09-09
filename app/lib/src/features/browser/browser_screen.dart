@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/app_config.dart';
+import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
@@ -43,6 +44,7 @@ class BrowserScreen extends StatefulWidget {
     this.onOpenIdentity,
     this.profileRelayClient,
     this.signerVault,
+    this.towerProxyFactory,
     super.key,
   });
 
@@ -61,6 +63,10 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback? onOpenIdentity;
   final NostrProfileRelayClient? profileRelayClient;
   final SignerVault? signerVault;
+  // Native dependency injection for socket-backed integration tests, never JS.
+  @visibleForTesting
+  final Future<TowerFipsProxy> Function(String endpoint, String pageOrigin)?
+      towerProxyFactory;
 
   @override
   State<BrowserScreen> createState() => BrowserScreenState();
@@ -1787,19 +1793,18 @@ class BrowserScreenState extends State<BrowserScreen> {
         SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
     final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
     if (origin.isEmpty || (origin != configured && origin != local)) return;
-    final logical = SignerPolicy.normalizeOrigin(widget.config.towerUrl);
-    if (!logical.startsWith('https://')) return;
     final identity = widget.config.deviceNpub;
     late final TowerFipsBrowserBridge bridge;
     bridge = TowerFipsBrowserBridge(
       pageOrigin: origin,
-      logicalTower: logical,
+      bindProxy: widget.towerProxyFactory,
       prepare: widget.onPrepareFipsNavigation!,
-      unpair: (endpoint) =>
-          _towerPairings.remove(origin, logical, endpoint, identity),
+      unpair: (endpoint, serviceNpub) =>
+          _towerPairings.remove(origin, serviceNpub, endpoint, identity),
       reply: tab.controller.runJavaScript,
-      approve: (endpoint) async {
-        if (await _towerPairings.contains(origin, logical, endpoint, identity)) {
+      approve: (endpoint, serviceNpub) async {
+        if (await _towerPairings.contains(
+            origin, serviceNpub, endpoint, identity)) {
           return true;
         }
         if (!mounted || _activeTabId != tab.id) return false;
@@ -1812,7 +1817,7 @@ class BrowserScreenState extends State<BrowserScreen> {
                     'manually entered mesh endpoint? Remember this pairing for your '
                     'current identity on this device. Disconnect or clear browser '
                     'data to revoke it.\n\n'
-                    'Page: $origin\nTower identity: $logical\nMesh endpoint: $endpoint'),
+                    'Page: $origin\nTower identity: $serviceNpub\nMesh endpoint: $endpoint'),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
@@ -1830,11 +1835,11 @@ class BrowserScreenState extends State<BrowserScreen> {
             widget.config.deviceNpub != identity) {
           return false;
         }
-        await _towerPairings.grant(origin, logical, endpoint, identity);
+        await _towerPairings.grant(origin, serviceNpub, endpoint, identity);
         if (!mounted ||
             tab.towerBridge != bridge ||
             widget.config.deviceNpub != identity) {
-          await _towerPairings.remove(origin, logical, endpoint, identity);
+          await _towerPairings.remove(origin, serviceNpub, endpoint, identity);
           return false;
         }
         return true;

@@ -8,13 +8,30 @@
     await new Promise(resolve=>setTimeout(resolve,150));
     const bridge=window.wingmanTowerTransport;
     assert(location.origin==='https://example.com' && isSecureContext,'HTTPS origin preserved');
-    const pair=await bridge.connect({endpoint,logicalTower:'https://tower.example'});
-    assert(pair.version===2 && pair.transport==='native' && !pair.proxyBaseUrl,'v2 descriptor');
+    const serviceNpub='npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
+    const logicalTower='https://unreachable.invalid';
+    // No public Tower service lookup, signing, or data fallback can pass.
+    let publicRequests=0;
+    window.fetch=async()=>{publicRequests++;throw new Error('Public HTTPS unavailable');};
+    const transport=globalThis.fixtureTransport;
+    let outdated=false;try{await bridge.connect({endpoint,logicalTower});}catch(e){outdated=e.message.includes('Update Flight Deck');}
+    assert(outdated,'older FD gets actionable upgrade before pairing');
+    let mismatch=false;
+    try {await transport.connectTowerBridge(logicalTower,endpoint,'npub1xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6qqcvexj');}catch(_){mismatch=true;}
+    assert(mismatch,'native service identity mismatch rejected');
+    let revoked=false;try{await bridge.fetch(endpoint+'/health');}catch(_){revoked=true;}
+    assert(revoked,'mismatch leaves no active mesh capability');
+    const pair=await transport.connectTowerBridge(logicalTower,endpoint,serviceNpub);
+    transport.saveTowerTransportPreference(logicalTower,pair);
+    await bridge.disconnect();
+    await transport.initializeTowerTransports();
+    assert(transport.getTowerTransport(logicalTower).transport==='native','saved preference reconnects without HTTPS');
+    assert(transport.resolveTowerSigningUrl(logicalTower+'/upload?encoded=%2F')===endpoint+'/upload?encoded=%2F','exact NIP98 mesh target');
     let rejected=false;
     try {await bridge.fetch('https://tower.example/public');}catch(_){rejected=true;}
     assert(rejected,'public target rejected');
     const bytes=Uint8Array.from({length:180000},(_,i)=>i%256);
-    const response=await bridge.fetch(endpoint+'/upload?encoded=%2F',{
+    const response=await transport.towerFetch(logicalTower+'/upload?encoded=%2F',{
       method:'POST',headers:{authorization:'Nostr signed-mesh-target','content-type':'application/octet-stream'},body:bytes});
     assert(response.status===201,'status');
     assert(response.headers.get('content-disposition').includes('bytes.bin'),'content headers');
@@ -59,6 +76,7 @@
     const cancelsAfter=await (await bridge.fetch(endpoint+'/cancel-count')).json();
     assert(cancelsAfter>cancelsBefore,'detach sends native cancellation before disconnect');
     await bridge.disconnect();
-    window.webkit.messageHandlers.Result.postMessage('PASS HTTPS WKWebView native v2: binary 180KB, auth/status/headers, target/redirect rejection, preheaders abort, split UTF8 SSE, worker port streaming/cancel');
+    assert(publicRequests===0,'no public HTTPS dependency or fallback');
+    window.webkit.messageHandlers.Result.postMessage('PASS FD consumer + HTTPS WKWebView native v2: binary 180KB, auth/status/headers, target/redirect rejection, preheaders abort, split UTF8 SSE, worker port streaming/cancel');
   }catch(e){window.webkit.messageHandlers.Result.postMessage('FAIL '+e.name+': '+e.message);}
 })();

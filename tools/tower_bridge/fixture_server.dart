@@ -13,7 +13,11 @@ Future<void> main(List<String> args) async {
         r.headers.value('origin') != null || r.headers.value('cookie') != null) {
       r.response.statusCode=400; await r.response.close(); return;
     }
-    if (r.uri.path == '/cancel-count') {
+    if (r.uri.path == '/health') {
+      r.response.headers.contentType=ContentType.json;
+      r.response.write(jsonEncode({'service_npub':'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98'}));
+      await r.response.close();
+    } else if (r.uri.path == '/cancel-count') {
       r.response.headers.contentType=ContentType.json;
       r.response.write(jsonEncode(cancellationMessages)); await r.response.close();
     } else if (r.uri.path == '/events') {
@@ -43,7 +47,7 @@ Future<void> main(List<String> args) async {
   final rpc=await HttpServer.bind(InternetAddress.loopbackIPv4,0);
   final replies=<String,Completer<String>>{};
   final bridge=TowerFipsBrowserBridge(pageOrigin:'https://example.com',
-    logicalTower:'https://tower.example', approve:(_)async=>true,prepare:(_)async=>null,
+    approve:(_,__)async=>true,prepare:(_)async=>null,
     bindProxy:(endpoint,origin)=>TowerFipsProxy.bind(endpoint:endpoint,pageOrigin:origin,
       clientFactory:()=>HttpClient()..connectionFactory=(url,host,port)=>
         Socket.startConnect(InternetAddress.loopbackIPv4,tower.port)),

@@ -116,8 +116,9 @@ String towerFipsBridgeScript(String documentToken, String pageOrigin) => '''
     } catch (e) { cancel(); if (request.signal.aborted) throw request.signal.reason || new DOMException('Aborted','AbortError'); throw e; }
   };
   Object.defineProperty(window, 'wingmanTowerTransport', {configurable:true, value:Object.freeze({
-    version:2, available:true,
+    version:2, available:true, pairingIdentity:'service-npub',
     async connect(options) {
+      if (!options?.serviceNpub) throw new Error('Update Flight Deck and reload this tab to pair using the workspace Tower identity.');
       pair = await rpc('connect', options);
       return pair;
     },

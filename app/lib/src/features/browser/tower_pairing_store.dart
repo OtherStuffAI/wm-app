@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Stores explicit manual grants, never document capabilities or signing keys.
 class TowerPairingStore {
   bool _revoked = false;
-  static const key = 'wingman.tower.manual_pairings.v1';
+  static const key = 'wingman.tower.manual_pairings.v2';
   String _tuple(String page, String tower, String endpoint, String identity) =>
       jsonEncode([page, tower, endpoint, identity]);
   Future<bool> contains(

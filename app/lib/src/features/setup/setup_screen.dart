@@ -247,7 +247,6 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _towerSyncCard() {
-    final logical = SignerPolicy.normalizeOrigin(_towerController.text);
     final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
     return Card(
       child: Padding(
@@ -255,45 +254,38 @@ class _SetupScreenState extends State<SetupScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Tower FIPS sync',
+            Text('Flight Deck browser',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             const Text(
-              'Connect Flight Deck to Tower over FIPS. '
-              'Experimental Drive sync is not required.',
+              'Choose FIPS in your existing Flight Deck workspace and approve '
+              'its mesh endpoint. No native Tower URL is needed.',
             ),
             const SizedBox(height: 14),
-            _field(
-              controller: _towerController,
-              label: 'Tower URL',
-              icon: Icons.dns_outlined,
-              helperText: 'Public HTTPS URL of the Tower selected in Flight Deck. '
-                  'Enter the HTTP .fips endpoint in Flight Deck when pairing.',
-              onChanged: (_) => setState(() {}),
-            ),
+            if (_displayExperimentalFlightDeckDriveSync)
+              _field(
+                controller: _towerController,
+                label: 'Tower URL',
+                icon: Icons.dns_outlined,
+                helperText: 'Optional native Drive sync configuration.',
+              ),
             _field(
               controller: _flightDeckController,
               label: 'Flight Deck URL',
               icon: Icons.public,
-              helperText: 'Your existing external Flight Deck URL. Only this exact '
+              helperText:
+                  'Your existing external Flight Deck URL. Only this exact '
                   'origin can pair, plus built-in Flight Deck. Leave blank '
                   'for built-in only.',
               onChanged: (_) => setState(() {}),
             ),
-            if (!logical.startsWith('https://')) ...[
-              const Text(
-                'Tower bridge configuration incomplete: enter an HTTPS Tower '
-                'URL. A running FIPS runtime alone does not enable Tower sync.',
-              ),
-              const SizedBox(height: 8),
-            ],
             Text(local.isEmpty
                 ? 'Built-in Flight Deck is not currently available.'
                 : 'Built-in Flight Deck: $local'),
             const SizedBox(height: 8),
             const Text(
               'Save, reload your existing Flight Deck tab, then select FIPS '
-              'and approve pairing. Changing either URL revokes previous '
+              'and approve pairing. Changing the Flight Deck URL revokes previous '
               'pairings. Keep the same page URL to retain browser data.',
             ),
           ],

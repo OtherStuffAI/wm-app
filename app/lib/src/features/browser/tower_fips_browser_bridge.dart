@@ -10,7 +10,6 @@ import 'tower_fips_bridge_script.dart';
 class TowerFipsBrowserBridge {
   TowerFipsBrowserBridge(
       {required this.pageOrigin,
-      required this.logicalTower,
       required this.approve,
       required this.prepare,
       required this.reply,
@@ -18,14 +17,15 @@ class TowerFipsBrowserBridge {
       this.unpair});
   final Future<TowerFipsProxy> Function(String endpoint, String pageOrigin)?
       bindProxy;
-  final Future<void> Function(String endpoint)? unpair;
+  final Future<void> Function(String endpoint, String serviceNpub)? unpair;
   final String pageOrigin;
-  final String logicalTower;
-  final Future<bool> Function(String endpoint) approve;
+  String? _serviceNpub;
+  final Future<bool> Function(String endpoint, String serviceNpub) approve;
   final Future<String?> Function(String endpoint) prepare;
   final Future<void> Function(String script) reply;
   final String _token = TowerFipsProxy.capability();
   TowerFipsProxy? _proxy;
+  TowerFipsProxy? _pendingProxy;
   final Map<String, TowerFipsNativeRequest> _requests = {};
   bool _closed = false;
   bool _connecting = false;
@@ -73,17 +73,19 @@ class TowerFipsBrowserBridge {
       if (_connecting) throw StateError('Pairing already in progress.');
       final endpoint = p['endpoint'] as String;
       TowerFipsProxy.validateEndpoint(endpoint);
-      final logical = Uri.parse(logicalTower);
-      if (logical.scheme != 'https' ||
-          logical.origin != logicalTower ||
-          p['logicalTower'] != logicalTower) {
-        throw StateError('Logical Tower does not match current configuration.');
+      final serviceNpub = p['serviceNpub'] as String;
+      // Validate a service npub independently of the mesh node's identity.
+      TowerFipsProxy.meshAddress('http://$serviceNpub.fips:1');
+      if (_proxy?.endpoint == endpoint && _serviceNpub == serviceNpub) {
+        return _connection();
       }
-      if (_proxy?.endpoint == endpoint) return _connection();
       _connecting = true;
       final epoch = ++_epoch;
       try {
-        if (!await approve(endpoint) || _closed || epoch != _epoch) {
+        await _disconnect();
+        if (!await approve(endpoint, serviceNpub) ||
+            _closed ||
+            epoch != _epoch) {
           throw StateError('Pairing denied.');
         }
         final failure = await prepare('$endpoint/');
@@ -97,6 +99,19 @@ class TowerFipsBrowserBridge {
           await proxy.close();
           throw StateError('Document closed.');
         }
+        _pendingProxy = proxy;
+        try {
+          await _verifyService(proxy, serviceNpub)
+              .timeout(const Duration(seconds: 15));
+          if (_closed || epoch != _epoch) throw StateError('Document closed.');
+        } catch (_) {
+          await proxy.close();
+          await unpair?.call(endpoint, serviceNpub);
+          rethrow;
+        } finally {
+          if (identical(_pendingProxy, proxy)) _pendingProxy = null;
+        }
+        _serviceNpub = serviceNpub;
         _proxy = proxy;
         return _connection();
       } finally {
@@ -107,7 +122,7 @@ class TowerFipsBrowserBridge {
       ++_epoch;
       final endpoint = _proxy?.endpoint;
       try {
-        if (endpoint != null) await unpair?.call(endpoint);
+        if (endpoint != null) await unpair?.call(endpoint, _serviceNpub!);
       } finally {
         await _disconnect();
       }
@@ -168,17 +183,45 @@ class TowerFipsBrowserBridge {
   Map<String, dynamic> _connection() => {
         'version': 2,
         'endpoint': _proxy!.endpoint,
-        'logicalTower': logicalTower,
+        'serviceNpub': _serviceNpub,
         'transport': 'native'
       };
+
+  // Only this unsigned identity probe is allowed before activating the route.
+  // It uses the same pinned transport and redirect policy as signed requests.
+  Future<void> _verifyService(TowerFipsProxy proxy, String expected) async {
+    final request = await TowerFipsNativeRequest.open(
+        proxy, '${proxy.endpoint}/health', 'GET', {});
+    try {
+      final response = await request.finish();
+      if (response['status'] != 200) throw StateError('Tower health failed.');
+      final bytes = <int>[];
+      while (true) {
+        final part = await request.pull();
+        if (part['done'] == true) break;
+        bytes.addAll(base64Decode(part['chunk'] as String));
+        if (bytes.length > 65536) throw StateError('Tower health too large.');
+      }
+      final health = jsonDecode(utf8.decode(bytes)) as Map;
+      if (health['service_npub'] != expected) {
+        throw StateError('Tower service identity mismatch.');
+      }
+    } finally {
+      request.close();
+    }
+  }
 
   Future<void> _disconnect() async {
     for (final request in _requests.values) {
       request.close();
     }
     _requests.clear();
+    final pending = _pendingProxy;
+    _pendingProxy = null;
     final proxy = _proxy;
     _proxy = null;
+    _serviceNpub = null;
+    await pending?.close();
     await proxy?.close();
   }
 

@@ -91,7 +91,8 @@ class TowerFipsProxy {
     if (origin == null ||
         origin.origin != pageOrigin ||
         !(origin.scheme == 'https' ||
-            (origin.scheme == 'http' && origin.host == '127.0.0.1'))) {
+            (origin.scheme == 'http' &&
+                (origin.host == '127.0.0.1' || origin.host == 'localhost')))) {
       throw const FormatException('A trusted Flight Deck origin is required.');
     }
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

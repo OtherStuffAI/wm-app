@@ -1440,11 +1440,13 @@ void main() {
     );
     expect(find.text('Trusted origins'), findsOneWidget);
     expect(find.text('Remember NIP-98 approvals'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
-    expect(find.text('Tower URL'), findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
     expect(find.text('Flight Deck App npub'), findsNothing);
+    await tester.scrollUntilVisible(find.text('Flight Deck URL'), -250,
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView), matching: find.byType(Scrollable))
+            .first);
     expect(find.text('Flight Deck URL'), findsOneWidget);
     expect(find.text('Workspace ID'), findsNothing);
     expect(find.text('Workspace service npub'), findsNothing);
@@ -1459,8 +1461,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView), matching: find.byType(Scrollable))
+            .first);
     final flightDeckField = find.byWidgetPredicate(
       (widget) =>
           widget is TextField &&
@@ -1523,10 +1527,7 @@ void main() {
     await tester.ensureVisible(restoredExperimentCheckbox);
     await tester.tap(restoredExperimentCheckbox);
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
-    expect(find.text('Tower URL'), findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -1550,8 +1551,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView), matching: find.byType(Scrollable))
+            .first);
     final preservedFlightDeckField = tester.widget<TextField>(
       find.byWidgetPredicate(
         (widget) =>
@@ -1600,10 +1603,7 @@ void main() {
         find.textContaining(
             'Optional Tower device registration: https://tower.example'),
         findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
-    expect(find.text('Tower URL'), findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
     final identityFinder = find.byWidgetPredicate((widget) =>
         widget is TextField && widget.decoration?.labelText == 'Device npub');
     await tester.scrollUntilVisible(identityFinder, -250,
@@ -1643,10 +1643,7 @@ void main() {
       tester.widget<CheckboxListTile>(experimentCheckbox).value,
       isFalse,
     );
-    await tester.scrollUntilVisible(find.text('Tower URL'), -250,
-        scrollable: find.descendant(
-            of: find.byType(ListView), matching: find.byType(Scrollable)).first);
-    expect(find.text('Tower URL'), findsOneWidget);
+    expect(find.text('Tower URL'), findsNothing);
   });
 
   testWidgets('Drive navigation follows the experimental setting',

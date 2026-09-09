@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Real stock WKWebView -> production JS/Dart -> real HTTP socket integration."""
-import pathlib, subprocess, tempfile
+import os, pathlib, subprocess, tempfile
 root=pathlib.Path(__file__).resolve().parent.parent
 with tempfile.TemporaryDirectory(prefix='wmapp-tower-wk-') as tmp:
+    # Exercise the actual FD consumer together with native production JS/Dart.
+    fd=pathlib.Path(os.environ.get('FLIGHT_DECK_DIR', root.parent/'flightdeck'))
+    entry=pathlib.Path(tmp)/'consumer.js'
+    entry.write_text("import * as transport from "+repr(str(fd/'src/tower-transport.js'))+"; globalThis.fixtureTransport=transport;")
+    bundle=pathlib.Path(tmp)/'consumer-bundle.js'
+    subprocess.run(['bun','build',str(entry),'--target=browser','--outfile='+str(bundle)],check=True,cwd=fd)
+    integration=pathlib.Path(tmp)/'integration.js'
+    integration.write_text(bundle.read_text()+"\n"+(root/'tools/tower_bridge/wk_integration.js').read_text())
     exe=str(pathlib.Path(tmp)/'probe')
     main=pathlib.Path(tmp)/'main.swift'
     main.write_text((root/'tools/tower_bridge/wk_probe.swift').read_text())
@@ -13,6 +21,6 @@ with tempfile.TemporaryDirectory(prefix='wmapp-tower-wk-') as tmp:
     try:
         port=server.stdout.readline().strip()
         if not port.isdigit(): raise RuntimeError('Fixture failed to start')
-        subprocess.run([exe,port,str(root/'tools/tower_bridge/wk_integration.js')],check=True,timeout=55)
+        subprocess.run([exe,port,str(integration)],check=True,timeout=55)
     finally:
         server.terminate();server.wait(timeout=5)
