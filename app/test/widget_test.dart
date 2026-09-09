@@ -1144,6 +1144,101 @@ void main() {
     expect(fakeLoadedRequestUrls.last, 'https://popup.example/page');
   });
 
+  for (final platform in [
+    TargetPlatform.iOS,
+    TargetPlatform.android,
+    TargetPlatform.macOS
+  ]) {
+    testWidgets('$platform focus edge navigation preserves tabs and drawer',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        tester.view.physicalSize = const Size(393, 852);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(MaterialApp(
+            home: ShellHome(
+          config: AppConfig.defaults(),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        )));
+        await tester.pumpAndSettle();
+        final mobile = platform != TargetPlatform.macOS;
+        Future<void> next() async {
+          await tester.dragFrom(const Offset(390, 400), const Offset(-120, 0));
+          await tester.pump();
+        }
+
+        // Normal mode has no shell swipe interception.
+        await next();
+        expect(activeBrowserStackIndex(tester), 0);
+        await tester.tap(find.byTooltip('Enter Focus Mode'));
+        await tester.pump();
+        await next();
+        expect(activeBrowserStackIndex(tester), 0); // one tab
+        await tester.dragFrom(const Offset(180, 5), const Offset(0, 120));
+        await tester.pump();
+        expect(find.byTooltip('Enter Focus Mode'),
+            mobile ? findsOneWidget : findsNothing);
+        if (!mobile) {
+          tester
+              .state<BrowserScreenState>(find.byType(BrowserScreen))
+              .exitFocusMode();
+          await tester.pump();
+        }
+        await tester.tap(find.byTooltip('New tab'));
+        await tester.pump();
+        await tester.tap(find.byTooltip('New tab'));
+        await tester.pump();
+        // Exercise the actual reorder callback: the selected last tab moves first.
+        tester
+            .widget<ReorderableListView>(find.byType(ReorderableListView))
+            .onReorderItem!(2, 0);
+        await tester.pumpAndSettle();
+        expect(activeBrowserStackIndex(tester), 0);
+        final controllers = tester
+            .widgetList<WebViewWidget>(
+                find.byType(WebViewWidget, skipOffstage: false))
+            .map((view) => view.platform.params.controller)
+            .toList();
+        final loads = [...fakeLoadedRequestUrls];
+        final htmlLoads = [...fakeLoadedHtmlStrings];
+        await tester.tap(find.byTooltip('Enter Focus Mode'));
+        await tester.pump();
+        for (final index in [1, 2, 0, 1]) {
+          await next();
+          expect(activeBrowserStackIndex(tester), mobile ? index : 0);
+          expect(find.byTooltip('Enter Focus Mode'), findsNothing);
+        }
+        expect(
+            tester
+                .widgetList<WebViewWidget>(
+                    find.byType(WebViewWidget, skipOffstage: false))
+                .map((view) => view.platform.params.controller)
+                .toList(),
+            controllers);
+        expect(fakeWebViewControllerCreationCount, 3);
+        expect(fakeLoadedRequestUrls, loads);
+        expect(fakeLoadedHtmlStrings, htmlLoads);
+        expect(fakeReloadCalls, 0);
+        if (mobile) {
+          await tester.dragFrom(const Offset(0, 5), const Offset(280, 0));
+          await tester.pumpAndSettle();
+          expect(find.text('Show controls'), findsOneWidget);
+          await tester.tap(find.text('Show controls'));
+          await tester.pumpAndSettle();
+          expect(activeBrowserStackIndex(tester), 1);
+        }
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
+
   testWidgets('Focus Mode preserves the active browser tab and restores chrome',
       (tester) async {
     tester.view.physicalSize = const Size(360, 640);

@@ -15,6 +15,7 @@ import '../../core/fips_app_target.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
+import 'focus_edge_gestures.dart';
 import 'profile_avatar_upload.dart';
 import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
@@ -173,33 +174,41 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (!_focusMode) _buildTabBar(context),
-            Expanded(
-              child: Stack(
-                key: const ValueKey('browser-content-viewport'),
-                fit: StackFit.expand,
-                children: [
-                  _buildWebViewStack(),
-                  if (!_focusMode && _addressBarVisible)
-                    Positioned(
-                      key: const ValueKey('browser-address-bar-overlay'),
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: _buildAddressBar(context),
-                    ),
-                ],
+    return FocusEdgeGestures(
+      enabled: _focusMode &&
+          !kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS),
+      onShowControls: exitFocusMode,
+      onNextTab: () => _activateAdjacentTab(1),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!_focusMode) _buildTabBar(context),
+              Expanded(
+                child: Stack(
+                  key: const ValueKey('browser-content-viewport'),
+                  fit: StackFit.expand,
+                  children: [
+                    _buildWebViewStack(),
+                    if (!_focusMode && _addressBarVisible)
+                      Positioned(
+                        key: const ValueKey('browser-address-bar-overlay'),
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: _buildAddressBar(context),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 
