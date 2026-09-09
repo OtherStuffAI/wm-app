@@ -17,6 +17,7 @@ class ScriptMessageHandlerImpl: NSObject, WKScriptMessageHandler {
   func userContentController(
     _ userContentController: WKUserContentController, didReceive message: WKScriptMessage
   ) {
+    guard WingmanScriptMessagePolicy.accepts(message) else { return }
     registrar.dispatchOnMainThread { onFailure in
       self.api.didReceiveScriptMessage(
         pigeonInstance: self, controller: userContentController, message: message

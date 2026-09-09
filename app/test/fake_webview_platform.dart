@@ -216,6 +216,7 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
   _FakePlatformNavigationDelegate(super.params) : super.implementation();
 
   NavigationRequestCallback? _onNavigationRequest;
+  PageEventCallback? _onPageStarted;
   PageEventCallback? _onPageFinished;
   UrlChangeCallback? _onUrlChange;
 
@@ -224,6 +225,11 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
     NavigationRequestCallback onNavigationRequest,
   ) async {
     _onNavigationRequest = onNavigationRequest;
+  }
+
+  @override
+  Future<void> setOnPageStarted(PageEventCallback callback) async {
+    _onPageStarted = callback;
   }
 
   @override
@@ -237,7 +243,11 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
   }
 
   Future<NavigationDecision?> request(NavigationRequest request) async {
-    return _onNavigationRequest?.call(request);
+    final decision = await _onNavigationRequest?.call(request);
+    if (request.isMainFrame && decision != NavigationDecision.prevent) {
+      _onPageStarted?.call(request.url);
+    }
+    return decision;
   }
 
   void finish(String url) {

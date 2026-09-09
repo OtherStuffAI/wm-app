@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -22,6 +23,8 @@ import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
 import 'signer_store.dart';
 import 'webview_file_picker.dart';
+import 'tower_fips_browser_bridge.dart';
+import 'tower_pairing_store.dart';
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
@@ -89,6 +92,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   late final NostrProfileRelayClient _profileRelayClient =
       widget.profileRelayClient ?? NostrProfileRelayClient();
   int _profileEpoch = 0;
+  final TowerPairingStore _towerPairings = TowerPairingStore();
   final BrowserBookmarkStore _bookmarkStore = BrowserBookmarkStore();
   List<BrowserBookmark> _bookmarks = const [];
   String? _lastWebStateSignerNpub;
@@ -117,6 +121,16 @@ class BrowserScreenState extends State<BrowserScreen> {
   @override
   void didUpdateWidget(covariant BrowserScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.config.deviceNpub != widget.config.deviceNpub ||
+        (oldWidget.config.hasDeviceSecret && !widget.config.hasDeviceSecret) ||
+        oldWidget.config.towerUrl != widget.config.towerUrl ||
+        oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
+      unawaited(_towerPairings.clear());
+      for (final tab in _tabs) {
+        tab.towerBridge?.close();
+        tab.towerBridge = null;
+      }
+    }
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
       _profileEpoch++;
       _profile = const NostrProfile();
@@ -677,6 +691,11 @@ class BrowserScreenState extends State<BrowserScreen> {
         onMessageReceived: (message) => _onSignerMessage(id, message),
       )
       ..addJavaScriptChannel(
+        'WingmanTower',
+        onMessageReceived: (message) =>
+            _tabById(id)?.towerBridge?.receive(message.message),
+      )
+      ..addJavaScriptChannel(
         'WingmanTitle',
         onMessageReceived: (message) => _onTitleMessage(id, message),
       )
@@ -684,6 +703,11 @@ class BrowserScreenState extends State<BrowserScreen> {
         NavigationDelegate(
           onNavigationRequest: (request) => _onNavigationRequest(id, request),
           onUrlChange: (change) => _onUrlChanged(id, change.url),
+          onPageStarted: (_) {
+            final tab = _tabById(id);
+            tab?.towerBridge?.close();
+            if (tab != null) tab.towerBridge = null;
+          },
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
@@ -943,12 +967,15 @@ class BrowserScreenState extends State<BrowserScreen> {
   Future<void> _clearWebState({required bool resetTabs}) async {
     if (_clearingWebState) return;
     _clearingWebState = true;
+    unawaited(_towerPairings.clear());
     final tabs = List<BrowserTab>.from(_tabs);
     try {
       try {
         await _cookieManager.clearCookies();
       } catch (_) {}
       for (final tab in tabs) {
+        tab.towerBridge?.close();
+        tab.towerBridge = null;
         try {
           await tab.controller.clearCache();
         } catch (_) {}
@@ -1382,6 +1409,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     await _applyFlightDeckDisplayDefaults(tab, url);
     await _injectTabCapture(tab);
     await _injectTitleObserver(tab);
+    await _injectTowerBridge(tab);
     await _injectIfTrusted(tab);
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
@@ -1747,6 +1775,78 @@ class BrowserScreenState extends State<BrowserScreen> {
         .replaceAll('"', '&quot;');
   }
 
+  Future<void> _injectTowerBridge(BrowserTab tab) async {
+    if (!(Platform.isMacOS || Platform.isAndroid || Platform.isLinux)) return;
+    if (tab.towerBridge != null || widget.onPrepareFipsNavigation == null)
+      return;
+    final url = await tab.controller.currentUrl();
+    if (!mounted || _tabById(tab.id) != tab || url == null) return;
+    final origin = SignerPolicy.normalizeOrigin(url);
+    final configured =
+        SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
+    final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    if (origin.isEmpty || (origin != configured && origin != local)) return;
+    final logical = SignerPolicy.normalizeOrigin(widget.config.towerUrl);
+    if (!logical.startsWith('https://')) return;
+    final identity = widget.config.deviceNpub;
+    late final TowerFipsBrowserBridge bridge;
+    bridge = TowerFipsBrowserBridge(
+      pageOrigin: origin,
+      logicalTower: logical,
+      prepare: widget.onPrepareFipsNavigation!,
+      unpair: (endpoint) =>
+          _towerPairings.remove(origin, logical, endpoint, identity),
+      reply: tab.controller.runJavaScript,
+      approve: (endpoint) async {
+        if (await _towerPairings.contains(origin, logical, endpoint, identity))
+          return true;
+        if (!mounted || _activeTabId != tab.id) return false;
+        final approved = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Pair Tower over FIPS?'),
+                content: SelectableText(
+                    'Allow this Flight Deck page to use the '
+                    'manually entered mesh endpoint? Remember this pairing for your '
+                    'current identity on this device. Disconnect or clear browser '
+                    'data to revoke it.\n\n'
+                    'Page: $origin\nTower identity: $logical\nMesh endpoint: $endpoint'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Pair Tower')),
+                ],
+              ),
+            ) ??
+            false;
+        if (!approved ||
+            !mounted ||
+            tab.towerBridge != bridge ||
+            widget.config.deviceNpub != identity) {
+          return false;
+        }
+        await _towerPairings.grant(origin, logical, endpoint, identity);
+        if (!mounted ||
+            tab.towerBridge != bridge ||
+            widget.config.deviceNpub != identity) {
+          await _towerPairings.remove(origin, logical, endpoint, identity);
+          return false;
+        }
+        return true;
+      },
+    );
+    tab.towerBridge = bridge;
+    try {
+      await tab.controller.runJavaScript(bridge.script);
+    } catch (_) {
+      bridge.close();
+      tab.towerBridge = null;
+    }
+  }
+
   Future<void> _injectIfTrusted(BrowserTab tab) async {
     final url = tab.currentUrl ?? widget.config.flightDeckUrl;
     final origin = SignerPolicy.normalizeOrigin(url);
@@ -1758,7 +1858,8 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     await tab.controller.runJavaScript(
-      _bridgeScript(widget.config.devicePublicKeyHex),
+      _bridgeScript(widget.config.devicePublicKeyHex,
+          tab.towerBridge?.signingDocumentToken),
     );
     setState(() {
       tab.message = 'window.nostr injected for $origin';
@@ -1855,6 +1956,44 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
 
+    final signingIdentity = widget.config.deviceNpub;
+    final signingDocument = tab.towerBridge;
+    final signingPage = tab.currentUrl;
+    final signingParams = payload['params'] is Map<String, dynamic>
+        ? payload['params'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    final meshTarget = _meshSigningTarget(method, signingParams);
+    bool signingContextValid() {
+      if (meshTarget == null) return true;
+      if (!mounted ||
+          _tabById(tabId) != tab ||
+          !widget.config.hasDeviceSecret ||
+          widget.config.deviceNpub != signingIdentity ||
+          tab.currentUrl != signingPage) {
+        return false;
+      }
+      // Existing directly loaded FIPS WApps may still sign their own origin.
+      final pageOrigin = SignerPolicy.normalizeOrigin(signingPage ?? '');
+      if (Uri.tryParse(pageOrigin)?.host.endsWith('.fips') == true &&
+          pageOrigin == SignerPolicy.normalizeOrigin(meshTarget)) {
+        return true;
+      }
+      return signingDocument != null &&
+          identical(tab.towerBridge, signingDocument) &&
+          signingDocument.permitsMeshSigning(
+              payload['towerDocumentToken'] is String
+                  ? payload['towerDocumentToken'] as String
+                  : null,
+              meshTarget);
+    }
+
+    if (!signingContextValid()) {
+      await _resolveSignerRequest(tab, requestId, {
+        'error': 'An active exact Tower pairing is required for mesh signing.'
+      });
+      return;
+    }
+
     if (method == 'signEvent') {
       final event = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
@@ -1930,10 +2069,16 @@ class BrowserScreenState extends State<BrowserScreen> {
           label: 'Sign event ${policyTarget.replaceFirst('kind:', 'kind ')}',
         );
       }
+      if (!signingContextValid()) {
+        await _resolveSignerRequest(tab, requestId,
+            {'error': 'Mesh pairing or signing identity changed.'});
+        return;
+      }
       final result = await widget.bridge.signEvent(
         config: widget.config,
         event: event,
       );
+      if (!signingContextValid()) return;
       if (!result.ok) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
@@ -1954,6 +2099,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         outcome: remembered ? 'signed_with_policy' : 'signed',
         rememberedApproval: remembered || approval.remember,
       );
+      if (!signingContextValid()) return;
       await _resolveSignerRequest(tab, requestId, {
         'result': result.json,
       });
@@ -1979,7 +2125,12 @@ class BrowserScreenState extends State<BrowserScreen> {
       final requestMethod = request['httpMethod']?.toString() ?? 'GET';
       final requestUrl = request['url']?.toString() ?? '';
       final requestBody = request['body']?.toString();
-      final decision = _signerPolicy.validateNip98(
+      final scopedPolicy = SignerPolicy(trustedOrigins: [
+        ..._signerPolicy.trustedOrigins,
+        if (meshTarget != null && signingContextValid())
+          SignerPolicy.normalizeOrigin(meshTarget),
+      ]);
+      final decision = scopedPolicy.validateNip98(
         pageUrl: tab.currentUrl ?? widget.config.flightDeckUrl,
         targetUrl: requestUrl,
         method: requestMethod,
@@ -2078,12 +2229,18 @@ class BrowserScreenState extends State<BrowserScreen> {
           ),
         );
       }
+      if (!signingContextValid()) {
+        await _resolveSignerRequest(tab, requestId,
+            {'error': 'Mesh pairing or signing identity changed.'});
+        return;
+      }
       final result = await widget.bridge.signNip98(
         config: widget.config,
         method: decision.method,
         url: requestUrl,
         body: requestBody,
       );
+      if (!signingContextValid()) return;
       if (!result.ok) {
         await _recordSignerAudit(
           decision: decision,
@@ -2105,11 +2262,32 @@ class BrowserScreenState extends State<BrowserScreen> {
         outcome: remembered ? 'signed_with_remembered_approval' : 'signed',
         rememberedApproval: remembered || approval.remember,
       );
+      if (!signingContextValid()) return;
       await _resolveSignerRequest(tab, requestId, {
         'result': result.json['authorization'],
         'event': result.json['event'],
       });
     }
+  }
+
+  String? _meshSigningTarget(String method, Map<String, dynamic> params) {
+    final urls = <String>[];
+    if (method == 'signNip98') urls.add(params['url']?.toString() ?? '');
+    if (method == 'signEvent' &&
+        params['kind'] == 27235 &&
+        params['tags'] is List) {
+      for (final tag in params['tags'] as List) {
+        if (tag is List && tag.length >= 2 && tag[0] == 'u')
+          urls.add(tag[1].toString());
+      }
+    }
+    for (final url in urls) {
+      if (Uri.tryParse(url)?.host.endsWith('.fips') == true) {
+        // Multiple targets cannot inherit a grant for just one of them.
+        return urls.length == 1 ? url : 'http://ambiguous.fips/';
+      }
+    }
+    return null;
   }
 
   Map<String, dynamic>? _decodeMessage(String message) {
@@ -2610,7 +2788,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 ''';
   }
 
-  String _bridgeScript(String devicePublicKeyHex) {
+  String _bridgeScript(String devicePublicKeyHex, String? towerDocumentToken) {
     final escapedPublicKey =
         devicePublicKeyHex.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
     return '''
@@ -2627,7 +2805,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   };
   function callNative(method, params) {
     const id = String(++seq);
-    const message = JSON.stringify({ id, method, params: params || {} });
+    const message = JSON.stringify({ id, method, params: params || {}, towerDocumentToken: ${jsonEncode(towerDocumentToken)} });
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
     });
@@ -3425,6 +3603,7 @@ class BrowserTab {
   String? currentUrl;
   String? message;
   bool isHome;
+  TowerFipsBrowserBridge? towerBridge;
   bool canGoBack = false;
   bool canGoForward = false;
 
@@ -3448,6 +3627,7 @@ class BrowserTab {
   }
 
   void dispose() {
+    towerBridge?.close();
     addressController.dispose();
     addressFocusNode.dispose();
   }
