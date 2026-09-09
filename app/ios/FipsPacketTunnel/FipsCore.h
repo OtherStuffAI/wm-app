@@ -9,5 +9,8 @@ char *wm_fips_status(void);
 char *wm_fips_peers(void);
 void wm_fips_string_free(char *value);
 int32_t wm_fips_input(const uint8_t *bytes, size_t length);
+// Owned duplicate; close ONLY in DispatchSource cancellation handler. Do not
+// read: output() clears readiness when the bounded queue becomes empty.
+int32_t wm_fips_output_descriptor(void);
 int32_t wm_fips_output(uint8_t *bytes, size_t capacity);
 #endif

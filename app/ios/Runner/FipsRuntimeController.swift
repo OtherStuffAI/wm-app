@@ -32,8 +32,12 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         if events.count > 100 { events.removeFirst(events.count - 100) }
     }
     private func loaded(_ completion: @escaping (Error?) -> Void) {
+        let id = operationID
         NETunnelProviderManager.loadAllFromPreferences { managers, error in
             DispatchQueue.main.async {
+                guard self.operationID == id else {
+                    completion(NSError(domain: "com.wingman.fips.cancelled", code: 1)); return
+                }
                 self.manager = managers?.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.providerID }
                 completion(error)
             }
@@ -54,6 +58,7 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         // Flutter invokes plugins on main; all NetworkExtension APIs here are async.
         switch call.method {
         case "inspect":
+            guard operation == nil else { result(value("starting", "FIPS VPN is changing state.")); return }
             loaded { error in
                 if error != nil { result(self.value("failed", "iPhone VPN settings could not be read.")); return }
                 if self.manager?.connection.status == .connected { self.message("inspect", result: result) }
@@ -61,14 +66,15 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
             }
         case "start", "repair": beginStart(repair: call.method == "repair", result: result)
         case "stop":
-            operationID = UUID()
-            let pending = operation; operation = nil
+            operationID = UUID(); let id = operationID
+            let pending = operation; operation = result
             pending?(value("failed", "FIPS startup was cancelled."))
             loaded { error in
-                guard error == nil else { result(self.value("failed", "iPhone VPN settings could not be read.")); return }
+                guard self.operationID == id else { return }
+                guard error == nil else { self.finishStop(self.value("failed", "iPhone VPN settings could not be read.")); return }
                 self.manager?.connection.stopVPNTunnel()
                 self.lastFailure = nil; self.record("stop_requested")
-                self.waitForStop(attempt: 0, result: result)
+                self.waitForStop(id, attempt: 0)
             }
         case "peerStatus": message("peerStatus", result: result)
         case "probe":
@@ -166,10 +172,16 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         let pending = operation; operation = nil; pending?(status)
     }
     private func statusChanged() { record("vpn_status_\(manager?.connection.status.rawValue ?? 0)") }
-    private func waitForStop(attempt: Int, result: @escaping FlutterResult) {
-        if manager == nil || manager?.connection.status == .disconnected || manager?.connection.status == .invalid { result(currentStatus()); return }
-        guard attempt < 40 else { result(value("failed", "FIPS VPN is still stopping. Retry shortly.")); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.waitForStop(attempt: attempt + 1, result: result) }
+    private func finishStop(_ status: [String: Any]) {
+        let pending = operation; operation = nil; pending?(status)
+    }
+    private func waitForStop(_ id: UUID, attempt: Int) {
+        guard operationID == id, operation != nil else { return }
+        if manager == nil || manager?.connection.status == .disconnected || manager?.connection.status == .invalid {
+            finishStop(currentStatus()); return
+        }
+        guard attempt < 40 else { finishStop(value("failed", "FIPS VPN is still stopping. Retry shortly.")); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.waitForStop(id, attempt: attempt + 1) }
     }
     private func message(_ command: String, result: @escaping FlutterResult) {
         guard let session = manager?.connection as? NETunnelProviderSession, session.status == .connected else {

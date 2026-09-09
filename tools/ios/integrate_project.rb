@@ -6,7 +6,7 @@ runner = project.targets.find { |t| t.name == 'Runner' }
 extension = project.targets.find { |t| t.name == 'FipsPacketTunnel' } || project.new_target(:app_extension, 'FipsPacketTunnel', :ios, '13.0')
 group = project.main_group.find_subpath('FipsPacketTunnel', true)
 group.set_source_tree('<group>'); group.path = 'FipsPacketTunnel'
-['PacketTunnelProvider.swift', 'FipsTunnelSettings.swift', 'FipsCore.h', 'Info.plist', 'FipsPacketTunnel.entitlements'].each do |name|
+['FipsPacketLifecycle.swift', 'PacketTunnelProvider.swift', 'FipsTunnelSettings.swift', 'FipsCore.h', 'Info.plist', 'FipsPacketTunnel.entitlements'].each do |name|
   ref = group.files.find { |f| f.path == name } || group.new_file(name)
   extension.add_file_references([ref]) if name.end_with?('.swift') && !extension.source_build_phase.files_references.include?(ref)
 end

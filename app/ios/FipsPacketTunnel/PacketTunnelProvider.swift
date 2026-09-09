@@ -4,13 +4,15 @@ import Network
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let worker = DispatchQueue(label: "com.wingman.fips.packet", qos: .userInitiated)
-    private var generation = 0
-    private var active = false
-    private var readOutstanding = false
+    private let lifecycle = FipsPacketLifecycle()
+    private var generation: Int { lifecycle.generation }
+    private var active: Bool { lifecycle.active }
+    private var outputSource: FipsOutputPump?
     private var timer: DispatchSourceTimer?
-    private var pathMonitor: NWPathMonitor?
-    private var pathSignature: String?
-    private var healthTicks = 0
+    private var startTimeout: DispatchSourceTimer?
+    private var pathMonitors: [NWPathMonitor] = []
+    private var initializedPaths = Set<Int>()
+    private var pathDebounce: DispatchSourceTimer?
     private var startCompletion: ((Error?) -> Void)?
 
     private func decode(_ pointer: UnsafeMutablePointer<CChar>?) -> [String: Any] {
@@ -42,127 +44,150 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return bytes
     }
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
-        worker.async {
-            guard !self.active, self.startCompletion == nil else { completionHandler(self.error(1)); return }
-            self.generation += 1
-            let generation = self.generation
-            self.startCompletion = completionHandler
-            do {
-                var key = try self.nodeKey()
-                defer { key.resetBytes(in: 0..<key.count) }
-                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fips", isDirectory: true)
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                    attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-                let status = key.withUnsafeBytes { key in
-                    directory.path.withCString { self.decode(wm_fips_start(key.bindMemory(to: UInt8.self).baseAddress!, $0)) }
+        worker.async { self.start(completionHandler) }
+    }
+    private func start(_ completionHandler: @escaping (Error?) -> Void) {
+        guard self.startCompletion == nil, let generation = lifecycle.begin() else { completionHandler(self.error(1)); return }
+        self.startCompletion = completionHandler
+        do {
+            var key = try self.nodeKey()
+            defer { key.resetBytes(in: 0..<key.count) }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fips", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+            let status = key.withUnsafeBytes { key in
+                directory.path.withCString { self.decode(wm_fips_start(key.bindMemory(to: UInt8.self).baseAddress!, $0)) }
+            }
+            guard status["state"] as? String == "running", let ipv6 = status["ipv6"] as? String else { throw self.error(2) }
+            let settings = FipsTunnelSettings.make(ipv6: ipv6)
+            self.setTunnelNetworkSettings(settings) { error in
+                self.worker.async {
+                    guard self.generation == generation else { return }
+                    if let error { self.finishStart(error); return }
+                    guard self.lifecycle.activate(generation) else { return }
+                    guard self.startDrain(generation) else { self.finishStart(self.error(6)); return }
+                    self.readPackets(generation)
+                    self.monitorPath()
+                    self.finishStart(nil)
                 }
-                guard status["state"] as? String == "running", let ipv6 = status["ipv6"] as? String else { throw self.error(2) }
-                let settings = FipsTunnelSettings.make(ipv6: ipv6)
-                self.setTunnelNetworkSettings(settings) { error in
-                    self.worker.async {
-                        guard self.generation == generation else { return }
-                        if let error { self.finishStart(error); return }
-                        self.active = true
-                        self.readPackets(generation)
-                        self.startDrain(generation)
-                        self.monitorPath()
-                        self.finishStart(nil)
-                    }
-                }
-                self.worker.asyncAfter(deadline: .now() + 20) {
-                    guard self.generation == generation, self.startCompletion != nil else { return }
-                    self.finishStart(self.error(3))
-                }
-            } catch { self.finishStart(error) }
-        }
+            }
+            let timeout = DispatchSource.makeTimerSource(queue: self.worker)
+            timeout.schedule(deadline: .now() + 20)
+            timeout.setEventHandler { [weak self] in
+                guard let self else { return }
+                guard self.generation == generation, self.startCompletion != nil else { return }
+                self.finishStart(self.error(3))
+            }
+            self.startTimeout = timeout; timeout.resume()
+        } catch { self.finishStart(error) }
     }
     private func finishStart(_ error: Error?) {
+        startTimeout?.cancel(); startTimeout = nil
         if error != nil {
-            generation += 1; active = false
-            timer?.cancel(); timer = nil
-            _ = decode(wm_fips_stop())
+            teardown()
         }
         let completion = startCompletion; startCompletion = nil
         completion?(error)
     }
     private func readPackets(_ generation: Int) {
-        guard active, self.generation == generation, !readOutstanding else { return }
-        readOutstanding = true
+        guard lifecycle.registerRead(generation) else { return }
         packetFlow.readPackets { packets, protocols in
+            // Bound the single queued callback before crossing to the worker;
+            // never retain an arbitrarily large OS batch while startup is busy.
+            let batch = zip(packets.prefix(64), protocols.prefix(64)).compactMap { packet, proto -> Data? in
+                guard !packet.isEmpty, packet.count <= 1280,
+                    (packet[0] >> 4 == 4 && proto.int32Value == AF_INET) ||
+                    (packet[0] >> 4 == 6 && proto.int32Value == AF_INET6) else { return nil }
+                return packet
+            }
             self.worker.async {
-                self.readOutstanding = false
-                guard self.active else { return }
-                guard self.generation == generation else { self.readPackets(self.generation); return }
-                // One outstanding read only; no per-packet async task backlog.
-                for (packet, proto) in zip(packets.prefix(64), protocols.prefix(64)) where
-                    (proto.int32Value == AF_INET || proto.int32Value == AF_INET6) && packet.count <= 1280 {
-                    packet.withUnsafeBytes { _ = wm_fips_input($0.bindMemory(to: UInt8.self).baseAddress, packet.count) }
+                guard self.lifecycle.completeRead(generation) else { self.readPackets(self.generation); return }
+                for packet in batch {
+                    let result = packet.withUnsafeBytes { wm_fips_input($0.bindMemory(to: UInt8.self).baseAddress, packet.count) }
+                    if result == -2 { self.failRuntime(); return }
+                    // Malformed packets (-1) and bounded queue loss (1) drop.
                 }
                 self.readPackets(generation)
             }
         }
     }
-    private func startDrain(_ generation: Int) {
-        let timer = DispatchSource.makeTimerSource(queue: worker)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(5))
-        timer.setEventHandler { [weak self] in
-            guard let self, self.active, self.generation == generation else { return }
-            var buffer = [UInt8](repeating: 0, count: 8192)
-            var packets: [Data] = []; var protocols: [NSNumber] = []
-            self.healthTicks += 1
-            if self.healthTicks % 100 == 0, self.decode(wm_fips_status())["state"] as? String != "running" {
-                self.cancelTunnelWithError(self.error(5)); return
-            }
-            for _ in 0..<64 {
-                let count = wm_fips_output(&buffer, buffer.count)
-                if count <= 0 { break }
-                packets.append(Data(buffer.prefix(Int(count))))
-                protocols.append(NSNumber(value: buffer[0] >> 4 == 6 ? AF_INET6 : AF_INET))
-            }
-            if !packets.isEmpty { _ = self.packetFlow.writePackets(packets, withProtocols: protocols) }
+    private func startDrain(_ generation: Int) -> Bool {
+        let descriptor = wm_fips_output_descriptor()
+        guard descriptor >= 0 else { return false }
+        outputSource = FipsOutputPump(descriptor: descriptor, queue: worker,
+            accepts: { [weak self] in self?.lifecycle.accepts(generation) == true },
+            read: { wm_fips_output($0, $1) },
+            write: { [weak self] packets in
+                guard let self else { return false }
+                return self.packetFlow.writePackets(packets, withProtocols: packets.map {
+                    NSNumber(value: $0[0] >> 4 == 6 ? AF_INET6 : AF_INET)
+                })
+            }, failed: { [weak self] in self?.failRuntime() })
+        let health = DispatchSource.makeTimerSource(queue: worker)
+        health.schedule(deadline: .now() + 5, repeating: .seconds(5), leeway: .seconds(1))
+        health.setEventHandler { [weak self] in
+            guard let self, self.lifecycle.accepts(generation) else { return }
+            if self.decode(wm_fips_status())["state"] as? String != "running" { self.failRuntime() }
         }
-        self.timer = timer; timer.resume()
+        timer = health; health.resume()
+        return true
+    }
+    private func teardown() {
+        lifecycle.stop()
+        startTimeout?.cancel(); startTimeout = nil
+        outputSource?.cancel(); outputSource = nil
+        timer?.cancel(); timer = nil
+        pathDebounce?.cancel(); pathDebounce = nil
+        pathMonitors.forEach { $0.cancel() }; pathMonitors.removeAll()
+        initializedPaths.removeAll()
+        reasserting = false
+        _ = decode(wm_fips_stop())
+    }
+    private func failRuntime() {
+        teardown()
+        let pending = startCompletion; startCompletion = nil
+        pending?(error(5))
+        cancelTunnelWithError(error(5))
     }
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         worker.async {
-            self.generation += 1; self.active = false
-            self.timer?.cancel(); self.timer = nil
-            self.pathMonitor?.cancel(); self.pathMonitor = nil; self.pathSignature = nil
+            self.teardown()
             let pending = self.startCompletion; self.startCompletion = nil
-            _ = self.decode(wm_fips_stop())
             pending?(self.error(4))
             completionHandler()
         }
     }
     private func monitorPath() {
-        guard pathMonitor == nil else { return }
-        let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in
-            guard let self, self.active else { return }
-            let signature = "\(path.status)-\(path.usesInterfaceType(.wifi))-\(path.usesInterfaceType(.cellular))-\(path.usesInterfaceType(.wiredEthernet))"
-            let previous = self.pathSignature
-            self.pathSignature = signature
-            guard previous != nil, previous != signature else { return }
-            self.reasserting = true
-            guard path.status == .satisfied else { return }
-            // Recreate UDP and peer state on interface changes, keeping the
-            // Keychain node identity. Debounce repeated path notifications.
-            let generation = self.generation
-            self.worker.asyncAfter(deadline: .now() + 1) {
-                guard self.active, self.generation == generation, self.pathSignature == signature else { return }
-                self.generation += 1; self.active = false
-                self.timer?.cancel(); self.timer = nil
-                _ = self.decode(wm_fips_stop())
-                self.startTunnel(options: nil) { error in
-                    self.worker.async {
+        guard pathMonitors.isEmpty else { return }
+        let generation = self.generation
+        // Physical Wi-Fi can change while the general VPN path stays satisfied.
+        let monitors = [NWPathMonitor(), NWPathMonitor(requiredInterfaceType: .wifi)]
+        for (index, monitor) in monitors.enumerated() {
+            monitor.pathUpdateHandler = { [weak self] _ in
+                guard let self, self.lifecycle.accepts(generation) else { return }
+                guard !self.initializedPaths.insert(index).inserted else { return }
+                self.reasserting = true
+                // Reschedule ONE timer for every update, including same-interface
+                // changes. No signature ABA race or unbounded delayed work items.
+                if let debounce = self.pathDebounce { debounce.schedule(deadline: .now() + 1); return }
+                let debounce = DispatchSource.makeTimerSource(queue: self.worker)
+                debounce.schedule(deadline: .now() + 1)
+                debounce.setEventHandler { [weak self] in
+                    guard let self, self.lifecycle.accepts(generation) else { return }
+                    self.teardown()
+                    self.reasserting = true
+                    // Stay on this worker: a queued stop cannot be overtaken by
+                    // a restart enqueued from a previous generation.
+                    self.start { error in
                         self.reasserting = false
                         if let error { self.cancelTunnelWithError(error) }
                     }
                 }
+                self.pathDebounce = debounce; debounce.resume()
             }
+            monitor.start(queue: worker)
         }
-        pathMonitor = monitor
-        monitor.start(queue: worker)
+        pathMonitors = monitors
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {

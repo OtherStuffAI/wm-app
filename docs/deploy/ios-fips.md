@@ -67,7 +67,10 @@ Never install the unsigned output. A successful development install does not
 establish TestFlight/App Store distribution access. As of the 2026-09-09 check,
 Peter's paired iPhone 15 Pro was available, but Xcode reported **No Accounts**
 and that the wildcard profile lacks the Network Extensions capability and
-entitlement. Physical consent, tunnel and WApp tests therefore remain pending.
+entitlement. Physical consent, tunnel and WApp tests therefore remain pending. The later
+refinement recheck still reports No Accounts/missing capability profiles, and
+Peter's known iPhone now reports unavailable; reconnect/unlock it after restoring
+signing. See the refinement evidence linked below.
 
 ## Routing, identity and lifecycle
 
@@ -85,9 +88,23 @@ entitlement. Physical consent, tunnel and WApp tests therefore remain pending.
 - Swift serializes lifecycle and packet work. One packet read is outstanding;
   each batch is limited to 64 packets. Generations reject stale callbacks.
   A network path transition recreates UDP/node state after a one-second debounce
-  using the same Keychain identity. No on-demand VPN rules are installed.
-- Rust limits outbound/inbound TUN queues to 64 packets, DNS request/reply
-  queues to 16, transport ingress to 64, and encrypt work to 64. There is one
+  using the same Keychain identity. Generic and physical Wi-Fi monitors observe
+  all subsequent path updates, including same-interface changes. One cancellable
+  debounce timer coalesces updates. No on-demand VPN rules are installed.
+- Packet output uses a native readiness descriptor and `DispatchSourceRead`,
+  with up to 32 packets / 128 KiB per event. Idle output has no polling timer;
+  a separate health check runs every five seconds. Rust owns queue endpoints;
+  Swift owns one duplicate, closed only by the dispatch cancellation handler.
+  No Swift context or callback pointer crosses FFI. Runtime death/abort signals
+  EOF; rejected writes are terminal. Stop cancels all sources before stopping
+  Rust. The outstanding OS read is preserved across runtime generations.
+- Controller preference-load callbacks are operation-scoped. Stop keeps the
+  operation reserved until disconnect/timeout, preventing a late stop callback
+  from stopping a replacement. Repair confirms disconnect before starting.
+- Rust limits input TUN to 64 × 1280-byte packets and DNS requests to
+  16 × 1280 bytes. Mesh output and DNS replies share a queue capped at 64 packets
+  and 128 KiB (4096 bytes per output packet). Transport ingress and encrypt work
+  remain capped at 64. There is one
   encrypt worker, no decrypt pool, and two Tokio workers with 2 MiB stacks.
   DNS uses one worker with a two-second socket timeout. Stop cancels queued
   DNS and joins that worker, bounds node shutdown to three seconds and runtime
@@ -136,13 +153,11 @@ RUSTC="$(rustup which --toolchain 1.98.0 rustc)" \
 RUSTC="$(rustup which --toolchain 1.98.0 rustc)" \
   rustup run 1.98.0 cargo test --manifest-path crates/wmapp-fips-ios/Cargo.toml \
   live_authenticated_bootstrap -- --ignored --nocapture
-swiftc app/ios/FipsPacketTunnel/FipsTunnelSettings.swift \
-  tools/ios/test_settings.swift -o build/ios-fips/test-settings
-build/ios-fips/test-settings
+# Production Swift pump + real host Rust, lifecycle, bounds and ownership smoke:
+./tools/ios/test_native.sh
 cd app
 flutter analyze
 flutter test
-flutter build apk --debug
 ```
 
 Do not run `prepare_core.py` concurrently with a build using its generated
@@ -192,3 +207,13 @@ closing that desktop WMAPP only when its owner is ready, then relaunch the
 simulator. Do not pick a random port, change the Flight Deck browser origin,
 or silently reuse another instance's server as a workaround. The 2026-09-09
 simulator test encountered this collision; its screenshot is not a visual pass.
+
+### Event-driven refinement evidence
+
+See [reference comparison and validation](../handoffs/2026-09-09-ios-fips-refinement-validation.md)
+for the pinned Nostr VPN comparison, host idle/active measurements, final build
+hashes and signing status. The host smoke uses an ephemeral node key, exercises
+local REFUSED packet DNS and terminal readiness, and does not open/alter a VPN
+or claim iPhone battery/underlay evidence. The separate ignored Rust network test
+checks authenticated bootstrap and `.fips` AAAA resolution. Do not run source
+preparation concurrently with either a host or cross-architecture Cargo build.

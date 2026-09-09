@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0368265EE8BBA967CF519A0B /* FipsPacketLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09354735A2F2D1801480A9E4 /* FipsPacketLifecycle.swift */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		180FDD29AD2B134F6922CAB3 /* WmFips.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0274EDDA6959B8EDAC84E092 /* WmFips.xcframework */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
@@ -71,6 +72,7 @@
 
 /* Begin PBXFileReference section */
 		0274EDDA6959B8EDAC84E092 /* WmFips.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = WmFips.xcframework; path = FipsCore/WmFips.xcframework; sourceTree = "<group>"; };
+		09354735A2F2D1801480A9E4 /* FipsPacketLifecycle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FipsPacketLifecycle.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				3EDEC48506CC2E58041EB34F /* FipsCore.h */,
 				3ABDF961CD6380B7744EF372 /* Info.plist */,
 				AAFB3D5C0E576CBEC3EBB27D /* FipsPacketTunnel.entitlements */,
+				09354735A2F2D1801480A9E4 /* FipsPacketLifecycle.swift */,
 			);
 			name = FipsPacketTunnel;
 			path = FipsPacketTunnel;
@@ -392,6 +395,7 @@
 			files = (
 				CA3C0C47C5F28224CBBF8A39 /* PacketTunnelProvider.swift in Sources */,
 				9752CAA5C9014DDE2D3F4BF3 /* FipsTunnelSettings.swift in Sources */,
+				0368265EE8BBA967CF519A0B /* FipsPacketLifecycle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

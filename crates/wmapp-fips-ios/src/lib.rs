@@ -1,8 +1,10 @@
 //! Extension-only C ABI. Callers own input buffers; returned JSON is freed once
 //! with wm_fips_string_free. Packet calls copy bytes and never retain pointers.
+mod delivery;
 mod dns_proxy;
 use fips::{Identity, Node};
 use serde_json::{Value, json};
+use std::os::fd::IntoRawFd;
 use std::{
     ffi::{CStr, CString, c_char},
     io::{Read, Write},
@@ -47,9 +49,8 @@ struct Engine {
     task: JoinHandle<()>,
     shutdown: Option<oneshot::Sender<()>>,
     outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
-    inbound: mpsc::Receiver<Vec<u8>>,
+    delivery: Arc<delivery::Delivery>,
     dns_in: Option<mpsc::SyncSender<Vec<u8>>>,
-    dns_out: mpsc::Receiver<Vec<u8>>,
     dns_stop: Arc<AtomicBool>,
     dns_thread: Option<std::thread::JoinHandle<()>>,
     npub: String,
@@ -81,7 +82,11 @@ fn start(secret: &[u8; 32], directory: &str) -> Result<Value, &'static str> {
     let config = serde_yaml::from_str(CONFIG).map_err(|_| "FIPS configuration invalid.")?;
     let mut node =
         Node::with_identity(identity, config).map_err(|_| "FIPS initialization failed.")?;
-    let (outbound, inbound) = node.enable_app_owned_tun();
+    let delivery = Arc::new(delivery::Delivery::new().map_err(|_| "FIPS readiness unavailable.")?);
+    let sink = delivery.clone();
+    let outbound = node.enable_app_owned_delivery(fips::upper::tun::TunTx::delivery(move |p| {
+        sink.push(p).map_err(mpsc::TrySendError::Full)
+    }));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_stack_size(2 * 1024 * 1024)
@@ -95,7 +100,7 @@ fn start(secret: &[u8; 32], directory: &str) -> Result<Value, &'static str> {
     let resolver = node.dns_local_addr().ok_or("FIPS DNS startup failed.")?;
     let mtu = node.transport_mtu();
     let (dns_tx, dns_rx) = mpsc::sync_channel::<Vec<u8>>(16);
-    let (reply_tx, dns_out) = mpsc::sync_channel(16);
+    let reply_tx = delivery.clone();
     let dns_stop = Arc::new(AtomicBool::new(false));
     let worker_stop = dns_stop.clone();
     let dns_thread = std::thread::Builder::new()
@@ -131,19 +136,22 @@ fn start(secret: &[u8; 32], directory: &str) -> Result<Value, &'static str> {
                         simple_dns::RCODE::Refused,
                     ),
                 };
-                let _ = reply_tx.try_send(reply);
+                let _ = reply_tx.push(reply);
             }
             #[cfg(test)]
             DNS_WORKERS.fetch_sub(1, Ordering::SeqCst);
         })
         .map_err(|_| "FIPS DNS worker unavailable.")?;
     let (shutdown, rx) = oneshot::channel();
+    let terminal_delivery = delivery::CloseOnDrop(delivery.clone());
     let task = runtime.spawn(async move {
+        let terminal_delivery = terminal_delivery;
         let _ = node
             .run_rx_loop_with_shutdown(async {
                 let _ = rx.await;
             })
             .await;
+        terminal_delivery.0.close();
         node.finish_shutdown().await;
     });
     *guard = Some(Engine {
@@ -151,9 +159,8 @@ fn start(secret: &[u8; 32], directory: &str) -> Result<Value, &'static str> {
         task,
         shutdown: Some(shutdown),
         outbound,
-        inbound,
+        delivery,
         dns_in: Some(dns_tx),
-        dns_out,
         dns_stop,
         dns_thread: Some(dns_thread),
         npub: npub.clone(),
@@ -168,6 +175,7 @@ fn start(secret: &[u8; 32], directory: &str) -> Result<Value, &'static str> {
 fn stop() -> Value {
     if let Ok(mut guard) = slot().lock() {
         if let Some(mut engine) = guard.take() {
+            engine.delivery.close();
             engine.dns_stop.store(true, Ordering::Release);
             engine.dns_in.take();
             if let Some(tx) = engine.shutdown.take() {
@@ -191,7 +199,7 @@ fn status() -> Value {
     };
     match guard.as_ref() {
         Some(e) if !e.task.is_finished() => {
-            json!({"state":"running","detail":"FIPS 0.5.0 packet runtime is running.","nodeNpub":e.npub,"ipv6":e.ipv6,"droppedPackets":e.dropped})
+            json!({"state":"running","detail":"FIPS 0.5.0 packet runtime is running.","nodeNpub":e.npub,"ipv6":e.ipv6,"droppedPackets":e.dropped + e.delivery.dropped()})
         }
         Some(_) => failure("FIPS runtime stopped unexpectedly. Restart the VPN."),
         None => json!({"state":"notInstalled","detail":"FIPS VPN is stopped."}),
@@ -249,6 +257,9 @@ fn input(packet: &[u8]) -> i32 {
         return -2;
     };
     let Some(e) = guard.as_mut() else { return -2 };
+    if e.task.is_finished() {
+        return -2;
+    }
     let accepted = if dns_proxy::classify_dns_query(packet).is_some() {
         e.dns_in
             .as_ref()
@@ -323,6 +334,21 @@ pub unsafe extern "C" fn wm_fips_input(bytes: *const u8, len: usize) -> i32 {
     std::panic::catch_unwind(|| input(unsafe { std::slice::from_raw_parts(bytes, len) }))
         .unwrap_or(-2)
 }
+/// Transfers one duplicated readiness descriptor to the caller, or -1 on error.
+/// Caller must close exactly once after its dispatch source is cancelled.
+/// Do not read it: wm_fips_output acknowledges readiness atomically with dequeue.
+#[unsafe(no_mangle)]
+pub extern "C" fn wm_fips_output_descriptor() -> i32 {
+    std::panic::catch_unwind(|| {
+        let Ok(guard) = slot().lock() else { return -1 };
+        let Some(e) = guard.as_ref() else { return -1 };
+        e.delivery
+            .descriptor()
+            .map(IntoRawFd::into_raw_fd)
+            .unwrap_or(-1)
+    })
+    .unwrap_or(-1)
+}
 /// # Safety
 /// output is writable for capacity bytes. Returns length, 0 if empty, or error.
 #[unsafe(no_mangle)]
@@ -333,14 +359,18 @@ pub unsafe extern "C" fn wm_fips_output(output: *mut u8, capacity: usize) -> i32
     std::panic::catch_unwind(|| {
         let Ok(guard) = slot().lock() else { return -2 };
         let Some(e) = guard.as_ref() else { return -2 };
-        let packet = e.dns_out.try_recv().or_else(|_| e.inbound.try_recv());
+        if e.task.is_finished() {
+            return -2;
+        }
+        let packet = e.delivery.pop();
         match packet {
-            Ok(p) if p.len() <= capacity => {
+            Ok(Some(p)) if p.len() <= capacity => {
                 unsafe { std::ptr::copy_nonoverlapping(p.as_ptr(), output, p.len()) };
                 p.len() as i32
             }
-            Ok(_) => -1,
-            Err(_) => 0,
+            Ok(Some(_)) => -1,
+            Ok(None) => 0,
+            Err(_) => -2,
         }
     })
     .unwrap_or(-2)
@@ -387,12 +417,38 @@ mod tests {
         let first = start(&key, dir.to_str().unwrap()).unwrap();
         assert!(start(&key, dir.to_str().unwrap()).is_err());
         assert_eq!(status()["state"], "running");
+        use std::os::fd::FromRawFd;
+        let fd = wm_fips_output_descriptor();
+        assert!(fd >= 0);
+        let mut old_readiness = unsafe { UnixStream::from_raw_fd(fd) };
         assert_eq!(stop()["state"], "notInstalled");
         assert_eq!(stop()["state"], "notInstalled");
         let second = start(&key, dir.to_str().unwrap()).unwrap();
         assert_eq!(first["nodeNpub"], second["nodeNpub"]);
         assert_eq!(first["ipv6"], second["ipv6"]);
+        assert_eq!(
+            old_readiness.read(&mut [0]).unwrap(),
+            0,
+            "old generation must see EOF, never new packets"
+        );
+        // Runtime death must reject input/output honestly and wake its source.
+        let mut death_readiness = unsafe { UnixStream::from_raw_fd(wm_fips_output_descriptor()) };
+        slot().lock().unwrap().as_ref().unwrap().task.abort();
+        for _ in 0..100 {
+            if status()["state"] == "failed" {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(status()["state"], "failed");
+        assert_eq!(death_readiness.read(&mut [0]).unwrap(), 0);
+        let mut output = [0; 4096];
+        assert_eq!(
+            unsafe { wm_fips_output(output.as_mut_ptr(), output.len()) },
+            -2
+        );
         stop();
+        assert_eq!(wm_fips_output_descriptor(), -1);
         assert_eq!(DNS_WORKERS.load(Ordering::SeqCst), 0);
         for _ in 0..5 {
             start(&key, dir.to_str().unwrap()).unwrap();

@@ -25,18 +25,33 @@ replace('src/upper/tun.rs', '#[cfg(target_os = "android")]\nmod platform', '#[cf
 # Bound mesh -> extension delivery without blocking the core when iOS suspends
 # packet consumption. Full means packet loss, recovered by upper protocols.
 replace('src/upper/tun.rs', 'pub type TunTx = mpsc::Sender<Vec<u8>>;', '''#[derive(Clone)]
-pub struct TunTx(mpsc::SyncSender<Vec<u8>>);
+pub struct TunTx(std::sync::Arc<dyn Fn(Vec<u8>) -> Result<(), mpsc::TrySendError<Vec<u8>>> + Send + Sync>);
 impl TunTx {
     pub fn send(&self, packet: Vec<u8>) -> Result<(), mpsc::TrySendError<Vec<u8>>> {
-        self.0.try_send(packet)
+        (self.0)(packet)
     }
 }
 pub fn bounded_tun_channel() -> (TunTx, mpsc::Receiver<Vec<u8>>) {
     let (tx, rx) = mpsc::sync_channel(64);
-    (TunTx(tx), rx)
+    (TunTx(std::sync::Arc::new(move |packet| tx.try_send(packet))), rx)
 }''')
 replace('src/node/mod.rs', 'let (tun_tx, tun_rx) = std::sync::mpsc::channel();', 'let (tun_tx, tun_rx) = crate::upper::tun::bounded_tun_channel();')
 replace('src/upper/tun.rs', 'let (tx, rx) = mpsc::channel();', 'let (tx, rx) = bounded_tun_channel();', 2)
+# The iOS adapter supplies a bounded, readiness-signalled sink. Only Rust
+# closures cross this boundary; no Swift object/context or packet pointer does.
+replace('src/upper/tun.rs', 'impl TunTx {', """impl TunTx {
+    pub fn delivery(sink: impl Fn(Vec<u8>) -> Result<(), mpsc::TrySendError<Vec<u8>>> + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(sink))
+    }""")
+replace('src/node/mod.rs', '    pub fn enable_app_owned_tun(&mut self)', """    pub fn enable_app_owned_delivery(&mut self, sink: crate::upper::tun::TunTx) -> TunOutboundTx {
+        let (tx, rx) = tokio::sync::mpsc::channel(self.config().node.buffers.tun_channel);
+        self.supervisor.tun_tx = Some(sink);
+        self.supervisor.tun_outbound_rx = Some(rx);
+        self.tun_state = TunState::Active;
+        tx
+    }
+
+    pub fn enable_app_owned_tun(&mut self)""")
 # A Packet Tunnel has a much smaller memory budget than a desktop daemon.
 file=dest/'src/node/lifecycle/mod.rs';s=file.read_text()
 start=s.index('            let cpu_default =');end=s.index('            (\n                true,', start)
