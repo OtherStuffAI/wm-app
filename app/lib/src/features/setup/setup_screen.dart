@@ -14,6 +14,7 @@ class SetupScreen extends StatefulWidget {
     required this.onConfigChanged,
     required this.onClearBrowserData,
     required this.onOpenFipsApp,
+    this.localFlightDeckUrl = '',
     super.key,
   });
 
@@ -23,6 +24,7 @@ class SetupScreen extends StatefulWidget {
   final ValueChanged<AppConfig> onConfigChanged;
   final Future<void> Function() onClearBrowserData;
   final ValueChanged<String> onOpenFipsApp;
+  final String localFlightDeckUrl;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -109,21 +111,13 @@ class _SetupScreenState extends State<SetupScreen> {
         const SizedBox(height: 14),
         _fipsCard(),
         const SizedBox(height: 14),
+        _towerSyncCard(),
+        const SizedBox(height: 14),
         if (_displayExperimentalFlightDeckDriveSync) ...[
-          _field(
-            controller: _towerController,
-            label: 'Tower URL',
-            icon: Icons.dns_outlined,
-          ),
           _field(
             controller: _appNpubController,
             label: 'Flight Deck App npub',
             icon: Icons.apps,
-          ),
-          _field(
-            controller: _flightDeckController,
-            label: 'Flight Deck URL',
-            icon: Icons.public,
           ),
           _field(
             controller: _workspaceController,
@@ -249,6 +243,62 @@ class _SetupScreenState extends State<SetupScreen> {
           controlAffinity: ListTileControlAffinity.leading,
         ),
       ],
+    );
+  }
+
+  Widget _towerSyncCard() {
+    final logical = SignerPolicy.normalizeOrigin(_towerController.text);
+    final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Tower FIPS sync',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            const Text(
+              'Connect Flight Deck to Tower over FIPS. '
+              'Experimental Drive sync is not required.',
+            ),
+            const SizedBox(height: 14),
+            _field(
+              controller: _towerController,
+              label: 'Tower URL',
+              icon: Icons.dns_outlined,
+              helperText: 'Public HTTPS URL of the Tower selected in Flight Deck. '
+                  'Enter the HTTP .fips endpoint in Flight Deck when pairing.',
+              onChanged: (_) => setState(() {}),
+            ),
+            _field(
+              controller: _flightDeckController,
+              label: 'Flight Deck URL',
+              icon: Icons.public,
+              helperText: 'Your existing external Flight Deck URL. Only this exact '
+                  'origin can pair, plus built-in Flight Deck. Leave blank '
+                  'for built-in only.',
+              onChanged: (_) => setState(() {}),
+            ),
+            if (!logical.startsWith('https://')) ...[
+              const Text(
+                'Tower bridge configuration incomplete: enter an HTTPS Tower '
+                'URL. A running FIPS runtime alone does not enable Tower sync.',
+              ),
+              const SizedBox(height: 8),
+            ],
+            Text(local.isEmpty
+                ? 'Built-in Flight Deck is not currently available.'
+                : 'Built-in Flight Deck: $local'),
+            const SizedBox(height: 8),
+            const Text(
+              'Save, reload your existing Flight Deck tab, then select FIPS '
+              'and approve pairing. Changing either URL revokes previous '
+              'pairings. Keep the same page URL to retain browser data.',
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -641,11 +691,14 @@ class _SetupScreenState extends State<SetupScreen> {
     bool obscureText = false,
     bool readOnly = false,
     int maxLines = 1,
+    String? helperText,
+    ValueChanged<String>? onChanged,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: TextField(
         controller: controller,
+        onChanged: onChanged,
         obscureText: obscureText,
         readOnly: readOnly,
         maxLines: obscureText ? 1 : maxLines,
@@ -653,6 +706,8 @@ class _SetupScreenState extends State<SetupScreen> {
           border: const OutlineInputBorder(),
           prefixIcon: Icon(icon),
           labelText: label,
+          helperText: helperText,
+          helperMaxLines: 6,
         ),
       ),
     );
@@ -666,7 +721,8 @@ class _SetupScreenState extends State<SetupScreen> {
         .toList(growable: false);
     widget.onConfigChanged(_currentConfig().copyWith(trustedOrigins: origins));
     setState(() {
-      _message = 'Configuration saved.';
+      _message = 'Configuration saved. For Tower FIPS sync, reload your '
+          'existing Flight Deck tab, then select FIPS and approve pairing.';
     });
   }
 

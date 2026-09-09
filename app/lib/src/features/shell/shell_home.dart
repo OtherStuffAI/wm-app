@@ -110,6 +110,7 @@ class _ShellHomeState extends State<ShellHome> {
             title: 'Setup',
             child: SetupScreen(
               config: widget.config,
+              localFlightDeckUrl: widget.localFlightDeckUrl,
               bridge: widget.bridge,
               fipsRuntime: _fipsRuntime,
               onConfigChanged: widget.onConfigChanged,

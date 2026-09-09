@@ -77,3 +77,26 @@ Uploading makes the image public immediately; Save signs and publishes the
 updated Nostr profile. Cancelling does not delete
 an uploaded image. Primal storage/payment errors leave existing profile fields
 intact and allow retry.
+
+## Tower FIPS sync configuration
+
+Open WMapp **Setup → Tower FIPS sync**. These fields are available without
+experimental Drive sync. **Tower URL** is the public HTTPS URL of the logical
+Tower selected in Flight Deck. **Flight Deck URL** is your existing external
+Flight Deck page URL; its exact origin (scheme, host and port) is allowed to
+request pairing. Leave it blank if you only use built-in Flight Deck. Setup
+shows the built-in origin separately when available.
+
+Save, then reload the existing Flight Deck tab. Select FIPS in Flight Deck's
+connection settings and enter the manually supplied HTTP `.fips` mesh endpoint
+there. Approve native pairing. The HTTPS Tower identity must match Flight Deck's
+selected Tower; the mesh endpoint is only its transport destination.
+
+Changing either URL revokes existing pairings and active native requests.
+Save does not reload open pages; the bridge is injected on page finish after
+reload. Keep using the same page URL to retain its browser storage. No browser
+data reset or identity replacement is needed. A running FIPS runtime or working
+FIPS WApp alone does not establish these Tower bridge prerequisites. The bridge
+is currently enabled on macOS, Android and Linux, only for the configured
+Flight Deck and available built-in origins. Pairing and signer approval remain
+separate requirements; configuration alone does not verify live Tower access.
