@@ -38,9 +38,9 @@ They are retained for manager inspection.
 | Simulator install and process launch | PASS; PID 56063 remained present | `ios-fips-simulator-install.log`, `ios-fips-simulator-launch.log` |
 | Simulator rendered UI | NOT PASSED: fixed port 47831 is owned by running macOS WMAPP | `ios-fips-simulator-runtime.log`, `build/ios-fips/simulator-launch.png` |
 | Unsigned device release | PASS, 40.0 MB | `ios-fips-device-build.log` |
-| Unsigned release archive | PASS, 209.6 MB; no IPA/export | `ios-fips-archive-build.log` |
+| Unsigned release archive | PASS, 212.5 MB; no IPA/export | `ios-fips-archive-build.log` |
 | Android debug APK | PASS | `ios-fips-android-build.log` |
-| Android Gradle unit tests | PASS | `ios-fips-android-tests.log` |
+| Android Gradle unit tests | 493 passed across projects, including 30 WMAPP tests | `ios-fips-android-tests.log` |
 | Existing Android Rust unit suite | 13 passed serially; see parallel caveat below | `ios-fips-android-rust-tests-serial.log` |
 | Signed physical device build | BLOCKED on final recheck | `ios-fips-signed-device-recheck.log` |
 
@@ -95,9 +95,23 @@ continue to the exact WApp URL. The public bootstrap is PoC only. Desktop WMAPP
 was left running to preserve concurrent bridge work, so simulator visual startup
 requires coordination over port 47831. No browser-origin workaround was added.
 
-Concurrent bridge commit `c878c37` is preserved; any subsequent bridge edits and
-the pre-existing reviewer handoff/tools remain owned by their workers. The iOS
-commit does not absorb unvalidated concurrent changes. Builds ran while bridge
-work continued, so this handoff claims the finalized iOS implementation and the
-specific recorded test/build runs, not that an arbitrary later main revision is
-byte-identical to the archived app.
+## Commit and concurrent-work record
+
+The iOS implementation is committed in **`9c4caa9`**
+(`build(flightdeck): bundle paired FIPS transport build 1915`). During this
+worker's reviewed staging/commit window, the concurrent bundle worker committed
+the shared index, including all 30 staged iOS implementation/documentation
+files. My following feature commit had nothing left to commit. History was
+preserved; no amend/reset or duplicate feature commit was attempted.
+
+Bridge commits `c878c37` and `423e9c5` are preserved. The final Flutter tests and
+unsigned archive were repeated after `9c4caa9` so the recorded final archive
+includes its Flight Deck 1915 bundle. An evidence-only follow-up commit records
+this handoff. The earlier simulator install/process evidence predates that
+bundle refresh and covers the same finalized native iOS runtime. Pre-existing
+`docs/fips-tower-bridge-handoff-2026-09-09.md` and `tools/fips_bridge/` remain
+untouched and untracked for their reviewer owner.
+
+Final archived extension SHA-256: `f098b8f9b959ce76d9bbfae5cbc68091a90413d37495b2887ff00e4ee6e916bd`.
+Final archived Runner SHA-256: `7b781977a0d0a8e02d75e7c3259e1435263ff17b137374383b284f74300b97de`.
+Archived Flight Deck `version.json` matches the committed 1915 bundle byte for byte.
