@@ -25,6 +25,10 @@ printf 'update_flightdeck_bundle source resolution passed\n'
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/wmapp-build-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/repo/tools" "$fixture/repo/app/assets/flightdeck" "$fixture/source/dist" "$fixture/bin"
+mkdir -p "$fixture/repo/tools/ios"
+# iOS helpers prepare the native core before bundling; keep SDK work isolated.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/repo/tools/ios/build_core.sh"
+chmod +x "$fixture/repo/tools/ios/build_core.sh"
 cp "$SCRIPT" "$fixture/repo/tools/"
 cp "$REPO_DIR"/build_*.sh "$fixture/repo/"
 printf '{}\n' > "$fixture/source/package.json"
@@ -80,7 +84,7 @@ if [[ "${1:-}" == clone ]]; then
   cp -R "$TEST_SOURCE/." "$destination/"
 elif [[ "${1:-}" == log ]]; then
   printf '1788753600\n'
-elif [[ "${1:-}" == rev-parse ]]; then
+elif [[ "${1:-}" == rev-parse || "${3:-}" == rev-parse ]]; then
   printf '123456abcdef\n'
 fi
 STUB

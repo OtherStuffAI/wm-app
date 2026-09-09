@@ -46,6 +46,7 @@ if [[ "$USE_EXISTING_DIST" == false ]]; then
     FLIGHT_DECK_DIR="$TEMP_BUILD_DIR/source"
     printf 'Downloading latest Flight Deck main from %s...\n' "$FLIGHT_DECK_REPOSITORY"
     git clone --depth 1 --single-branch --branch main -- "$FLIGHT_DECK_REPOSITORY" "$FLIGHT_DECK_DIR"
+    printf 'Flight Deck fetched source commit: %s\n' "$(git -C "$FLIGHT_DECK_DIR" rev-parse HEAD)"
   fi
   [[ -f "$FLIGHT_DECK_DIR/package.json" ]] || {
     printf 'Flight Deck checkout missing at %s; set FLIGHT_DECK_DIR to its location.\n' "$FLIGHT_DECK_DIR" >&2

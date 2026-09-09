@@ -67,10 +67,11 @@ Never install the unsigned output. A successful development install does not
 establish TestFlight/App Store distribution access. As of the 2026-09-09 check,
 Peter's paired iPhone 15 Pro was available, but Xcode reported **No Accounts**
 and that the wildcard profile lacks the Network Extensions capability and
-entitlement. Physical consent, tunnel and WApp tests therefore remain pending. The later
-refinement recheck still reports No Accounts/missing capability profiles, and
-Peter's known iPhone now reports unavailable; reconnect/unlock it after restoring
-signing. See the refinement evidence linked below.
+entitlement. Physical consent, tunnel and WApp tests therefore remain pending. The latest refresh/install recheck found Peter’s known iPhone available again,
+but signing still reports No Accounts and missing capability profiles. Restore
+the authorized Xcode account and provision both explicit App IDs before retrying.
+See [refresh/install evidence](../handoffs/2026-09-09-refresh-flightdeck-install-results.md)
+and the refinement evidence linked below.
 
 ## Routing, identity and lifecycle
 

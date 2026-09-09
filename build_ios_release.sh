@@ -31,4 +31,4 @@ echo "Building a signed iOS release app for standalone device launch..."
 )
 
 echo "Release app:"
-echo "  $APP_DIR/build/ios/Release-iphoneos/Runner.app"
+echo "  $APP_DIR/build/ios/iphoneos/Runner.app"
