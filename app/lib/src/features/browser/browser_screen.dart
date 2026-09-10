@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../../core/app_config.dart';
 import '../../core/tower_fips_proxy.dart';
@@ -28,6 +29,7 @@ import 'signer_store.dart';
 import 'webview_file_picker.dart';
 import 'tower_fips_browser_bridge.dart';
 import 'grasp_fips_browser_bridge.dart';
+import 'grasp_android_channel.dart';
 import 'tower_pairing_store.dart';
 
 class BrowserScreen extends StatefulWidget {
@@ -705,20 +707,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
-        'WingmanSigner',
-        onMessageReceived: (message) => _onSignerMessage(id, message),
-      )
-      ..addJavaScriptChannel(
-        'WingmanTower',
-        onMessageReceived: (message) =>
-            _tabById(id)?.towerBridge?.receive(message.message),
-      )
-      ..addJavaScriptChannel(
-        'WingmanGrasp',
-        onMessageReceived: (message) =>
-            _tabById(id)?.graspBridge?.receive(message.message),
-      )
-      ..addJavaScriptChannel(
         'WingmanTitle',
         onMessageReceived: (message) => _onTitleMessage(id, message),
       )
@@ -737,8 +725,53 @@ class BrowserScreenState extends State<BrowserScreen> {
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
       );
+    if (!Platform.isAndroid) {
+      controller
+        ..addJavaScriptChannel(
+          'WingmanSigner',
+          onMessageReceived: (message) => _onSignerMessage(id, message),
+        )
+        ..addJavaScriptChannel(
+          'WingmanTower',
+          onMessageReceived: (message) =>
+              _tabById(id)?.towerBridge?.receive(message.message),
+        )
+        ..addJavaScriptChannel(
+          'WingmanGrasp',
+          onMessageReceived: (message) =>
+              _tabById(id)?.graspBridge?.receive(message.message),
+        );
+    }
     unawaited(configureWebViewFilePicker(controller));
     return controller;
+  }
+
+  Future<bool> _configureNativeChannels(BrowserTab tab) async {
+    if (!Platform.isAndroid) return Platform.isIOS || Platform.isMacOS;
+    final controller = tab.controller.platform;
+    if (controller is! AndroidWebViewController) return false;
+    final id = controller.webViewIdentifier;
+    tab.androidWebViewIdentifier = id;
+    final installed = await GraspAndroidChannel.install(
+      webViewIdentifier: id,
+      onMessage: (channel, message) {
+        if (!mounted || _tabById(tab.id) != tab) return;
+        switch (channel) {
+          case 'WingmanGrasp':
+            unawaited(tab.graspBridge?.receive(message));
+          case 'WingmanTower':
+            unawaited(tab.towerBridge?.receive(message));
+          case 'WingmanSigner':
+            unawaited(
+                _onSignerMessage(tab.id, JavaScriptMessage(message: message)));
+        }
+      },
+    );
+    if (tab.disposed) {
+      await GraspAndroidChannel.remove(id);
+      return false;
+    }
+    return installed;
   }
 
   void _createTab(
@@ -758,6 +791,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       addressFocusNode: FocusNode(),
       title: title ?? 'New tab',
     );
+    tab.nativeChannelsReady = _configureNativeChannels(tab);
     tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
     setState(() {
       _tabs.add(tab);
@@ -788,6 +822,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       title: _homeTitle,
       isHome: true,
     );
+    tab.nativeChannelsReady = _configureNativeChannels(tab);
     tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
     setState(() {
       _tabs.add(tab);
@@ -1228,7 +1263,11 @@ class BrowserScreenState extends State<BrowserScreen> {
         tab.addressFocusNode.unfocus();
       }
     });
-    tab.controller.loadRequest(uri);
+    final epoch = tab.signerDocumentEpoch;
+    unawaited(tab.nativeChannelsReady.then<void>((_) async {
+      if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+      await tab.controller.loadRequest(uri);
+    }));
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
@@ -1241,10 +1280,22 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.title = _homeTitle;
       tab.message = null;
     });
-    tab.controller.loadHtmlString(
-      _homePageHtml(savedBookmarks: _visibleBookmarks),
-      baseUrl: 'https://wingman.local/',
-    );
+    tab.revokeSigningDocument();
+    final epoch = tab.signerDocumentEpoch;
+    unawaited(tab.nativeChannelsReady.then<void>((_) async {
+      if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+      final html = _homePageHtml(savedBookmarks: _visibleBookmarks);
+      final nativeId = tab.androidWebViewIdentifier;
+      if (nativeId != null) {
+        // Keep Android's native current URL and document origin aligned for
+        // local home actions, without weakening frame checks for web pages.
+        await GraspAndroidChannel.loadHomeHtml(
+            webViewIdentifier: nativeId, html: html);
+      } else {
+        await tab.controller
+            .loadHtmlString(html, baseUrl: 'https://wingman.local/');
+      }
+    }));
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
@@ -1822,8 +1873,10 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _injectGraspBridge(BrowserTab tab) async {
-    // Privileged frame metadata is enforced by our macOS WK plugin.
-    if (!Platform.isMacOS ||
+    // WKWebView (iOS/macOS) and Android's WebMessageListener validate
+    // main-frame origin natively. A platform name alone is not authority.
+    if (!await tab.nativeChannelsReady ||
+        tab.disposed ||
         tab.graspBridge != null ||
         widget.onPrepareFipsNavigation == null ||
         !widget.config.hasDeviceSecret) {
@@ -1892,6 +1945,8 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _injectTowerBridge(BrowserTab tab) async {
+    if (Platform.isAndroid && !await tab.nativeChannelsReady) return;
+    if (!mounted || tab.disposed) return;
     if (!(Platform.isMacOS || Platform.isAndroid || Platform.isLinux)) return;
     if (tab.towerBridge != null || widget.onPrepareFipsNavigation == null) {
       return;
@@ -1965,6 +2020,8 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
 
   Future<void> _injectIfTrusted(BrowserTab tab) async {
+    if (Platform.isAndroid && !await tab.nativeChannelsReady) return;
+    if (!mounted || tab.disposed) return;
     final url = tab.currentUrl ?? widget.config.flightDeckUrl;
     final origin = SignerPolicy.normalizeOrigin(url);
     final policy = _signerPolicy;
@@ -3888,6 +3945,9 @@ class BrowserTab {
   String? signerDocumentToken;
   int signerDocumentEpoch = 0;
   bool meshAuthPending = false;
+  Future<bool> nativeChannelsReady = Future.value(false);
+  int? androidWebViewIdentifier;
+  bool disposed = false;
 
   void revokeSigningDocument() {
     graspBridge?.close();
@@ -3919,7 +3979,10 @@ class BrowserTab {
   }
 
   void dispose() {
+    disposed = true;
     revokeSigningDocument();
+    final nativeId = androidWebViewIdentifier;
+    if (nativeId != null) unawaited(GraspAndroidChannel.remove(nativeId));
     towerBridge?.close();
     addressController.dispose();
     addressFocusNode.dispose();

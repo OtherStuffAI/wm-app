@@ -101,6 +101,7 @@ tasks.named("preBuild").configure {
 }
 
 dependencies {
+    implementation("androidx.webkit:webkit:1.15.0")
     implementation("androidx.activity:activity-ktx:1.8.1")
     implementation("androidx.fragment:fragment-ktx:1.7.1")
     testImplementation("junit:junit:4.13.2")

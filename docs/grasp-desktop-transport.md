@@ -1,6 +1,6 @@
-# Desktop GRASP transport v1
+# Native GRASP transport v1
 
-WMapp macOS exposes `window.wingmanGraspTransport` to HTTPS top-level documents after
+WMapp iOS, macOS and supported Android WebViews expose `window.wingmanGraspTransport` to HTTPS top-level documents after
 page load. Register `wingman-grasp-transport-ready` before checking availability and
 retry initial private-service admission on readiness. Keep the full application UI.
 
@@ -82,6 +82,39 @@ requires a challenge received on a currently open approved native socket. Each
 signature separately requires exact-request native approval. Consent does not
 bypass signer denials, grant arbitrary kinds, or export keys.
 
+## Platform implementations
+
+The Dart HTTP/WebSocket transport is common to iOS, Android and macOS. It
+connects to the deterministic mesh address through the platform's active FIPS
+route; the computer hosting the static frontend provides no networking authority
+to a phone. Private service discovery must await native consent before opening
+an announced FIPS relay, including relays from a decrypted private relay list.
+
+- iOS and macOS use the repository-owned WKWebView plugin's shared native
+  `WingmanScriptMessagePolicy`. It checks main-frame status, current document
+  URL and native security origin for GRASP messages before forwarding to Dart.
+- Android installs `WebViewCompat.addWebMessageListener` on the specific WebView,
+  checks native main-frame status and source origin against the current URL,
+  and requires HTTPS for GRASP. Listener registration is broad enough for browser
+  navigation; authorization is enforced by the native origin check and per-document
+  grant. The signer and Tower channels use the same native frame checks. No
+  privileged `addJavascriptInterface` fallback is installed. Unsupported WebViews
+  do not advertise the capability. Installation completes before initial navigation;
+  closing the tab removes the listener and revokes resources. Native-generated
+  home HTML uses a fixed `https://wingman.local/` base and history URL so Android's
+  current URL agrees with its native frame origin; ordinary page policy stays
+  unchanged. This preserves home actions without accepting `about:blank` origins.
+- Linux has a generated shell and FIPS runtime but no registered embedded WebView
+  implementation in this checkout. Web has no native transport; Windows has no
+  runner. These targets do not advertise native GRASP support.
+
+The API is available only after page load in an unlocked WMapp with a configured
+FIPS preparation callback. Presence means a native transport implementation is
+available, not that the service is reachable or the user has approved it. Consumers
+must validate version and required methods, handle delayed readiness, and present
+unavailable/denied/error separately from an empty repository result. A grant covers
+one service; selecting another requires explicit disconnect or a fresh document.
+
 ## Platform and validation boundary
 
 WebKit's [public registration API](https://developer.apple.com/documentation/webkit/wkwebviewconfiguration/seturlschemehandler(_:forurlscheme:))
@@ -89,7 +122,11 @@ cannot register handlers for schemes WebKit owns. Post-load JavaScript replaceme
 also misses earlier requests and workers. This API needs narrow integration in full
 current GitWorkshop; transparent interception of unchanged stock is not claimed.
 
-Run `flutter test`, `flutter analyze`, `flutter build macos --debug` from `app/`.
+Run `flutter test` and `flutter analyze` from `app/`, then the available native
+builds: `flutter build ios --simulator --debug`, `flutter build macos --debug`,
+and `flutter build apk --debug`. Android native origin/lifecycle tests live alongside
+the app's Kotlin tests; WebView instrumentation needs an emulator or authorized
+test device. An iOS simulator artifact does not validate a physical packet tunnel.
 Native probes must use isolated processes and nonpersistent WKWebsiteDataStore,
 without touching the user's live app/profile/keychain. Protocol probes and unit tests
 prove transport, not full UX. Full acceptance needs the integrated full app, a

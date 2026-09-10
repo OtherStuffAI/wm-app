@@ -1,6 +1,8 @@
 package com.wingmanbefree.wingman_app
 
 import android.app.Activity
+import com.wingmanbefree.wingman_app.grasp.GraspChannelCoordinator
+import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
 import androidx.activity.result.contract.ActivityResultContracts
 import com.wingmanbefree.wingman_app.filepicker.FilePickerPlatformContract
 import com.wingmanbefree.wingman_app.filepicker.WebViewFilePickerCoordinator
@@ -11,6 +13,8 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
+    private var graspCoordinator: GraspChannelCoordinator? = null
+    private var graspChannel: MethodChannel? = null
     private var fipsCoordinator: FipsRuntimeCoordinator? = null
     private var fipsChannel: MethodChannel? = null
     private var filePickerCoordinator: WebViewFilePickerCoordinator? = null
@@ -36,6 +40,12 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val nativeGraspChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, GraspChannelCoordinator.CHANNEL)
+        graspChannel = nativeGraspChannel
+        graspCoordinator = GraspChannelCoordinator(nativeGraspChannel) { id ->
+            (flutterEngine.plugins.get(WebViewFlutterPlugin::class.java) as? WebViewFlutterPlugin)
+                ?.instanceManager?.getInstance(id)
+        }.also { nativeGraspChannel.setMethodCallHandler(it) }
         val coordinator = FipsRuntimeCoordinator(
             this,
             launchConsent = { vpnConsentLauncher.launch(it) },
@@ -59,6 +69,10 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        graspChannel?.setMethodCallHandler(null)
+        graspChannel = null
+        graspCoordinator?.destroy()
+        graspCoordinator = null
         filePickerChannel?.setMethodCallHandler(null)
         filePickerChannel = null
         filePickerCoordinator?.destroy()
@@ -75,6 +89,8 @@ class MainActivity : FlutterFragmentActivity() {
         filePickerCoordinator = null
         fipsCoordinator?.destroy()
         fipsCoordinator = null
+        graspCoordinator?.destroy()
+        graspCoordinator = null
         super.onDestroy()
     }
 }

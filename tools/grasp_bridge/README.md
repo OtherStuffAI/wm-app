@@ -40,3 +40,35 @@ frontend origin and exact FIPS endpoint, set `fixture:false`, and supply
 then verifies the native bridge still obtains GRASP08 NIP11 and a NIP42 challenge.
 It verifies anonymous root/refs remain denied. It performs no signing or publication.
 A live pass explicitly reports `memberUX:false`.
+
+The same source also builds a standalone iOS simulator app. Its native handler
+uses the production shared Apple frame policy; its Dart transport runs in the host
+fixture process. This checks real iOS WebKit channel enforcement and JavaScript
+HTTP/WS behavior, but does not prove in-app Flutter integration, iOS FIPS daemon
+routing, consent UI, signing, or a member's repository browsing flow.
+
+On an Apple Silicon Mac with the iOS simulator SDK/runtime installed, build with:
+
+```sh
+python3 tools/grasp_bridge/build_ios_probe.py "$evidence_dir"
+```
+
+Create a fresh simulator using an available device type/runtime from `simctl` and
+keep its identifier in a private shell variable. Do not use a member's existing
+simulator or a physical device. Boot that simulator, wait for `bootstatus -b`, then:
+
+```sh
+xcrun simctl install "$probe_simulator" "$evidence_dir/GraspProbe.app"
+xcrun simctl launch --console "$probe_simulator" \
+  org.wingman.validation.GraspProbe "$probe_rpc" https://example.com \
+  "$evidence_dir/tests.js"
+```
+
+`tests.js` is the same configured probe used above; provide its absolute path.
+Both Apple harnesses first reject messages from real native main frames loaded
+with HTTP and opaque/data origins, then reject subframe and borrowed-subframe
+channel messages. Success requires all negative checks and transport checks.
+Shutdown and delete only the fresh simulator created for this run when finished.
+Keep simulator identifiers and raw simulator output exclusively in ignored local
+evidence. The simulator app uses ephemeral WebKit storage, contains no signer,
+and requests only local networking for its fixture RPC connection.
