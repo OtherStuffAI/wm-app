@@ -1,0 +1,13 @@
+# Push main and install address-bar update on attached iPhone
+
+Pete explicitly asks: “can you nsure this is pushed to main and install this on the attached iphone”. This authorizes normal Git main push and signed app build/install/launch on the attached iPhone. No TestFlight/App Store upload, uninstall/data wipe, Autopilot restart or signing identity changes.
+
+Repo /Users/mini/code/wm/wmapp. Task 74221975-27da-4b25-ba45-dd56aaf5fcf1 in workspace 2e5caefd-dd65-45d2-b747-ee874e8e5fc9, scope 76d518f7-c477-4374-bf74-5d36fda570ed, channel d8d00881-ac84-41eb-ab0d-2c2afb77ddf3, thread 8687ace2-9047-4b98-933e-940ad22c1bbd. Source @[Install request](mention:message:1f4b63b0-2fed-44a9-b7fb-3e6073fbe32b). Read task/comments; manager handles thread replies and final review-state.
+
+Previous implementation 7d673f8c062a010c23c2d69687a6f2cff480057e is on main. Tab changes keep address hidden; active-tab click reveals it. 38 browser/focus tests and changed-file analyzer passed. See docs/handoffs/2026-09-10-address-bar-explicit-reveal.md.
+
+Inspect current main and repo instructions, preserve concurrent work. Default main, commit all nonignored tested state including this brief, no resets/reverts/force pushes. Verify configured canonical remote/upstream and push main (keep GitHub and Forgejo remotes intact); report exact remote hashes and inclusion of 7d673f8. If both are normal maintained mirrors, update both. Do not change deployed branch.
+
+Use existing iOS device build/signing/install workflow, inspect current device list and signing rather than assuming historical failures. Repo has build_ios_release.sh, tools/ios, docs/handoffs iOS validation records. Peter iPhone15 Pro historical ID 8A1C111C-F340-5C1A-B609-B022E9B7D832 is a clue only; verify attached device now. Build signed release/profile suitable for standalone phone launch (avoid debug-only launch dependency), install in place preserving data, launch and check process/app presence. Record commands and exact logs, bundle/version/build, built commit, device name, signing/install/launch evidence and any interaction verification limits. Do not claim UI behavior physically tested unless observed. If phone is locked/trust/signing needs user input, finish independent push/build work then report precise blocker; no key extraction or bypass.
+
+Set session goal to successful push plus attached iPhone installation verification, next-action reflect while working and stop on terminal handoff. Report meaningful milestones in session commentary for manager supervision. Post evidence to task via broker MCP if accessible; no chat reply. Return final evidence through supervised callback.
