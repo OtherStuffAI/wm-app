@@ -70,8 +70,9 @@ provisioning for both existing IDs on team `N5DRUM6S94`. Both signed targets and
 profiles permit `packet-tunnel-provider` and include the known iPhone. The signed
 Release was installed in place and launched without a debugger. This supersedes
 the earlier No Accounts/profile blocker. Physical consent, tunnel and WApp tests
-remain pending. See [signed retry evidence](../handoffs/2026-09-09-signed-iphone-install-results.md)
-and [Flight Deck bundle provenance](../handoffs/2026-09-09-refresh-flightdeck-install-results.md).
+remain pending. Machine-specific install evidence and Flight Deck bundle
+provenance belong in local `tmp/docs/handoffs/` records, which are not distributed
+with this repository.
 
 ## Routing, identity and lifecycle
 
@@ -211,9 +212,9 @@ simulator test encountered this collision; its screenshot is not a visual pass.
 
 ### Event-driven refinement evidence
 
-See [reference comparison and validation](../handoffs/2026-09-09-ios-fips-refinement-validation.md)
-for the pinned Nostr VPN comparison, host idle/active measurements, final build
-hashes and signing status. The host smoke uses an ephemeral node key, exercises
+Keep reference comparisons, host idle/active measurements, final build hashes
+and signing status in local `tmp/docs/handoffs/` records. The host smoke uses an
+ephemeral node key, exercises
 local REFUSED packet DNS and terminal readiness, and does not open/alter a VPN
 or claim iPhone battery/underlay evidence. The separate ignored Rust network test
 checks authenticated bootstrap and `.fips` AAAA resolution. Do not run source

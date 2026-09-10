@@ -99,7 +99,7 @@ Request:
   "workspace_id": "workspace-id",
   "workspace_service_npub": "tower-service-npub",
   "device_npub": "device-npub",
-  "label": "Pete's MacBook",
+  "label": "Example laptop",
   "platform": "macos",
   "app_version": "0.1.0",
   "capabilities": {

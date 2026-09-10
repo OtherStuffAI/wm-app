@@ -22,6 +22,12 @@ node_modules/
 key.properties
 cache/
 tmp/
+# Operational handoffs, worker briefs, and device validation stay local.
+# Use tmp/docs/handoffs/; protect legacy locations against accidental re-adds.
+docs/handoffs/
+docs/**/*handoff*.md
+docs/**/*worker-prompt*.md
+docs/**/*worker-brief*.md
 crates/wmapp-fips-ios/vendor/
 app/ios/FipsCore/
 app/android/.kotlin/

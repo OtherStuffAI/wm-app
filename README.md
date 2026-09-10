@@ -230,6 +230,12 @@ Desktop FIPS status:
   authenticated no-DNS bootstrap. This path supports Ubuntu and
   Arch/systemd-based Omarchy without a separate FIPS download.
 
+Operational handoffs, worker briefs, device installation results, screenshots,
+and run-specific validation evidence stay locally under `tmp/docs/handoffs/`.
+They are ignored by Git. Keep reusable product documentation and test procedures
+under `docs/`; use generic device labels and placeholders in examples. Do not
+force-add handoffs or link public documentation to private evidence files.
+
 See:
 
 - [Architecture](docs/architecture.md)
