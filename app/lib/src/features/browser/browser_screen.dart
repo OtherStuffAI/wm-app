@@ -23,6 +23,7 @@ import 'nostr_profile_publisher.dart';
 import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
 import 'signer_policy.dart';
+import 'mesh_auth_request.dart';
 import 'signer_store.dart';
 import 'webview_file_picker.dart';
 import 'tower_fips_browser_bridge.dart';
@@ -133,6 +134,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
       unawaited(_towerPairings.clear());
       for (final tab in _tabs) {
+        tab.revokeSigningDocument();
         tab.towerBridge?.close();
         tab.towerBridge = null;
       }
@@ -721,7 +723,10 @@ class BrowserScreenState extends State<BrowserScreen> {
           onPageStarted: (_) {
             final tab = _tabById(id);
             tab?.towerBridge?.close();
-            if (tab != null) tab.towerBridge = null;
+            if (tab != null) {
+              tab.revokeSigningDocument();
+              tab.towerBridge = null;
+            }
           },
           onPageFinished: (url) => _onPageFinished(id, url),
         ),
@@ -984,11 +989,18 @@ class BrowserScreenState extends State<BrowserScreen> {
     _clearingWebState = true;
     unawaited(_towerPairings.clear());
     final tabs = List<BrowserTab>.from(_tabs);
+    // Revoke synchronously, before clearing platform storage can yield.
+    for (final tab in tabs) {
+      tab.revokeSigningDocument();
+      tab.towerBridge?.close();
+      tab.towerBridge = null;
+    }
     try {
       try {
         await _cookieManager.clearCookies();
       } catch (_) {}
       for (final tab in tabs) {
+        tab.revokeSigningDocument();
         tab.towerBridge?.close();
         tab.towerBridge = null;
         try {
@@ -1197,6 +1209,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       });
       return;
     }
+    tab.revokeSigningDocument();
     setState(() {
       tab.isHome = false;
       tab.currentUrl = uri.toString();
@@ -1355,6 +1368,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     int tabId,
     NavigationRequest request,
   ) async {
+    if (request.isMainFrame) _tabById(tabId)?.revokeSigningDocument();
     final prepare = widget.onPrepareFipsNavigation;
     if (prepare == null || !_isFipsAppUrl(request.url)) {
       return NavigationDecision.navigate;
@@ -1392,6 +1406,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     if (tab.currentUrl == url && tab.addressController.text == url) return;
+    tab.signerDocumentEpoch++;
     setState(() {
       tab.isHome = false;
       tab.currentUrl = url;
@@ -1409,11 +1424,14 @@ class BrowserScreenState extends State<BrowserScreen> {
       await _injectTabCapture(tab);
       return;
     }
+    final epoch = tab.signerDocumentEpoch;
+    bool currentDocument() =>
+        mounted && _tabById(tabId) == tab && tab.signerDocumentEpoch == epoch;
     String? title;
     try {
       title = await tab.controller.getTitle();
     } catch (_) {}
-    if (!mounted || _tabById(tabId) != tab) return;
+    if (!currentDocument()) return;
     setState(() {
       tab.isHome = false;
       tab.currentUrl = url;
@@ -1421,10 +1439,15 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.title = _resolvedPageTitle(title, url);
     });
     await _refreshNavigationState(tab);
+    if (!currentDocument()) return;
     await _applyFlightDeckDisplayDefaults(tab, url);
+    if (!currentDocument()) return;
     await _injectTabCapture(tab);
+    if (!currentDocument()) return;
     await _injectTitleObserver(tab);
+    if (!currentDocument()) return;
     await _injectTowerBridge(tab);
+    if (!currentDocument()) return;
     await _injectIfTrusted(tab);
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
@@ -1873,9 +1896,11 @@ class BrowserScreenState extends State<BrowserScreen> {
       });
       return;
     }
+    final documentToken =
+        tab.signerDocumentToken ??= TowerFipsProxy.capability();
     await tab.controller.runJavaScript(
       _bridgeScript(widget.config.devicePublicKeyHex,
-          tab.towerBridge?.signingDocumentToken),
+          tab.towerBridge?.signingDocumentToken, documentToken, origin),
     );
     setState(() {
       tab.message = 'window.nostr injected for $origin';
@@ -1979,7 +2004,48 @@ class BrowserScreenState extends State<BrowserScreen> {
         ? payload['params'] as Map<String, dynamic>
         : <String, dynamic>{};
     final meshTarget = _meshSigningTarget(method, signingParams);
+    final documentToken = tab.signerDocumentToken;
+    final documentEpoch = tab.signerDocumentEpoch;
+    final nativeAuth = MeshAuthRequest.parse(method, signingParams);
+    final pageOriginForAuth = SignerPolicy.normalizeOrigin(signingPage ?? '');
+    // Tower pages must continue through verified Tower pairing, including after
+    // disconnect. This is a separate, request-only capability for direct WApps.
+    final directAuth = (meshTarget != null ||
+            method == 'signNip98' ||
+            (method == 'signEvent' &&
+                {'27235', '22242'}
+                    .contains(signingParams['kind']?.toString()))) &&
+        _isFipsAppUrl(signingPage ?? '') &&
+        pageOriginForAuth !=
+            SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
+        pageOriginForAuth !=
+            SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    bool nativeContextValid() =>
+        mounted &&
+        _tabById(tabId) == tab &&
+        _activeTabId == tabId &&
+        widget.config.hasDeviceSecret &&
+        widget.config.deviceNpub == signingIdentity &&
+        tab.currentUrl == signingPage &&
+        documentToken != null &&
+        payload['signerDocumentToken'] == documentToken &&
+        tab.signerDocumentToken == documentToken &&
+        tab.signerDocumentEpoch == documentEpoch;
+    Future<void> auditNativeDenial(String outcome) =>
+        widget.signerStore.appendAudit(
+          SignerAuditEntry.create(
+            pageOrigin: pageOriginForAuth,
+            targetOrigin: SignerPolicy.normalizeOrigin(nativeAuth!.target),
+            targetUrl: nativeAuth.target,
+            method: nativeAuth.operation,
+            deviceNpub: signingIdentity,
+            allowed: false,
+            outcome: outcome,
+          ),
+        );
+    var nativeApproved = false;
     bool signingContextValid() {
+      if (directAuth) return nativeApproved && nativeContextValid();
       if (meshTarget == null) return true;
       if (!mounted ||
           _tabById(tabId) != tab ||
@@ -1994,6 +2060,9 @@ class BrowserScreenState extends State<BrowserScreen> {
           pageOrigin == SignerPolicy.normalizeOrigin(meshTarget)) {
         return true;
       }
+      // Tower's transport authorizes HTTP requests, not relay authentication.
+      final scheme = Uri.tryParse(meshTarget)?.scheme;
+      if (scheme != 'http' && scheme != 'https') return false;
       return signingDocument != null &&
           identical(tab.towerBridge, signingDocument) &&
           signingDocument.permitsMeshSigning(
@@ -2001,6 +2070,52 @@ class BrowserScreenState extends State<BrowserScreen> {
                   ? payload['towerDocumentToken'] as String
                   : null,
               meshTarget);
+    }
+
+    if (directAuth) {
+      if (nativeAuth == null || !nativeContextValid() || tab.meshAuthPending) {
+        await _resolveSignerRequest(tab, requestId, {
+          'error': 'An active exact Tower pairing is required for mesh signing.'
+        });
+        return;
+      }
+      // Existing explicit denials win. Broad remembered allows never approve
+      // this new target: only the native per-request confirmation below does.
+      final rule = await widget.signerStore.findPolicyRule(
+        pageOrigin: pageOriginForAuth,
+        operation: method == 'signEvent' ? 'signEvent' : 'nip98',
+        target: method == 'signEvent'
+            ? _signEventPolicyTarget(signingParams)
+            : SignerPolicy.normalizeOrigin(nativeAuth.target),
+        deviceNpub: signingIdentity,
+      );
+      if (!nativeContextValid()) return;
+      if (rule != null && !rule.allows) {
+        await auditNativeDenial('policy_denied');
+        if (!nativeContextValid()) return;
+        await _resolveSignerRequest(
+            tab, requestId, {'error': 'denied by signer policy'});
+        return;
+      }
+      if (tab.meshAuthPending) {
+        await _resolveSignerRequest(tab, requestId,
+            {'error': 'Another authentication approval is pending.'});
+        return;
+      }
+      tab.meshAuthPending = true;
+      try {
+        nativeApproved = await _confirmMeshAuthentication(
+            pageOriginForAuth, nativeAuth, signingIdentity);
+      } finally {
+        tab.meshAuthPending = false;
+      }
+      if (!nativeContextValid()) return;
+      if (!nativeApproved) {
+        await auditNativeDenial('user_denied');
+        if (!nativeContextValid()) return;
+        await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
+        return;
+      }
     }
 
     if (!signingContextValid()) {
@@ -2035,7 +2150,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       if (policyRule != null && !policyRule.allows) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
-          targetUrl: pageUrl,
+          targetUrl: nativeApproved ? nativeAuth!.target : pageUrl,
           event: event,
           allowed: false,
           outcome: 'policy_denied',
@@ -2050,7 +2165,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         return;
       }
       final remembered = policyRule != null && policyRule.allows;
-      final approval = remembered
+      final approval = (nativeApproved || remembered)
           ? const SignerPromptResult(approved: true)
           : await _confirmSignEvent(event, pageOrigin);
       if (!approval.approved) {
@@ -2065,7 +2180,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         }
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
-          targetUrl: pageUrl,
+          targetUrl: nativeApproved ? nativeAuth!.target : pageUrl,
           event: event,
           allowed: false,
           outcome: approval.denyAlways ? 'policy_saved_deny' : 'user_denied',
@@ -2098,7 +2213,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       if (!result.ok) {
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
-          targetUrl: pageUrl,
+          targetUrl: nativeApproved ? nativeAuth!.target : pageUrl,
           event: event,
           allowed: false,
           outcome: 'signer_error',
@@ -2109,11 +2224,16 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
       await _recordNip07Audit(
         pageOrigin: pageOrigin,
-        targetUrl: pageUrl,
+        targetUrl: nativeApproved ? nativeAuth!.target : pageUrl,
         event: event,
         allowed: true,
-        outcome: remembered ? 'signed_with_policy' : 'signed',
-        rememberedApproval: remembered || approval.remember,
+        outcome: nativeApproved
+            ? 'signed_exact_request'
+            : remembered
+                ? 'signed_with_policy'
+                : 'signed',
+        rememberedApproval:
+            !nativeApproved && (remembered || approval.remember),
       );
       if (!signingContextValid()) return;
       await _resolveSignerRequest(tab, requestId, {
@@ -2143,6 +2263,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       final requestBody = request['body']?.toString();
       final scopedPolicy = SignerPolicy(trustedOrigins: [
         ..._signerPolicy.trustedOrigins,
+        if (nativeApproved && nativeContextValid()) pageOriginForAuth,
         if (meshTarget != null && signingContextValid())
           SignerPolicy.normalizeOrigin(meshTarget),
       ]);
@@ -2199,7 +2320,7 @@ class BrowserScreenState extends State<BrowserScreen> {
             deviceNpub: widget.config.deviceNpub,
           );
       final remembered = rememberedPolicy || rememberedApproval;
-      final approval = remembered
+      final approval = (nativeApproved || remembered)
           ? const SignerPromptResult(approved: true)
           : await _confirmNip98(request, decision);
       if (!approval.approved) {
@@ -2275,8 +2396,13 @@ class BrowserScreenState extends State<BrowserScreen> {
         targetUrl: requestUrl,
         method: decision.method,
         allowed: true,
-        outcome: remembered ? 'signed_with_remembered_approval' : 'signed',
-        rememberedApproval: remembered || approval.remember,
+        outcome: nativeApproved
+            ? 'signed_exact_request'
+            : remembered
+                ? 'signed_with_remembered_approval'
+                : 'signed',
+        rememberedApproval:
+            !nativeApproved && (remembered || approval.remember),
       );
       if (!signingContextValid()) return;
       await _resolveSignerRequest(tab, requestId, {
@@ -2290,10 +2416,12 @@ class BrowserScreenState extends State<BrowserScreen> {
     final urls = <String>[];
     if (method == 'signNip98') urls.add(params['url']?.toString() ?? '');
     if (method == 'signEvent' &&
-        params['kind'] == 27235 &&
+        {'27235', '22242'}.contains(params['kind']?.toString()) &&
         params['tags'] is List) {
       for (final tag in params['tags'] as List) {
-        if (tag is List && tag.length >= 2 && tag[0] == 'u') {
+        if (tag is List &&
+            tag.length >= 2 &&
+            (tag[0] == 'u' || tag[0] == 'relay')) {
           urls.add(tag[1].toString());
         }
       }
@@ -2305,6 +2433,45 @@ class BrowserScreenState extends State<BrowserScreen> {
       }
     }
     return null;
+  }
+
+  Future<bool> _confirmMeshAuthentication(
+      String pageOrigin, MeshAuthRequest request, String identity) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Approve private app authentication?'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Requesting website'),
+                  SelectableText(pageOrigin),
+                  const SizedBox(height: 12),
+                  Text('Exact target · ${request.operation}'),
+                  SelectableText(request.target),
+                  const SizedBox(height: 12),
+                  Text('Signing identity: $identity'),
+                  const SizedBox(height: 12),
+                  const Text(
+                      'Sign this authentication request only. The website '
+                      'supplied this address; appearing in chat or an app list does '
+                      'not verify it. No other address or port is approved.'),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Deny')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Approve signature')),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Map<String, dynamic>? _decodeMessage(String message) {
@@ -2805,12 +2972,15 @@ class BrowserScreenState extends State<BrowserScreen> {
 ''';
   }
 
-  String _bridgeScript(String devicePublicKeyHex, String? towerDocumentToken) {
+  String _bridgeScript(String devicePublicKeyHex, String? towerDocumentToken,
+      String signerDocumentToken, String pageOrigin) {
     final escapedPublicKey =
         devicePublicKeyHex.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
     return '''
 (() => {
-  if (window.nostr && window.nostr.__wingman) return;
+  if (window !== window.top || location.origin !== ${jsonEncode(pageOrigin)}) return;
+  const signerDocumentToken = ${jsonEncode(signerDocumentToken)};
+  if (window.nostr && window.nostr.__wingmanDocument === signerDocumentToken) return;
   const pending = new Map();
   let seq = 0;
   window.__wingmanResolve = (id, payload) => {
@@ -2822,7 +2992,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   };
   function callNative(method, params) {
     const id = String(++seq);
-    const message = JSON.stringify({ id, method, params: params || {}, towerDocumentToken: ${jsonEncode(towerDocumentToken)} });
+    const message = JSON.stringify({ id, method, params: params || {}, signerDocumentToken, towerDocumentToken: ${jsonEncode(towerDocumentToken)} });
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
     });
@@ -2831,6 +3001,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   }
   window.nostr = {
     __wingman: true,
+    __wingmanDocument: signerDocumentToken,
     getPublicKey: () => callNative('getPublicKey').then((value) => value || "$escapedPublicKey"),
     signNip98: (request) => callNative('signNip98', request),
     signEvent: (event) => callNative('signEvent', event),
@@ -3621,6 +3792,15 @@ class BrowserTab {
   String? message;
   bool isHome;
   TowerFipsBrowserBridge? towerBridge;
+  String? signerDocumentToken;
+  int signerDocumentEpoch = 0;
+  bool meshAuthPending = false;
+
+  void revokeSigningDocument() {
+    signerDocumentToken = null;
+    signerDocumentEpoch++;
+  }
+
   bool canGoBack = false;
   bool canGoForward = false;
 
@@ -3644,6 +3824,7 @@ class BrowserTab {
   }
 
   void dispose() {
+    revokeSigningDocument();
     towerBridge?.close();
     addressController.dispose();
     addressFocusNode.dispose();

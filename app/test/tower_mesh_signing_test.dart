@@ -120,7 +120,10 @@ void main() {
           .firstWhere((s) => s.contains('const token ='));
       final token = jsonDecode(
           RegExp(r'const token = (.*);').firstMatch(script)!.group(1)!);
-      void sign(String id, {String? proof, String url = '$endpoint/api/test'}) {
+      void sign(String id,
+          {String? proof,
+          String url = '$endpoint/api/test',
+          bool relay = false}) {
         submitFakeJavaScriptMessage(
             controllerIndex: 0,
             channel: 'WingmanSigner',
@@ -129,10 +132,13 @@ void main() {
               'method': 'signEvent',
               'towerDocumentToken': proof,
               'params': {
-                'kind': 27235,
+                'kind': relay ? 22242 : 27235,
                 'tags': [
-                  ['u', url],
-                  ['method', 'GET']
+                  [relay ? 'relay' : 'u', url],
+                  [
+                    relay ? 'challenge' : 'method',
+                    relay ? 'test-challenge' : 'GET'
+                  ]
                 ],
                 'content': '',
                 'created_at': 1
@@ -169,6 +175,12 @@ void main() {
       sign('different',
           proof: token,
           url: "${endpoint.replaceFirst(':8787', ':8788')}/api/test");
+      await tester.pumpAndSettle();
+      expect(signer.calls, 0);
+      sign('relay',
+          proof: token,
+          url: endpoint.replaceFirst('http:', 'ws:'),
+          relay: true);
       await tester.pumpAndSettle();
       expect(signer.calls, 0);
       sign('valid', proof: token);
