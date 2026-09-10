@@ -1,0 +1,96 @@
+# Desktop GRASP transport v1
+
+WMapp macOS exposes `window.wingmanGraspTransport` to HTTPS top-level documents after
+page load. Register `wingman-grasp-transport-ready` before checking availability and
+retry initial private-service admission on readiness. Keep the full application UI.
+
+```js
+const transport = window.wingmanGraspTransport;
+const endpoint = 'http://<node-npub>.fips:<port>';
+await transport.connect({endpoint}); // returns {version:1, endpoint}
+const info = await transport.fetch(endpoint + '/', {
+  headers: {Accept: 'application/nostr+json'}, signal
+});
+const relay = new transport.WebSocket(endpoint.replace('http:', 'ws:') + '/');
+relay.onmessage = ({data}) => handleRelayFrame(JSON.parse(data));
+```
+
+Connect requires native consent for one exact FIPS identity and port. No slash suffix,
+path, query, credentials or fragment is accepted. Native consent displays the page,
+node identity, port and user identity. Announcements propose destinations; they do
+not grant authority. The node identity authenticates the mesh peer, not the GRASP
+relay pubkey. The app still performs NIP11/GRASP08 classification and membership
+checks. This API neither pairs with Tower nor calls Tower health endpoints.
+
+Route only selected-service URLs through the API. Do not change global fetch or
+WebSocket, remove CSP, or use public CORS proxies for private traffic. Missing native
+transport must be an actionable unavailable state. Native transport has no listener
+or DNS fallback: it pins the approved FIPS address and port directly.
+
+`fetch(input, init)` supports Request inputs, GET/HEAD/POST, binary bodies, AbortSignal
+and streamed Responses. Status, reason, WWW-Authenticate, content type, Git-Protocol
+and safe headers are preserved. Response URL is the original FIPS URL. All redirects
+fail without being followed. Cookies, proxy credentials, forwarding headers and
+caller Host/Origin are not sent. Upload and download messages use 64 KiB chunks.
+Cancellation closes requests before headers and during pending reads.
+
+`new transport.WebSocket(url)` supports open/message/error/close events, property
+handlers, readyState constants, send, close, binaryType and bufferedAmount. Text and
+binary data are preserved. Only the approved node/port is accepted. Subprotocols and
+extensions are not negotiated; redirects and malformed upgrades fail. Payload limit
+is 1 MiB, outbound JS queue limit 4 MiB, total native HTTP/opening/socket limit 32.
+The frame limit is applied after Dart's parser assembles a frame, not before allocation.
+Native sends use a bounded 4 MiB queue and serialized socket backpressure; stalled
+sends time out. Revocation/close destroys the socket immediately; client close events
+report wasClean=false rather than claiming a completed peer close handshake.
+
+`disconnect()` aborts resources and permits explicit reconnect. Denied endpoints are
+not prompted again in that document. Navigation/reload, identity change, lock, tab
+close and browser-data clearing revoke grants. Grants are never persisted. Native
+frame metadata rejects messages originating in subframes, including same-origin
+and opaque sandbox frames. Same-origin code able to execute in the top document
+shares that page's authority, as it does elsewhere in the browser.
+Async approval, signing and open completion recheck document and identity state.
+
+## Worker HTTP contract
+
+`attachWorker(worker)` transfers `{type:'wingman-grasp-transport-port',port}`. Workers
+have no ambient signer or transport. `detachWorker(worker)` aborts before termination.
+
+| Port request | Response |
+| --- | --- |
+| `{type:'request',id,url,method,headers,bodyBase64:null|string}` | `{type:'headers',id,status,headers:[pairs]}` |
+| `{type:'pull',id}` | `{type:'chunk',id,bodyBase64}` or `{type:'end',id}` |
+| `{type:'cancel',id}` | Cancels native request |
+| Failure/revocation | `{type:'error',id}` |
+
+Worker uploads limit 16 MiB; 64 worker requests maximum, also subject to native limit.
+Response chunks require explicit pulls. Keep relay/signing in the main document.
+Never forward ports to untrusted workers or frames. Disconnect/detach/revocation
+cancel pending worker requests.
+
+## Authentication
+
+Use `window.nostr.signEvent`; transport never signs. GRASP08 private Git expects
+kind27235, empty content, tags `[['u',repositoryRoot],['method','GET']]`, timestamp
+within 60 seconds. Root is `http://<node-npub>.fips:<port>/<publisher>/<repo>.git`
+without trailing slash/query. The app reuses this root GET authorization for info/refs
+GET and upload-pack POST. Never rewrite it into Tower per-request authentication.
+
+NIP42 expects kind22242, empty content, exact relay URL and challenge tags. WMapp
+requires a challenge received on a currently open approved native socket. Each
+signature separately requires exact-request native approval. Consent does not
+bypass signer denials, grant arbitrary kinds, or export keys.
+
+## Platform and validation boundary
+
+WebKit's [public registration API](https://developer.apple.com/documentation/webkit/wkwebviewconfiguration/seturlschemehandler(_:forurlscheme:))
+cannot register handlers for schemes WebKit owns. Post-load JavaScript replacement
+also misses earlier requests and workers. This API needs narrow integration in full
+current GitWorkshop; transparent interception of unchanged stock is not claimed.
+
+Run `flutter test`, `flutter analyze`, `flutter build macos --debug` from `app/`.
+Native probes must use isolated processes and nonpersistent WKWebsiteDataStore,
+without touching the user's live app/profile/keychain. Protocol probes and unit tests
+prove transport, not full UX. Full acceptance needs the integrated full app, a
+consenting member signer, private refs/upload-pack, files and history.

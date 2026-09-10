@@ -27,6 +27,7 @@ import 'mesh_auth_request.dart';
 import 'signer_store.dart';
 import 'webview_file_picker.dart';
 import 'tower_fips_browser_bridge.dart';
+import 'grasp_fips_browser_bridge.dart';
 import 'tower_pairing_store.dart';
 
 class BrowserScreen extends StatefulWidget {
@@ -711,6 +712,11 @@ class BrowserScreenState extends State<BrowserScreen> {
         'WingmanTower',
         onMessageReceived: (message) =>
             _tabById(id)?.towerBridge?.receive(message.message),
+      )
+      ..addJavaScriptChannel(
+        'WingmanGrasp',
+        onMessageReceived: (message) =>
+            _tabById(id)?.graspBridge?.receive(message.message),
       )
       ..addJavaScriptChannel(
         'WingmanTitle',
@@ -1449,6 +1455,8 @@ class BrowserScreenState extends State<BrowserScreen> {
     await _injectTowerBridge(tab);
     if (!currentDocument()) return;
     await _injectIfTrusted(tab);
+    if (!currentDocument()) return;
+    await _injectGraspBridge(tab);
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
   }
@@ -1813,6 +1821,76 @@ class BrowserScreenState extends State<BrowserScreen> {
         .replaceAll('"', '&quot;');
   }
 
+  Future<void> _injectGraspBridge(BrowserTab tab) async {
+    // Privileged frame metadata is enforced by our macOS WK plugin.
+    if (!Platform.isMacOS ||
+        tab.graspBridge != null ||
+        widget.onPrepareFipsNavigation == null ||
+        !widget.config.hasDeviceSecret) {
+      return;
+    }
+    final epoch = tab.signerDocumentEpoch;
+    final identity = widget.config.deviceNpub;
+    final url = await tab.controller.currentUrl();
+    if (!mounted ||
+        _tabById(tab.id) != tab ||
+        tab.signerDocumentEpoch != epoch ||
+        url == null) {
+      return;
+    }
+    final origin = SignerPolicy.normalizeOrigin(url);
+    if (Uri.tryParse(origin)?.scheme != 'https') return;
+    late final GraspFipsBrowserBridge bridge;
+    bool current() =>
+        mounted &&
+        _tabById(tab.id) == tab &&
+        tab.signerDocumentEpoch == epoch &&
+        identical(tab.graspBridge, bridge) &&
+        widget.config.hasDeviceSecret &&
+        widget.config.deviceNpub == identity;
+    bridge = GraspFipsBrowserBridge(
+      pageOrigin: origin,
+      reply: tab.controller.runJavaScript,
+      prepare: (endpoint) async => current()
+          ? widget.onPrepareFipsNavigation!(endpoint)
+          : 'Document revoked.',
+      approve: (endpoint) async {
+        if (!current() || _activeTabId != tab.id) return false;
+        final target = Uri.parse(endpoint);
+        final approved = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Connect to private Git service?'),
+                content: SelectableText(
+                    'Allow this page to read and send HTTP and relay data '
+                    'to the announced service for this tab? The announcement is supplied by '
+                    'the site. Approve only a service you recognise. Signing requests are '
+                    'approved separately. Reload, close the tab, lock, or disconnect to revoke.\n\n'
+                    'Page: $origin\nFIPS node: ${target.host.replaceFirst('.fips', '')}\n'
+                    'Port: ${target.port}\nIdentity: $identity'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Deny')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Connect')),
+                ],
+              ),
+            ) ??
+            false;
+        return approved && current() && _activeTabId == tab.id;
+      },
+    );
+    tab.graspBridge = bridge;
+    try {
+      await tab.controller.runJavaScript(bridge.script);
+    } catch (_) {
+      bridge.close();
+      if (identical(tab.graspBridge, bridge)) tab.graspBridge = null;
+    }
+  }
+
   Future<void> _injectTowerBridge(BrowserTab tab) async {
     if (!(Platform.isMacOS || Platform.isAndroid || Platform.isLinux)) return;
     if (tab.towerBridge != null || widget.onPrepareFipsNavigation == null) {
@@ -1999,6 +2077,8 @@ class BrowserScreenState extends State<BrowserScreen> {
 
     final signingIdentity = widget.config.deviceNpub;
     final signingDocument = tab.towerBridge;
+    final graspDocument = tab.graspBridge;
+    final graspGrantEpoch = graspDocument?.grantEpoch;
     final signingPage = tab.currentUrl;
     final signingParams = payload['params'] is Map<String, dynamic>
         ? payload['params'] as Map<String, dynamic>
@@ -2010,16 +2090,24 @@ class BrowserScreenState extends State<BrowserScreen> {
     final pageOriginForAuth = SignerPolicy.normalizeOrigin(signingPage ?? '');
     // Tower pages must continue through verified Tower pairing, including after
     // disconnect. This is a separate, request-only capability for direct WApps.
-    final directAuth = (meshTarget != null ||
-            method == 'signNip98' ||
-            (method == 'signEvent' &&
-                {'27235', '22242'}
-                    .contains(signingParams['kind']?.toString()))) &&
-        _isFipsAppUrl(signingPage ?? '') &&
+    final graspAuth = graspDocument?.endpoint != null &&
+        meshTarget != null &&
+        // Tower pairing keeps its own existing signing authority.
         pageOriginForAuth !=
             SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
         pageOriginForAuth !=
             SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    final directAuth = graspAuth ||
+        ((meshTarget != null ||
+                method == 'signNip98' ||
+                (method == 'signEvent' &&
+                    {'27235', '22242'}
+                        .contains(signingParams['kind']?.toString()))) &&
+            _isFipsAppUrl(signingPage ?? '') &&
+            pageOriginForAuth !=
+                SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
+            pageOriginForAuth !=
+                SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
     bool nativeContextValid() =>
         mounted &&
         _tabById(tabId) == tab &&
@@ -2030,7 +2118,11 @@ class BrowserScreenState extends State<BrowserScreen> {
         documentToken != null &&
         payload['signerDocumentToken'] == documentToken &&
         tab.signerDocumentToken == documentToken &&
-        tab.signerDocumentEpoch == documentEpoch;
+        tab.signerDocumentEpoch == documentEpoch &&
+        (!graspAuth ||
+            (identical(tab.graspBridge, graspDocument) &&
+                graspDocument!.grantEpoch == graspGrantEpoch &&
+                graspDocument.permitsAuthentication(method, signingParams)));
     Future<void> auditNativeDenial(String outcome) =>
         widget.signerStore.appendAudit(
           SignerAuditEntry.create(
@@ -3792,11 +3884,14 @@ class BrowserTab {
   String? message;
   bool isHome;
   TowerFipsBrowserBridge? towerBridge;
+  GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;
   int signerDocumentEpoch = 0;
   bool meshAuthPending = false;
 
   void revokeSigningDocument() {
+    graspBridge?.close();
+    graspBridge = null;
     signerDocumentToken = null;
     signerDocumentEpoch++;
   }
