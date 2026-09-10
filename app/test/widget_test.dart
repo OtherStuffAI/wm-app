@@ -132,7 +132,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final hiddenViewport = browserContentViewportRect(tester);
-      expect(find.byTooltip('Back'), findsOneWidget);
+      expect(find.byTooltip('Back'), findsNothing);
       await tester.pump(const Duration(seconds: 6));
       expect(find.byTooltip('Back'), findsNothing);
 
@@ -191,7 +191,9 @@ void main() {
     final controllerCount = fakeWebViewControllerCreationCount;
     final requestCount = fakeLoadedRequestUrls.length;
     final htmlLoadCount = fakeLoadedHtmlStrings.length;
-    await tester.pump(const Duration(seconds: 4));
+    expect(find.byTooltip('Back'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
+    await tester.pump(const Duration(seconds: 2));
     expect(find.byTooltip('Back'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('tab-2')));
@@ -203,14 +205,126 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('tab-1')));
     await tester.pump();
+    expect(find.byTooltip('Back'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tab-1')));
+    await tester.pump();
     expect(find.byTooltip('Back'), findsOneWidget);
 
-    // The cancelled five-second timer from tab 2 would fire here if stale.
+    // The cancelled reveal timer from tab 2 would fire here if stale.
     await tester.pump(const Duration(milliseconds: 1100));
     expect(find.byTooltip('Back'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 2000));
     expect(find.byTooltip('Back'), findsNothing);
   });
+
+  for (final platform in [
+    TargetPlatform.macOS,
+    TargetPlatform.iOS,
+    TargetPlatform.android
+  ]) {
+    testWidgets('$platform address bar requires an active-tab tap',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = platform == TargetPlatform.macOS
+            ? const Size(1280, 800)
+            : const Size(390, 844);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final browserKey = GlobalKey<BrowserScreenState>();
+        await tester.pumpWidget(MaterialApp(
+            home: Scaffold(
+                body: BrowserScreen(
+          key: browserKey,
+          config: AppConfig.defaults(),
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onOpenDrawer: () {},
+          onOpenSetup: () {},
+          onOpenSigner: () {},
+          onOpenStatus: () {},
+        ))));
+        final bar = find.byKey(const ValueKey('browser-address-bar-overlay'));
+        Future<void> tapTab(int id) async {
+          await tester.ensureVisible(find.byKey(ValueKey('tab-$id')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(ValueKey('tab-$id')));
+          await tester.pumpAndSettle();
+        }
+
+        await tester.pumpAndSettle();
+        expect(bar, findsNothing);
+        await tester.tap(find.byTooltip('New tab'));
+        await tester.pumpAndSettle();
+        expect(bar, findsNothing);
+        await tapTab(1); // Switching while hidden stays hidden.
+        expect(activeBrowserStackIndex(tester), 0);
+        expect(bar, findsNothing);
+        await tapTab(1);
+        expect(bar, findsOneWidget);
+        await tapTab(2); // Switching while visible dismisses immediately.
+        expect(activeBrowserStackIndex(tester), 1);
+        expect(bar, findsNothing);
+        await tapTab(2);
+        await tester.enterText(find.byType(TextField), 'https://draft.example');
+        await tester.pump(const Duration(seconds: 6));
+        expect(bar, findsOneWidget); // Editing outlives the reveal timer.
+        await tapTab(1);
+        expect(bar, findsNothing);
+        await tapTab(2);
+        expect(
+            bar, findsNothing); // Old editing focus must not reveal it again.
+        await tapTab(2);
+        expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text,
+            'https://draft.example');
+        browserKey.currentState!.openTab('https://opened.example');
+        await tester.pumpAndSettle();
+        expect(bar, findsNothing);
+        await tapTab(3);
+        expect(bar, findsOneWidget);
+        await tester.tap(find.descendant(
+            of: find.byKey(const ValueKey('tab-3')),
+            matching: find.byTooltip('Close tab')));
+        await tester.pumpAndSettle();
+        expect(bar, findsNothing);
+        await tapTab(2);
+        expect(bar, findsOneWidget);
+        await tester.tap(find.byTooltip('New tab'));
+        await tester.pumpAndSettle();
+        expect(bar, findsNothing);
+        await tester.pump(const Duration(seconds: 6));
+        expect(bar, findsNothing);
+        // Closing a background tab must not reveal the active tab's address.
+        if (platform == TargetPlatform.macOS) {
+          final backgroundClose = find.descendant(
+              of: find.byKey(const ValueKey('tab-1')),
+              matching: find.byTooltip('Close tab'));
+          await tester.ensureVisible(backgroundClose);
+          await tester.pumpAndSettle();
+          await tester.tap(backgroundClose);
+          await tester.pumpAndSettle();
+          expect(bar, findsNothing);
+        }
+        // Closing the last tab creates a replacement with its address hidden.
+        for (final id in [4, 2, if (platform != TargetPlatform.macOS) 1]) {
+          await tapTab(id);
+          expect(bar, findsOneWidget);
+          await tester.tap(find.descendant(
+              of: find.byKey(ValueKey('tab-$id')),
+              matching: find.byTooltip('Close tab')));
+          await tester.pumpAndSettle();
+          expect(bar, findsNothing);
+        }
+        expect(find.text('New Tab'), findsOneWidget);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
 
   testWidgets('address bar tracks the complete current webview URL',
       (tester) async {
@@ -231,6 +345,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('tab-1')));
+    await tester.pump();
     const initialUrl = 'https://rick.runwingman.com/';
     await tester.enterText(find.byType(TextField), initialUrl);
     await tester.tap(find.byTooltip('Go'));
@@ -333,7 +449,7 @@ void main() {
 
     expect(find.byTooltip('New tab'), findsOneWidget);
     expect(find.byTooltip('Profile'), findsOneWidget);
-    expect(find.byTooltip('Back'), findsOneWidget);
+    expect(find.byTooltip('Back'), findsNothing);
     expect(find.text('New Tab'), findsOneWidget);
     expect(fakeLoadedRequestUrls, isEmpty);
     expect(fakeLoadedHtmlStrings.single,
@@ -801,6 +917,8 @@ void main() {
 
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
+    await tester.pump();
     await tester.enterText(
       find.byType(TextField),
       'https://rick.runwingman.com',
@@ -831,6 +949,7 @@ void main() {
     expect(find.text('New Tab'), findsNWidgets(2));
     expect(find.text('rick.runwingman.com'), findsOneWidget);
     expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+    expect(find.byTooltip('Back'), findsNothing);
   });
 
   testWidgets('legacy pinned snapshots retain URLs as ordinary tabs',
@@ -888,6 +1007,8 @@ void main() {
     await tester.pumpWidget(shell());
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
     await tester.pump();
     await tester.enterText(
       find.byType(TextField),
@@ -1044,12 +1165,16 @@ void main() {
     await tester.tap(find.byTooltip('New tab'));
     await tester.pump();
     expect(activeBrowserStackIndex(tester), 1);
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
+    await tester.pump();
+    expect(find.byTooltip('Back'), findsOneWidget);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pump();
     expect(activeBrowserStackIndex(tester), 0);
+    expect(find.byTooltip('Back'), findsNothing);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -1080,6 +1205,8 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('New tab'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('tab-2')));
     await tester.pump();
     await tester.enterText(
       find.byType(TextField),

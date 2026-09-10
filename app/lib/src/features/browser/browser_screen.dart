@@ -88,7 +88,6 @@ class BrowserScreenState extends State<BrowserScreen> {
   bool _addressBarVisible = false;
   bool _focusMode = false;
   static const _nip44PolicyTarget = '*';
-  static const _newTabAddressReveal = Duration(seconds: 5);
   static const _tabClickAddressReveal = Duration(seconds: 3);
   static const _homeTitle = 'New Tab';
   static const _flightDeckTitle = 'Flight Deck';
@@ -686,6 +685,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   void _activateAdjacentTab(int delta) {
     if (_tabs.length < 2) return;
+    _hideAddressBar();
     final nextIndex = (_activeTabIndex + delta) % _tabs.length;
     final normalizedIndex =
         nextIndex < 0 ? nextIndex + _tabs.length : nextIndex;
@@ -736,6 +736,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     bool persistState = true,
     String? title,
   }) {
+    if (activate && _tabs.isNotEmpty) _hideAddressBar();
     final id = _nextTabId++;
     late final BrowserTab tab;
     final controller = _createWebViewController(id);
@@ -755,7 +756,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
     if (activate) {
       _revealTab(id);
-      _revealAddressBar(_newTabAddressReveal);
     }
     _loadAddressForTab(tab, url);
     if (persistState) _schedulePersistTabs();
@@ -765,6 +765,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     bool activate = true,
     bool persistState = true,
   }) {
+    if (activate && _tabs.isNotEmpty) _hideAddressBar();
     final id = _nextTabId++;
     late final BrowserTab tab;
     final controller = _createWebViewController(id);
@@ -785,7 +786,6 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
     if (activate) {
       _revealTab(id);
-      _revealAddressBar(_newTabAddressReveal);
     }
     _loadHomeForTab(tab);
     if (persistState) _schedulePersistTabs();
@@ -882,11 +882,11 @@ class BrowserScreenState extends State<BrowserScreen> {
       _notifyBookmarkMenuState();
       return;
     }
+    _hideAddressBar();
     setState(() {
       _activeTabId = id;
     });
     _revealTab(id);
-    _revealAddressBar(_tabClickAddressReveal);
     _refreshNavigationState(_activeTab);
     _schedulePersistTabs();
     _notifyBookmarkMenuState();
@@ -913,6 +913,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   void _closeTab(int id) {
     final target = _tabById(id);
     if (target == null) return;
+    if (id == _activeTabId) _hideAddressBar();
     if (_tabs.length == 1) {
       setState(() {
         _tabs.clear();
@@ -933,7 +934,6 @@ class BrowserScreenState extends State<BrowserScreen> {
       _activeTabId = nextActiveId;
     });
     _revealTab(nextActiveId);
-    _revealAddressBar(_tabClickAddressReveal);
     removed.dispose();
     _schedulePersistTabs();
   }
