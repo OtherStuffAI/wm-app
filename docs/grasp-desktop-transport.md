@@ -1,7 +1,7 @@
 # Native GRASP transport v1
 
 WMapp iOS, macOS and supported Android WebViews expose `window.fipsTransport` to HTTPS top-level documents after
-page load. Register `wingman-grasp-transport-ready` before checking availability and
+page load. Register `fips-transport-ready` before checking availability and
 retry initial private-service admission on readiness. Keep the full application UI.
 
 ```js

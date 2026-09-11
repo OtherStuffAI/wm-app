@@ -39,7 +39,7 @@ function host({ frame = false, origin = 'https://example.com' } = {}) {
 test('FIPS capability preserves readiness, binary transport, revocation and separate signing', async () => {
   const h = host(); const signer = h.window.nostr;
   let ready = 0;
-  h.window.addEventListener('wingman-grasp-transport-ready', () => {
+  h.window.addEventListener('fips-transport-ready', () => {
     ready++;
     assert.ok(Object.isFrozen(h.window.fipsTransport));
   });
