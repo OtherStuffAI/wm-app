@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,7 +48,11 @@ void main() {
       ])
     });
     var now = DateTime.now();
+    Completer<void>? replayGate;
     final host = DriveHost(
+        beforeReplay: () async {
+          await replayGate?.future;
+        },
         identityLoader: () async => service,
         endpointLoader: () async => endpoint,
         listenAddress: InternetAddress.loopbackIPv4,
@@ -85,6 +90,18 @@ void main() {
 
     try {
       await host.configure(config);
+      replayGate = Completer<void>();
+      final pending = List.generate(8, (_) => check());
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (host.activeRequests < 8 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(host.activeRequests, 8);
+      expect(await check(), 429);
+      replayGate.complete();
+      replayGate = null;
+      expect(await Future.wait(pending), List.filled(8, 200));
+      expect(host.activeRequests, 0);
       final original = host.visible.first['fetched_at'];
       expect(await check(), 200);
       for (final code in [500, 502, 503, 429]) {

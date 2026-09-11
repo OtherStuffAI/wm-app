@@ -211,16 +211,25 @@ class GraspFipsBrowserBridge {
       final epoch = _epoch;
       try {
         if (method == 'saveFinish') {
+          Map<String, dynamic> exportResult = {};
           await save.finish(
               revoked: () => _closed || epoch != _epoch,
               export: p['open'] == true || Platform.isIOS || Platform.isAndroid
                   ? () async {
-                      await const MethodChannel(
+                      final result = await const MethodChannel(
                               'au.com.otherstuff.wingman/drive')
                           .invokeMethod('open', save.target);
+                      if (result is Map) {
+                        exportResult = result.cast<String, dynamic>();
+                      }
                     }
                   : null);
-          return {'saved': true, 'location': 'local'};
+          return {
+            'saved': true,
+            'committed': save.committed,
+            'location': 'local',
+            ...exportResult
+          };
         }
         await save.cancel();
         return null;

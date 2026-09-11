@@ -113,3 +113,17 @@ test('abort while native finalization reply is pending rejects save completion',
   }),{name:'AbortError'});
   assert.ok(h.calls.some(c=>c.method==='saveCancel'));
 });
+
+test('late abort preserves a native committed save and export outcome', async () => {
+  const h=host(); h.run(); const controller=new AbortController();
+  const original=h.window.__wingmanGraspReply;
+  h.window.__wingmanGraspReply=(secret,id,result,error)=>{
+    const call=h.calls.find(c=>c.id===id);
+    if(call?.method==='saveFinish') {
+      controller.abort(); result={saved:true,committed:true,exportCompleted:false};
+    }
+    return original(secret,id,call?.method==='saveBegin'?'committed-save':result,error);
+  };
+  const result=await h.window.fipsTransport.save(new Response('data'),{name:'file',signal:controller.signal});
+  assert.equal(result.saved,true); assert.equal(result.committed,true); assert.equal(result.exportCompleted,false);
+});

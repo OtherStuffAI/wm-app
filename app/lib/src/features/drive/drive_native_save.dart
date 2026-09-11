@@ -8,11 +8,13 @@ class DriveNativeSave {
   final String target;
   final IOSink sink;
   bool cancelled = false;
+  bool committed = false;
   Future<void>? _closing;
   Future<void>? _finishing;
   Future<void> _close() => _closing ??= sink.close();
 
   Future<void> cancel() async {
+    if (committed) return;
     cancelled = true;
     if (_finishing != null) {
       try {
@@ -27,16 +29,20 @@ class DriveNativeSave {
   Future<void> finish(
       {required bool Function() revoked,
       Future<void> Function()? export,
-      Future<void> Function()? beforeCommit}) {
+      Future<void> Function()? beforeCommit,
+      Future<void> Function(File)? cleanupBackup}) {
     if (_finishing != null) throw StateError('save_finishing');
-    return _finishing = _finish(revoked, export, beforeCommit);
+    return _finishing = _finish(revoked, export, beforeCommit, cleanupBackup);
   }
 
-  Future<void> _finish(bool Function() revoked, Future<void> Function()? export,
-      Future<void> Function()? beforeCommit) async {
+  Future<void> _finish(
+      bool Function() revoked,
+      Future<void> Function()? export,
+      Future<void> Function()? beforeCommit,
+      Future<void> Function(File)? cleanupBackup) async {
     final destination = File(target);
     final backup = File('${partial.path}.previous');
-    var backedUp = false, committed = false;
+    var backedUp = false, renamed = false;
     void check() {
       if (cancelled || revoked()) throw StateError('cancelled');
     }
@@ -52,16 +58,27 @@ class DriveNativeSave {
       }
       check();
       await partial.rename(target);
-      committed = true;
+      renamed = true;
       check();
       if (export != null) await export();
       check();
     } catch (_) {
-      if (committed && await destination.exists()) await destination.delete();
+      if (renamed && await destination.exists()) await destination.delete();
       if (backedUp) await backup.rename(target);
       if (await partial.exists()) await partial.delete();
       rethrow;
     }
-    if (backedUp) await backup.delete();
+    // Terminal commit: subsequent cancellation cannot undo a completed save.
+    // Report it as committed even while best-effort backup cleanup is pending.
+    committed = true;
+    if (backedUp) {
+      try {
+        if (cleanupBackup != null) {
+          await cleanupBackup(backup);
+        } else {
+          await backup.delete();
+        }
+      } catch (_) {/* Preserve the backup if cleanup is unavailable. */}
+    }
   }
 }

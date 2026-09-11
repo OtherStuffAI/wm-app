@@ -197,7 +197,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
           for(let n=0;n<chunk.value.length;n+=65536){await rpc('saveWrite',{saveId:id,chunk:encode(chunk.value.subarray(n,n+65536))});total+=Math.min(65536,chunk.value.length-n);onProgress?.(total);}}
         if(signal?.aborted)throw new DOMException('Aborted','AbortError');
         const expected=response.headers.get('content-length');if(expected!==null&&total!==Number(expected))throw new Error('Changed or interrupted file');
-        await rpc('saveFinish',{saveId:id,open});if(signal?.aborted)throw new DOMException('Cancelled','AbortError');done=true;return {saved:true};
+        const result=await rpc('saveFinish',{saveId:id,open});if(signal?.aborted&&!result?.committed)throw new DOMException('Cancelled','AbortError');done=true;return result||{saved:true};
       }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
     },
     async connect(options) {

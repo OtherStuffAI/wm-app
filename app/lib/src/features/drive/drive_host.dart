@@ -20,6 +20,7 @@ class DriveHost extends ChangeNotifier {
       this.endpointLoader,
       this.towerRequest,
       this.helperPath,
+      this.beforeReplay,
       this.listenAddress,
       this.listenPort = 7345,
       this.now = DateTime.now});
@@ -28,6 +29,8 @@ class DriveHost extends ChangeNotifier {
   final Future<Map<String, dynamic>> Function(
       String, String, String, Map<String, dynamic>?)? towerRequest;
   final String? helperPath;
+  final Future<void> Function()? beforeReplay;
+  int get activeRequests => _active.values.fold<int>(0, (n, x) => n + x.length);
   final InternetAddress? listenAddress;
   final int listenPort;
   final DateTime Function() now;
@@ -378,6 +381,8 @@ class DriveHost extends ChangeNotifier {
   Future<void> _serve(HttpRequest req) async {
     Map<String, dynamic>? s;
     final response = req.response;
+    final serving = _server;
+    final generation = _generation;
     try {
       final parts = req.uri.pathSegments;
       if (req.method != 'GET' ||
@@ -396,6 +401,9 @@ class DriveHost extends ChangeNotifier {
           consume: false);
       response.statusCode = 200;
       bool allowed() =>
+          serving != null &&
+          identical(serving, _server) &&
+          generation == _generation &&
           s!['enabled'] == true &&
           _owns(s) &&
           _policies[s['id']]?.allows(identity, now()) == true;
@@ -403,19 +411,24 @@ class DriveHost extends ChangeNotifier {
         response.statusCode = 403;
         throw StateError('denied_or_policy_expired');
       }
-      if (_active.values.fold<int>(0, (n, x) => n + x.length) >= 8) {
+      if (activeRequests >= 8) {
         response.statusCode = 429;
         throw StateError('busy');
       }
+      // Reserve synchronously, before replay persistence can yield.
+      _active.putIfAbsent(s['id'], () => {}).add(response);
       response.statusCode = 401;
+      if (beforeReplay != null) await beforeReplay!();
       // Persist replay consumption before any bytes leave the host, surviving restart.
       final replayId = (jsonDecode(utf8.decode(
               base64Decode(req.headers.value('authorization')!.substring(6))))
           as Map)['id'] as String;
       await _consumeReplay(replayId);
       response.statusCode = 200;
-      final active = _active.putIfAbsent(s['id'], () => {});
-      active.add(response);
+      if (!allowed()) {
+        response.statusCode = 403;
+        throw StateError('revoked');
+      }
       response.headers.set('cache-control', 'no-store');
       final path = req.uri.queryParameters['path'] ?? '';
       final revision = req.uri.queryParameters['revision'] ?? '';

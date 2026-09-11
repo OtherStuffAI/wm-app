@@ -51,4 +51,32 @@ void main() {
       await dir.delete(recursive: true);
     }
   });
+  test(
+      'cancel during terminal backup cleanup truthfully preserves committed save',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('drive-save-');
+    try {
+      final target = File('${dir.path}/saved');
+      await target.writeAsString('original');
+      final save = DriveNativeSave(File('${dir.path}/partial'), target.path);
+      save.sink.add([1, 2, 3]);
+      final entered = Completer<void>(), resume = Completer<void>();
+      final finish = save.finish(
+          revoked: () => false,
+          cleanupBackup: (backup) async {
+            entered.complete();
+            await resume.future;
+            await backup.delete();
+          });
+      await entered.future;
+      expect(save.committed, true);
+      await save.cancel();
+      expect(save.cancelled, false);
+      resume.complete();
+      await finish;
+      expect(await target.readAsBytes(), [1, 2, 3]);
+    } finally {
+      await dir.delete(recursive: true);
+    }
+  });
 }
