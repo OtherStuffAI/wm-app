@@ -31,7 +31,7 @@ Future<String> start(Harness h, WidgetTester tester) async {
       .firstMatch(signer)!
       .group(1)!);
   final script = fakeExecutedJavaScripts
-      .lastWhere((s) => s.contains("'wingmanGraspTransport'"));
+      .lastWhere((s) => s.contains("'fipsTransport'"));
   return RegExp(r'const token = "([^"]+)"').firstMatch(script)!.group(1)!;
 }
 

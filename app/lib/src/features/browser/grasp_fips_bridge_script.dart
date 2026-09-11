@@ -181,7 +181,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         .then(()=>this._end(code,reason,false),()=>this._end(1006,'',false));
     }
   }
-  Object.defineProperty(window, 'wingmanGraspTransport', {configurable:true, value:Object.freeze({
+  const transport = Object.freeze({
     version:1, available:true,
     async connect(options) {
       const current = generation;
@@ -246,7 +246,9 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       worker.postMessage({type:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
     },
     async disconnect() { pair=null; generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
-  })});
+  });
+  Object.defineProperty(window, 'fipsTransport', {configurable:true, value:transport});
+  Object.defineProperty(window, 'wingmanGraspTransport', {configurable:true, value:transport});
   window.dispatchEvent(new Event('wingman-grasp-transport-ready'));
 })();
 ''';
