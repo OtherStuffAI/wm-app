@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -11,7 +12,8 @@ import 'package:wingman_app/src/features/drive/drive_host.dart';
 import 'package:wingman_app/src/features/drive/drive_screen.dart';
 
 void main() {
-  test('startup reports missing FIPS identity and retry recovers', () async {
+  test('startup passively reports missing FIPS identity and retry recovers',
+      () async {
     SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
     final owner = NostrCrypto.generateIdentity();
     final service = NostrCrypto.generateIdentity();
@@ -44,8 +46,10 @@ void main() {
       expect(host.listeningPort, isNull);
       expect(host.endpoint, isNull);
       expect(host.message, contains('cannot read this machine FIPS identity'));
+      expect(host.message, contains('Log out and back in, then retry'));
+      expect(host.message, isNot(contains('authorization')));
 
-      await host.configure(config);
+      await host.configure(config, repair: true);
       expect(host.endpoint, 'http://${service.npub}.fips:7345');
       expect(host.listeningPort, isNotNull);
       expect(host.message,
@@ -56,8 +60,7 @@ void main() {
     }
   });
 
-  testWidgets('Drive screen disposal does not dispose its host',
-      (tester) async {
+  testWidgets('Drive screen disposal stops its owned host', (tester) async {
     final host = _CountingDriveHost();
 
     await tester.pumpWidget(MaterialApp(
@@ -73,7 +76,96 @@ void main() {
     await tester.pump();
 
     expect(host.configureCount, 1);
-    expect(host.disposed, isFalse);
+    expect(host.disposed, isTrue);
+  });
+
+  test('initial configure is passive; explicit retry uses readiness repair',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final runtime = _FakeFipsRuntimeService([
+      const FipsRuntimeStatus(
+        state: FipsRuntimeState.installRequired,
+        detail: 'mesh setup is missing or outdated',
+      ),
+      FipsRuntimeStatus(
+        state: FipsRuntimeState.running,
+        detail: 'FIPS is running.',
+        nodeNpub: service.npub,
+      ),
+    ]);
+    final host = DriveHost(
+      fipsRuntime: runtime,
+      identityLoader: () async => service,
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+
+    try {
+      await host.configure(config);
+      expect(runtime.inspectCount, 1);
+      expect(runtime.ensureReadyCount, 0);
+      expect(host.listeningPort, isNull);
+      expect(host.message, contains('FIPS is not ready'));
+
+      await host.configure(config, repair: true);
+      expect(runtime.ensureReadyCount, 1);
+      expect(host.listeningPort, isNotNull);
+      expect(host.message,
+          'Hosting selected folders while WM App is running and unlocked.');
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  test('stale failed configure does not stop a newer active host', () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final firstEndpoint = Completer<String>();
+    var endpointCalls = 0;
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () {
+        endpointCalls += 1;
+        if (endpointCalls == 1) return firstEndpoint.future;
+        return Future.value('http://${service.npub}.fips:7345');
+      },
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+
+    try {
+      final stale = host.configure(config);
+      await Future<void>.delayed(Duration.zero);
+      await host.configure(config.copyWith(workspaceId: 'workspace-new'));
+      final activePort = host.listeningPort;
+      expect(activePort, isNotNull);
+
+      firstEndpoint.completeError(const SocketException('stale bind failure'));
+      await stale;
+
+      expect(host.listeningPort, activePort);
+      expect(host.message,
+          'Hosting selected folders while WM App is running and unlocked.');
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
   });
 
   test(
@@ -247,7 +339,7 @@ class _CountingDriveHost extends DriveHost {
   var disposed = false;
 
   @override
-  Future<void> configure(AppConfig config) async {
+  Future<void> configure(AppConfig config, {bool repair = false}) async {
     configureCount += 1;
   }
 
@@ -266,10 +358,23 @@ class _FakeFipsRuntimeService extends FipsRuntimeService {
         );
 
   final List<FipsRuntimeStatus> statuses;
+  var inspectCount = 0;
+  var ensureReadyCount = 0;
+
+  FipsRuntimeStatus _nextStatus() {
+    if (statuses.length > 1) return statuses.removeAt(0);
+    return statuses.single;
+  }
+
+  @override
+  Future<FipsRuntimeStatus> inspect() async {
+    inspectCount += 1;
+    return _nextStatus();
+  }
 
   @override
   Future<FipsRuntimeStatus> ensureReadyForAppAccess() async {
-    if (statuses.length > 1) return statuses.removeAt(0);
-    return statuses.single;
+    ensureReadyCount += 1;
+    return _nextStatus();
   }
 }

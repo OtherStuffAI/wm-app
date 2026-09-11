@@ -15,7 +15,7 @@ class DriveScreen extends StatefulWidget {
 }
 
 class _DriveScreenState extends State<DriveScreen> {
-  late final DriveHost host = widget.host ?? DriveHost.shared;
+  late final DriveHost host = widget.host ?? DriveHost();
   @override
   void initState() {
     super.initState();
@@ -30,6 +30,7 @@ class _DriveScreenState extends State<DriveScreen> {
 
   @override
   void dispose() {
+    host.dispose();
     super.dispose();
   }
 
@@ -164,7 +165,7 @@ class _DriveScreenState extends State<DriveScreen> {
                 OutlinedButton.icon(
                     onPressed: () async {
                       try {
-                        await host.configure(widget.config);
+                        await host.configure(widget.config, repair: true);
                         await host.refreshPolicies();
                         for (final s in host.visible) {
                           await host.publish(s);

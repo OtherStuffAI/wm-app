@@ -55,9 +55,7 @@ class DriveHost extends ChangeNotifier {
   int _generation = 0;
   bool get supported => !kIsWeb && (Platform.isMacOS || Platform.isLinux);
 
-  static final DriveHost shared = DriveHost();
-
-  Future<void> configure(AppConfig config) async {
+  Future<void> configure(AppConfig config, {bool repair = false}) async {
     if (!supported) return;
     if (_server != null &&
         _config?.deviceNpub == config.deviceNpub &&
@@ -109,33 +107,38 @@ class DriveHost extends ChangeNotifier {
       }
       endpoint = endpointLoader != null
           ? await endpointLoader!()
-          : await _resolveLocalFipsEndpoint();
+          : await _resolveLocalFipsEndpoint(repair: repair);
       if (generation != _generation) return;
-      _server = await HttpServer.bind(
+      final server = await HttpServer.bind(
           listenAddress ?? TowerFipsProxy.meshAddress(endpoint!), listenPort);
       if (generation != _generation) {
-        await stop();
+        await server.close(force: true);
         return;
       }
-      _server!.idleTimeout = const Duration(seconds: 30);
-      _server!.listen(_serve);
+      _server = server;
+      server.idleTimeout = const Duration(seconds: 30);
+      server.listen(_serve);
       _timer = Timer.periodic(
           const Duration(seconds: 30), (_) => unawaited(refreshPolicies()));
       await refreshPolicies();
       message =
           'Hosting selected folders while WM App is running and unlocked.';
     } on DriveHostStartupException catch (error) {
+      if (generation != _generation) return;
       await stop();
       message = error.message;
     } on SocketException catch (error) {
+      if (generation != _generation) return;
       await stop();
       message =
           'Drive hosting could not bind to this machine FIPS address: ${error.osError?.message ?? error.message}. Check FIPS is running for this login session, then retry.';
     } on FormatException catch (error) {
+      if (generation != _generation) return;
       await stop();
       message =
           'Drive hosting found an invalid FIPS identity: ${error.message}. Repair FIPS, then retry.';
     } catch (error) {
+      if (generation != _generation) return;
       await stop();
       message =
           'Drive hosting failed during startup: ${FipsRuntimeService.redactSecrets(error.toString())}. Retry after checking FIPS and folder access.';
@@ -143,8 +146,14 @@ class DriveHost extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String> _resolveLocalFipsEndpoint() async {
-    final status = await _fipsRuntime.ensureReadyForAppAccess();
+  Future<String> _resolveLocalFipsEndpoint({required bool repair}) async {
+    final status = repair
+        ? await _fipsRuntime.ensureReadyForAppAccess()
+        : await _fipsRuntime.inspect();
+    if (!status.canAttemptAppAccess) {
+      throw DriveHostStartupException(
+          'Drive hosting cannot start because FIPS is not ready: ${status.detail}');
+    }
     final nodeNpub = status.nodeNpub?.trim();
     if (nodeNpub == null || nodeNpub.isEmpty) {
       if (status.state == FipsRuntimeState.controlAccessPending) {
@@ -153,10 +162,6 @@ class DriveHost extends ChangeNotifier {
       }
       throw DriveHostStartupException(
           'Drive hosting cannot start because FIPS did not report this machine identity (${status.detail})');
-    }
-    if (!status.canAttemptAppAccess) {
-      throw DriveHostStartupException(
-          'Drive hosting cannot start because FIPS is not ready: ${status.detail}');
     }
     return 'http://$nodeNpub.fips:7345';
   }
