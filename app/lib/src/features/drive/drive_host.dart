@@ -261,8 +261,12 @@ class DriveHost extends ChangeNotifier {
       final text = utf8.decode(data);
       Map<String, dynamic>? decoded;
       if (text.trim().isNotEmpty) {
-        final value = jsonDecode(text);
-        if (value is Map) decoded = value.cast<String, dynamic>();
+        try {
+          final value = jsonDecode(text);
+          if (value is Map) decoded = value.cast<String, dynamic>();
+        } catch (_) {
+          decoded = null;
+        }
       }
       if ({401, 403, 404}.contains(response.statusCode)) {
         throw DrivePolicyDenied(statusCode: response.statusCode, body: decoded);
@@ -290,29 +294,35 @@ class DriveHost extends ChangeNotifier {
       };
 
   Future<void> publish(Map<String, dynamic> s) async {
-    if (!_owns(s) || _hostIdentity == null || endpoint == null) {
-      throw StateError('owner_required');
-    }
-    final owner = NostrCrypto.importIdentity(_config!.deviceSecret);
-    if (owner.npub != _config!.deviceNpub || owner.npub != s['owner_npub']) {
-      throw const DriveRegistrationException(
-          'Drive registration requires the unlocked owner identity for this workspace.');
-    }
-    final data = _registrationData(s);
-    final proof = NostrCrypto.signEvent(secret: _hostIdentity!.nsec, event: {
-      'kind': 27235,
-      'content': '',
-      'tags': [
-        ['protocol', 'fips-drive-register-v1'],
-        ['u', _url(s)],
-        ['owner', s['owner_npub']],
-        ['payload', sha256.convert(utf8.encode(jsonEncode(data))).toString()]
-      ]
-    });
-    Map<String, dynamic> result;
     try {
-      result = await _tower(_url(s), 'PUT', _config!.deviceSecret,
+      if (!_owns(s) || _hostIdentity == null || endpoint == null) {
+        throw StateError('owner_required');
+      }
+      final owner = NostrCrypto.importIdentity(_config!.deviceSecret);
+      if (owner.npub != _config!.deviceNpub || owner.npub != s['owner_npub']) {
+        throw const DriveRegistrationException(
+            'Drive registration requires the unlocked owner identity for this workspace.');
+      }
+      final data = _registrationData(s);
+      final proof = NostrCrypto.signEvent(secret: _hostIdentity!.nsec, event: {
+        'kind': 27235,
+        'content': '',
+        'tags': [
+          ['protocol', 'fips-drive-register-v1'],
+          ['u', _url(s)],
+          ['owner', s['owner_npub']],
+          ['payload', sha256.convert(utf8.encode(jsonEncode(data))).toString()]
+        ]
+      });
+      final result = await _tower(_url(s), 'PUT', _config!.deviceSecret,
           {...data, 'host_proof': proof});
+      s['revision'] = int.parse(result['share']['revision'].toString());
+      s['name'] = data['name'];
+      s['host_name'] = data['host_name'];
+      s['published'] = true;
+      s.remove('last_registration_error');
+      await _persist();
+      notifyListeners();
     } catch (error) {
       s['published'] = false;
       s['last_registration_error'] = safeRegistrationError(error);
@@ -320,13 +330,6 @@ class DriveHost extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
-    s['revision'] = int.parse(result['share']['revision'].toString());
-    s['name'] = data['name'];
-    s['host_name'] = data['host_name'];
-    s['published'] = true;
-    s.remove('last_registration_error');
-    await _persist();
-    notifyListeners();
   }
 
   Future<void> updateShare(

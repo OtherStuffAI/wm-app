@@ -16,13 +16,19 @@ void main() {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final tower = 'http://127.0.0.1:${server.port}';
     final endpoint = 'http://${service.npub}.fips:7345';
-    var status = 200, disconnect = false;
+    var status = 200, disconnect = false, malformedDenial = false;
     server.listen((req) async {
       if (disconnect) {
         (await req.response.detachSocket()).destroy();
         return;
       }
       req.response.statusCode = status;
+      if (malformedDenial) {
+        req.response.headers.contentType = ContentType.html;
+        req.response.write('<html>denied');
+        await req.response.close();
+        return;
+      }
       req.response.write(jsonEncode({
         'workspace_id': 'workspace',
         'share': {
@@ -122,9 +128,11 @@ void main() {
       expect(await check(), 200);
       for (final code in [401, 403, 404]) {
         status = code;
+        malformedDenial = true;
         await host.refreshPolicies();
         expect(await check(), 403);
         expect(host.visible.first.containsKey('policy'), false);
+        malformedDenial = false;
         status = 200;
         await host.refreshPolicies();
         expect(await check(), 200);

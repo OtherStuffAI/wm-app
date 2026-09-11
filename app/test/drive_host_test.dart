@@ -292,6 +292,10 @@ void main() {
               'Drive registration requires the unlocked owner identity for this workspace.')));
       expect(towerCalls, 0);
       expect(share['published'], isFalse);
+      expect(share['last_registration_error'],
+          'Drive registration requires the unlocked owner identity for this workspace.');
+      expect(host.registrationStatus(share),
+          'Registration failed: Drive registration requires the unlocked owner identity for this workspace.');
     } finally {
       await host.stop();
       host.dispose();
