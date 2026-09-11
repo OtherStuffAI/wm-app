@@ -59,15 +59,27 @@ class _ShellHomeState extends State<ShellHome> {
   late final FipsRuntimeService _fipsRuntime =
       widget.fipsRuntime ?? FipsRuntimeService();
   bool _fipsDiagnosticsExportBusy = false;
+  String? _observedFlightDeckVersion;
 
   @override
   void initState() {
     super.initState();
+    _attachFlightDeckUpdateListener();
     _macOSMenuBridge.listen(_openDrawer);
   }
 
   @override
+  void didUpdateWidget(covariant ShellHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.flightDeckUpdates != widget.flightDeckUpdates) {
+      oldWidget.flightDeckUpdates?.removeListener(_onFlightDeckUpdateChanged);
+      _attachFlightDeckUpdateListener();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.flightDeckUpdates?.removeListener(_onFlightDeckUpdateChanged);
     _macOSMenuBridge.dispose();
     _browserFocusMode.dispose();
     _bookmarkMenuState.dispose();
@@ -402,6 +414,26 @@ class _ShellHomeState extends State<ShellHome> {
 
   Future<void> _clearBrowserData() async {
     await _browserKey.currentState?.clearBrowserData();
+  }
+
+  void _attachFlightDeckUpdateListener() {
+    final updates = widget.flightDeckUpdates;
+    _observedFlightDeckVersion = updates?.snapshot.activeVersion;
+    updates?.addListener(_onFlightDeckUpdateChanged);
+  }
+
+  void _onFlightDeckUpdateChanged() {
+    final updates = widget.flightDeckUpdates;
+    if (updates == null) return;
+    final activeVersion = updates.snapshot.activeVersion;
+    if (activeVersion.isEmpty || activeVersion == _observedFlightDeckVersion) {
+      return;
+    }
+    _observedFlightDeckVersion = activeVersion;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _reloadFlightDeck();
+    });
   }
 
   void _reloadFlightDeck() {

@@ -12,6 +12,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wingman_app/src/app.dart';
 import 'package:wingman_app/src/core/app_config.dart';
+import 'package:wingman_app/src/core/flight_deck_update_models.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
@@ -893,6 +894,46 @@ void main() {
 
     expect(fakeClearCookieCalls, 1);
     expect(await preferences.getString(profileKey), 'npub-new');
+  });
+
+  testWidgets('Wingman shell reloads local Flight Deck after automatic update',
+      (tester) async {
+    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    final updates = _ShellFlightDeckUpdateController(
+      _flightDeckSnapshot(
+        phase: FlightDeckUpdatePhase.idle,
+        active: 'Build 100 (packaged)',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShellHome(
+          config: AppConfig.defaults(),
+          localFlightDeckUrl: flightDeckUrl,
+          flightDeckUpdates: updates,
+          bridge: NativeCoreBridge(),
+          signerStore: SignerStore(),
+          onConfigChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fakeLoadedRequestUrls, [flightDeckUrl]);
+    expect(fakeReloadCalls, 0);
+
+    updates.activate('Build 101 (ota-test)');
+    await tester.pump();
+    await tester.pump();
+
+    expect(fakeReloadCalls, 1);
+
+    updates.republish();
+    await tester.pump();
+    await tester.pump();
+
+    expect(fakeReloadCalls, 1);
   });
 
   testWidgets('Wingman shell restores browser tabs for the current signer',
@@ -1966,4 +2007,64 @@ void main() {
 
     expect(loggedOut, isTrue);
   });
+}
+
+FlightDeckUpdateSnapshot _flightDeckSnapshot({
+  required FlightDeckUpdatePhase phase,
+  required String active,
+}) {
+  return FlightDeckUpdateSnapshot(
+    phase: phase,
+    packagedVersion: 'Build 100 (packaged)',
+    activeVersion: active,
+    previousVersion: '',
+    availableVersion: '',
+    failedVersion: '',
+    message: phase.name,
+    error: '',
+    lastCheckAt: DateTime.utc(2026, 9, 11),
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    enabled: true,
+    busy: false,
+  );
+}
+
+class _ShellFlightDeckUpdateController extends FlightDeckUpdateController {
+  _ShellFlightDeckUpdateController(this._snapshot);
+
+  FlightDeckUpdateSnapshot _snapshot;
+
+  @override
+  String? get activeRootPath => null;
+
+  @override
+  FlightDeckUpdateSnapshot get snapshot => _snapshot;
+
+  void activate(String version) {
+    _snapshot = _flightDeckSnapshot(
+      phase: FlightDeckUpdatePhase.active,
+      active: version,
+    );
+    notifyListeners();
+  }
+
+  void republish() {
+    notifyListeners();
+  }
+
+  @override
+  Future<void> applyAvailable() async {}
+
+  @override
+  Future<void> checkForUpdates({bool applyAutomatically = false}) async {}
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> reportServeFailure(String message) async {}
+
+  @override
+  Future<void> rollback() async {}
 }
