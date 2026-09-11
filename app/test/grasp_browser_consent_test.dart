@@ -47,7 +47,7 @@ void rpc(String token, String method) => submitFakeJavaScriptMessage(
 Future<void> connect(String token, WidgetTester tester) async {
   rpc(token, 'connect');
   await tester.pumpAndSettle();
-  expect(find.text('Connect to private Git service?'), findsOneWidget);
+  expect(find.text('Connect to private FIPS service?'), findsOneWidget);
   expect(find.byType(TextField), findsNothing);
   await tester.tap(find.text('Connect'));
   await tester.pumpAndSettle();

@@ -7,6 +7,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   if (window !== window.top || location.origin !== ${jsonEncode(pageOrigin)}) return;
   const token = ${jsonEncode(documentToken)};
   let seq = 0, pair = null, revoked = false, generation = 0;
+  const drivePairs = new Map();
   const sockets = new Set();
   const activeStreams = new Set();
   const pending = new Map();
@@ -29,7 +30,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   };
   window.__wingmanGraspRevoke = secret => {
     if (secret !== token) return;
-    revoked = true; pair = null; generation++;
+    revoked = true; pair = null; drivePairs.clear(); generation++;
     for (const socket of [...sockets]) socket._end(1006, '', false);
     for (const stop of [...activeStreams]) stop();
     for (const cleanup of [...portCleanups]) cleanup();
@@ -42,9 +43,10 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   };
   const decode = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const nativeFetch = async (input, init = {}) => {
-    if (!pair) throw new Error('Connect to the selected GRASP service first.');
+    if (!pair && drivePairs.size===0) throw new Error('Connect to a service first.');
     const request = new Request(input, init);
-    if (!request.url.startsWith(pair.endpoint + '/'))
+    const approvedPair = drivePairs.get(new URL(request.url).origin) || pair;
+    if (!approvedPair || !request.url.startsWith(approvedPair.endpoint + '/'))
       throw new Error('Request must target the approved GRASP service.');
     if (request.signal.aborted) throw request.signal.reason || new DOMException('Aborted', 'AbortError');
     const headers = Object.fromEntries(request.headers.entries());
@@ -183,6 +185,21 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   }
   const transport = Object.freeze({
     version:1, available:true,
+    async connectDrive(options) { const g=generation; const result=await rpc('connectDrive',{endpoint:options.endpoint}); if(revoked||g!==generation)throw new Error('Revoked'); drivePairs.set(result.endpoint,result); return result; },
+    async save(response, {name, signal, onProgress, open=false}={}) {
+      let id, reader, done=false, total=0;
+      const abort=()=>{reader?.cancel().catch(()=>{});if(id)rpc('saveCancel',{saveId:id}).catch(()=>{});};
+      try {
+        id=await rpc('saveBegin',{name});
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        signal?.addEventListener('abort',abort,{once:true}); reader=response.body.getReader();
+        while(true){if(signal?.aborted)throw new DOMException('Aborted','AbortError');const chunk=await reader.read();if(chunk.done)break;
+          for(let n=0;n<chunk.value.length;n+=65536){await rpc('saveWrite',{saveId:id,chunk:encode(chunk.value.subarray(n,n+65536))});total+=Math.min(65536,chunk.value.length-n);onProgress?.(total);}}
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        const expected=response.headers.get('content-length');if(expected!==null&&total!==Number(expected))throw new Error('Changed or interrupted file');
+        await rpc('saveFinish',{saveId:id,open});if(signal?.aborted)throw new DOMException('Cancelled','AbortError');done=true;return {saved:true};
+      }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
+    },
     async connect(options) {
       const current = generation;
       const result = await rpc('connect', options);
@@ -245,7 +262,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       channel.port1.start();
       worker.postMessage({type:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
     },
-    async disconnect() { pair=null; generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
+    async disconnect() { pair=null; drivePairs.clear(); generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
   });
   Object.defineProperty(window, 'fipsTransport', {configurable:true, value:transport});
   window.dispatchEvent(new Event('wingman-grasp-transport-ready'));

@@ -1892,7 +1892,10 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     final origin = SignerPolicy.normalizeOrigin(url);
-    if (Uri.tryParse(origin)?.scheme != 'https') return;
+    if (Uri.tryParse(origin)?.scheme != 'https' &&
+        origin != 'http://127.0.0.1:47831') {
+      return;
+    }
     late final GraspFipsBrowserBridge bridge;
     bool current() =>
         mounted &&
@@ -1913,7 +1916,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         final approved = await showDialog<bool>(
               context: context,
               builder: (context) => AlertDialog(
-                title: const Text('Connect to private Git service?'),
+                title: const Text('Connect to private FIPS service?'),
                 content: SelectableText(
                     'Allow this page to read and send HTTP and relay data '
                     'to the announced service for this tab? The announcement is supplied by '
@@ -2147,13 +2150,16 @@ class BrowserScreenState extends State<BrowserScreen> {
     final pageOriginForAuth = SignerPolicy.normalizeOrigin(signingPage ?? '');
     // Tower pages must continue through verified Tower pairing, including after
     // disconnect. This is a separate, request-only capability for direct WApps.
-    final graspAuth = graspDocument?.endpoint != null &&
-        meshTarget != null &&
-        // Tower pairing keeps its own existing signing authority.
-        pageOriginForAuth !=
-            SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
-        pageOriginForAuth !=
-            SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    final driveAuth =
+        graspDocument?.permitsDriveAuthentication(signingParams) == true;
+    final graspAuth = driveAuth ||
+        (graspDocument?.endpoint != null &&
+            meshTarget != null &&
+            // Tower pairing keeps its own existing signing authority.
+            pageOriginForAuth !=
+                SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
+            pageOriginForAuth !=
+                SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
     final directAuth = graspAuth ||
         ((meshTarget != null ||
                 method == 'signNip98' ||

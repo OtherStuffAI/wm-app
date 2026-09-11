@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/wmapp-core", "crates/wmapp-fips-android"]
+members = ["crates/wmapp-drive-fs", "crates/wmapp-core", "crates/wmapp-fips-android"]
 resolver = "2"
 
 [workspace.package]

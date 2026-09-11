@@ -320,7 +320,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\nFIPS_RESOURCE_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FIPS\"\nrm -f \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch arm64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-arm64.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch x86_64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-x86_64.pkg\"\ncp \"$SRCROOT/../../tools/configure_fips_wingman_poc.sh\" \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\nchmod 755 \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\n";
+			shellScript = "set -eu\n\"$SRCROOT/../../tools/build_drive_fs.sh\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nFIPS_RESOURCE_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FIPS\"\nrm -f \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch arm64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-arm64.pkg\"\n\"$SRCROOT/../../tools/prepare_fips_macos.sh\" --arch x86_64 \"$FIPS_RESOURCE_DIR/fips-0.5.0-macos-x86_64.pkg\"\ncp \"$SRCROOT/../../tools/configure_fips_wingman_poc.sh\" \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\nchmod 755 \"$FIPS_RESOURCE_DIR/configure-fips-wingman-poc.sh\"\n";
 		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;

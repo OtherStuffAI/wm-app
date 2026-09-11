@@ -491,7 +491,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Browser'), findsOneWidget);
-    expect(find.text('Drive'), findsNothing);
+    expect(find.text('Drive'), findsOneWidget);
     expect(find.text('Signer'), findsAtLeastNWidgets(1));
     expect(find.text('Status'), findsAtLeastNWidgets(1));
 
@@ -1868,7 +1868,7 @@ void main() {
     expect(find.text('Tower URL'), findsNothing);
   });
 
-  testWidgets('Drive navigation follows the experimental setting',
+  testWidgets('Shared-folder Drive navigation is available independent of legacy sync setting',
       (tester) async {
     Future<void> openDrawer() async {
       await tester.tap(find.byTooltip('Open menu'));
@@ -1887,7 +1887,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await openDrawer();
-    expect(find.text('Drive'), findsNothing);
+    expect(find.text('Drive'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
