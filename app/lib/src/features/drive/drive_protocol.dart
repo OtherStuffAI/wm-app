@@ -4,7 +4,44 @@ import 'package:crypto/crypto.dart';
 import '../../core/nostr_crypto.dart';
 
 class DrivePolicyDenied implements Exception {
-  const DrivePolicyDenied();
+  const DrivePolicyDenied({this.statusCode, this.body});
+
+  final int? statusCode;
+  final Map<String, dynamic>? body;
+
+  String get safeMessage {
+    final code = body?['code'] ?? body?['error'];
+    final suffix = code is String && code.isNotEmpty ? ' $code' : '';
+    return 'Tower rejected the request${statusCode == null ? '' : ' (HTTP $statusCode$suffix)'}';
+  }
+}
+
+class DriveTowerException implements Exception {
+  const DriveTowerException(this.statusCode, this.body, this.rawBody);
+
+  final int statusCode;
+  final Map<String, dynamic>? body;
+  final String rawBody;
+
+  String get safeMessage {
+    final code = body?['code'] ?? body?['error'];
+    if (code is String && code.isNotEmpty) {
+      return 'Tower returned HTTP $statusCode ($code)';
+    }
+    return 'Tower returned HTTP $statusCode';
+  }
+
+  @override
+  String toString() => safeMessage;
+}
+
+class DriveRegistrationException implements Exception {
+  const DriveRegistrationException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class DrivePolicy {

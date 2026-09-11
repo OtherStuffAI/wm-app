@@ -213,13 +213,21 @@ class DriveHost extends ChangeNotifier {
       'host_name': hostName,
       'audience': audience,
       'enabled': true,
+      'published': false,
       'revision': 0
     };
     shares.add(s);
     await _persist();
     notifyListeners();
-    await publish(s);
-    await refreshPolicies();
+    try {
+      await publish(s);
+      await refreshPolicies();
+    } catch (error) {
+      s['last_registration_error'] = safeRegistrationError(error);
+      await _persist();
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> _tower(String url, String method, String secret,
@@ -244,19 +252,25 @@ class DriveHost extends ChangeNotifier {
       req.headers.set('authorization', auth.authorization);
       req.headers.set('content-type', 'application/json');
       if (body != null) req.write(body);
-      final response = await req.close().timeout(const Duration(seconds: 10));
-      if ({401, 403, 404}.contains(response.statusCode)) {
-        throw const DrivePolicyDenied();
-      }
-      if (response.statusCode != 200) {
-        throw StateError('tower_unavailable');
-      }
       final data = <int>[];
+      final response = await req.close().timeout(const Duration(seconds: 10));
       await for (final chunk in response.timeout(const Duration(seconds: 10))) {
         data.addAll(chunk);
         if (data.length > 1024 * 1024) throw StateError('policy_too_large');
       }
-      return (jsonDecode(utf8.decode(data)) as Map).cast<String, dynamic>();
+      final text = utf8.decode(data);
+      Map<String, dynamic>? decoded;
+      if (text.trim().isNotEmpty) {
+        final value = jsonDecode(text);
+        if (value is Map) decoded = value.cast<String, dynamic>();
+      }
+      if ({401, 403, 404}.contains(response.statusCode)) {
+        throw DrivePolicyDenied(statusCode: response.statusCode, body: decoded);
+      }
+      if (response.statusCode != 200) {
+        throw DriveTowerException(response.statusCode, decoded, text);
+      }
+      return decoded ?? <String, dynamic>{};
     } finally {
       client.close(force: true);
     }
@@ -264,19 +278,27 @@ class DriveHost extends ChangeNotifier {
 
   String _url(Map s) =>
       '${s['tower']}/api/v4/flightdeck-pg/workspaces/${s['workspace_id']}/drive/shares/${s['id']}';
+  Map<String, dynamic> _registrationData(Map<String, dynamic> s) =>
+      <String, dynamic>{
+        'name': (s['name'] ?? '').toString().trim(),
+        'host_name': (s['host_name'] ?? '').toString().trim(),
+        'host_npub': _hostIdentity!.npub,
+        'endpoint': endpoint,
+        'audience': s['audience'],
+        'enabled': s['enabled'],
+        'previous_revision': s['revision']
+      };
+
   Future<void> publish(Map<String, dynamic> s) async {
     if (!_owns(s) || _hostIdentity == null || endpoint == null) {
       throw StateError('owner_required');
     }
-    final data = <String, dynamic>{
-      'name': s['name'],
-      'host_name': s['host_name'],
-      'host_npub': _hostIdentity!.npub,
-      'endpoint': endpoint,
-      'audience': s['audience'],
-      'enabled': s['enabled'],
-      'previous_revision': s['revision']
-    };
+    final owner = NostrCrypto.importIdentity(_config!.deviceSecret);
+    if (owner.npub != _config!.deviceNpub || owner.npub != s['owner_npub']) {
+      throw const DriveRegistrationException(
+          'Drive registration requires the unlocked owner identity for this workspace.');
+    }
+    final data = _registrationData(s);
     final proof = NostrCrypto.signEvent(secret: _hostIdentity!.nsec, event: {
       'kind': 27235,
       'content': '',
@@ -287,9 +309,22 @@ class DriveHost extends ChangeNotifier {
         ['payload', sha256.convert(utf8.encode(jsonEncode(data))).toString()]
       ]
     });
-    final result = await _tower(
-        _url(s), 'PUT', _config!.deviceSecret, {...data, 'host_proof': proof});
+    Map<String, dynamic> result;
+    try {
+      result = await _tower(_url(s), 'PUT', _config!.deviceSecret,
+          {...data, 'host_proof': proof});
+    } catch (error) {
+      s['published'] = false;
+      s['last_registration_error'] = safeRegistrationError(error);
+      await _persist();
+      notifyListeners();
+      rethrow;
+    }
     s['revision'] = int.parse(result['share']['revision'].toString());
+    s['name'] = data['name'];
+    s['host_name'] = data['host_name'];
+    s['published'] = true;
+    s.remove('last_registration_error');
     await _persist();
     notifyListeners();
   }
@@ -303,14 +338,24 @@ class DriveHost extends ChangeNotifier {
     share['name'] = name;
     share['audience'] = audience;
     share['enabled'] = true;
+    share['published'] = false;
+    share.remove('last_registration_error');
     await _persist();
     notifyListeners();
-    await publish(share);
-    await refreshPolicies();
+    try {
+      await publish(share);
+      await refreshPolicies();
+    } catch (error) {
+      share['last_registration_error'] = safeRegistrationError(error);
+      await _persist();
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> disable(Map<String, dynamic> s) async {
     s['enabled'] = false;
+    s['published'] = false;
     _policies.remove(s['id']);
     s.remove('policy');
     s.remove('fetched_at');
@@ -325,6 +370,30 @@ class DriveHost extends ChangeNotifier {
       message = 'Stopped locally. Retry registration when Tower returns.';
       notifyListeners();
     }
+  }
+
+  String registrationStatus(Map<String, dynamic> s) {
+    if (s['enabled'] != true) return 'Stopped';
+    if (s['published'] == true && s['revision'] is int && s['revision'] > 0) {
+      return 'Sharing';
+    }
+    final error = s['last_registration_error'];
+    if (error is String && error.isNotEmpty) {
+      return 'Registration failed: $error';
+    }
+    return 'Registration pending';
+  }
+
+  String safeRegistrationError(Object error) {
+    if (error is DriveRegistrationException) return error.message;
+    if (error is DriveTowerException) return error.safeMessage;
+    if (error is DrivePolicyDenied) return error.safeMessage;
+    if (error is SocketException) {
+      return 'Network error reaching Tower (${error.osError?.message ?? error.message})';
+    }
+    if (error is TimeoutException) return 'Timed out waiting for Tower';
+    if (error is FormatException) return 'Invalid Tower response';
+    return FipsRuntimeService.redactSecrets(error.toString());
   }
 
   Future<void> refreshPolicies() async {

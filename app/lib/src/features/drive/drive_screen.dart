@@ -81,11 +81,11 @@ class _DriveScreenState extends State<DriveScreen> {
     if (approved == true) {
       try {
         await host.add(name.text.trim(), audience, source.text.trim());
-      } catch (_) {
+      } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
-                  'Sharing could not be registered. Check Tower, workspace and FIPS, then retry.')));
+                  'Sharing could not be registered. ${host.safeRegistrationError(error)}.')));
         }
       }
     }
@@ -130,11 +130,11 @@ class _DriveScreenState extends State<DriveScreen> {
     if (approved == true) {
       try {
         await host.updateShare(share, name.text.trim(), audience);
-      } catch (_) {
+      } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
-                  'Could not update sharing. Retry when Tower is available.')));
+                  'Could not update sharing. ${host.safeRegistrationError(error)}.')));
         }
       }
     }
@@ -170,11 +170,11 @@ class _DriveScreenState extends State<DriveScreen> {
                         for (final s in host.visible) {
                           await host.publish(s);
                         }
-                      } catch (_) {
+                      } catch (error) {
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                               content: Text(
-                                  'Tower unavailable. Local stop sharing still applies.')));
+                                  'Registration retry failed. ${host.safeRegistrationError(error)}. Local stop sharing still applies.')));
                         }
                       }
                     },
@@ -188,7 +188,7 @@ class _DriveScreenState extends State<DriveScreen> {
                   leading: const Icon(Icons.folder_shared),
                   title: Text(s['name']),
                   subtitle: Text(
-                      '${s['root']}\n${s['audience'] == 'private' ? 'Only I can read' : 'Anyone in the workspace'} · ${s['enabled'] == true ? 'Sharing' : 'Stopped'}'),
+                      '${s['root']}\n${s['audience'] == 'private' ? 'Only I can read' : 'Anyone in the workspace'} · ${host.registrationStatus(s)}'),
                   isThreeLine: true,
                   onTap: () => _edit(s),
                   trailing: s['enabled'] == true

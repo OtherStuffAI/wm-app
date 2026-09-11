@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
@@ -14,6 +15,7 @@ import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/drive/drive_host.dart';
+import 'package:wingman_app/src/features/drive/drive_protocol.dart';
 import 'package:wingman_app/src/features/drive/drive_screen.dart';
 
 void main() {
@@ -96,6 +98,203 @@ void main() {
       host.dispose();
       debugDefaultTargetPlatformOverride = previousTargetPlatform;
       FlutterSecureStoragePlatform.instance = previousStoragePlatform;
+    }
+  });
+
+  test('publish signs the normalized Tower registration contract', () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    Map<String, dynamic>? capturedPayload;
+    String? capturedUrl;
+    String? capturedMethod;
+    String? capturedSecret;
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+      towerRequest: (url, method, secret, payload) async {
+        capturedUrl = url;
+        capturedMethod = method;
+        capturedSecret = secret;
+        capturedPayload = payload;
+        return {
+          'share': {'revision': 1}
+        };
+      },
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000001',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': '  Folder  ',
+      'host_name': '  Desktop  ',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+      await host.publish(share);
+
+      final payload = capturedPayload!;
+      final registration = Map<String, dynamic>.from(payload)
+        ..remove('host_proof');
+      expect(capturedUrl,
+          'https://tower.example/api/v4/flightdeck-pg/workspaces/workspace/drive/shares/${share['id']}');
+      expect(capturedMethod, 'PUT');
+      expect(capturedSecret, owner.nsec);
+      expect(registration, {
+        'name': 'Folder',
+        'host_name': 'Desktop',
+        'host_npub': service.npub,
+        'endpoint': 'http://${service.npub}.fips:7345',
+        'audience': 'private',
+        'enabled': true,
+        'previous_revision': 0,
+      });
+      final proof = payload['host_proof'] as Map<String, dynamic>;
+      expect(proof['kind'], 27235);
+      expect(proof['content'], '');
+      expect(proof['pubkey'], service.publicKeyHex);
+      expect(proof['tags'], [
+        ['protocol', 'fips-drive-register-v1'],
+        ['u', capturedUrl],
+        ['owner', owner.npub],
+        [
+          'payload',
+          sha256.convert(utf8.encode(jsonEncode(registration))).toString()
+        ],
+      ]);
+      expect(share['name'], 'Folder');
+      expect(share['host_name'], 'Desktop');
+      expect(share['published'], isTrue);
+      expect(host.registrationStatus(share), 'Sharing');
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  test('publish preserves selected share and surfaces Tower status code',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+      towerRequest: (url, method, secret, payload) async {
+        throw const DriveTowerException(
+            400, {'code': 'invalid_host_proof'}, '');
+      },
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000002',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+
+      await expectLater(
+          host.publish(share),
+          throwsA(isA<DriveTowerException>()
+              .having((e) => e.statusCode, 'statusCode', 400)
+              .having((e) => e.safeMessage, 'safeMessage',
+                  'Tower returned HTTP 400 (invalid_host_proof)')));
+      expect(share['published'], isFalse);
+      expect(share['last_registration_error'],
+          'Tower returned HTTP 400 (invalid_host_proof)');
+      expect(host.registrationStatus(share),
+          'Registration failed: Tower returned HTTP 400 (invalid_host_proof)');
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  test('publish requires the direct owner identity before Tower mutation',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final other = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    var towerCalls = 0;
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+      towerRequest: (url, method, secret, payload) async {
+        towerCalls += 1;
+        return {
+          'share': {'revision': 1}
+        };
+      },
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: other.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000003',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+
+      await expectLater(
+          host.publish(share),
+          throwsA(isA<DriveRegistrationException>().having(
+              (e) => e.message,
+              'message',
+              'Drive registration requires the unlocked owner identity for this workspace.')));
+      expect(towerCalls, 0);
+      expect(share['published'], isFalse);
+    } finally {
+      await host.stop();
+      host.dispose();
     }
   });
 
