@@ -21,15 +21,18 @@ class DriveHost extends ChangeNotifier {
       this.towerRequest,
       this.helperPath,
       this.beforeReplay,
+      FipsRuntimeService? fipsRuntime,
       this.listenAddress,
       this.listenPort = 7345,
-      this.now = DateTime.now});
+      this.now = DateTime.now})
+      : _fipsRuntime = fipsRuntime ?? FipsRuntimeService();
   final Future<NostrIdentity> Function()? identityLoader;
   final Future<String> Function()? endpointLoader;
   final Future<Map<String, dynamic>> Function(
       String, String, String, Map<String, dynamic>?)? towerRequest;
   final String? helperPath;
   final Future<void> Function()? beforeReplay;
+  final FipsRuntimeService _fipsRuntime;
   int get activeRequests => _active.values.fold<int>(0, (n, x) => n + x.length);
   final InternetAddress? listenAddress;
   final int listenPort;
@@ -51,6 +54,8 @@ class DriveHost extends ChangeNotifier {
   bool _refreshing = false;
   int _generation = 0;
   bool get supported => !kIsWeb && (Platform.isMacOS || Platform.isLinux);
+
+  static final DriveHost shared = DriveHost();
 
   Future<void> configure(AppConfig config) async {
     if (!supported) return;
@@ -102,15 +107,9 @@ class DriveHost extends ChangeNotifier {
           }
         }
       }
-      if (endpointLoader != null) {
-        endpoint = await endpointLoader!();
-      } else {
-        final status = await FipsRuntimeService().inspect();
-        if (status.nodeNpub == null) {
-          throw StateError('FIPS identity unavailable');
-        }
-        endpoint = 'http://${status.nodeNpub}.fips:7345';
-      }
+      endpoint = endpointLoader != null
+          ? await endpointLoader!()
+          : await _resolveLocalFipsEndpoint();
       if (generation != _generation) return;
       _server = await HttpServer.bind(
           listenAddress ?? TowerFipsProxy.meshAddress(endpoint!), listenPort);
@@ -125,11 +124,41 @@ class DriveHost extends ChangeNotifier {
       await refreshPolicies();
       message =
           'Hosting selected folders while WM App is running and unlocked.';
-    } catch (_) {
+    } on DriveHostStartupException catch (error) {
+      await stop();
+      message = error.message;
+    } on SocketException catch (error) {
+      await stop();
       message =
-          'Hosting unavailable. Check FIPS and folder access, then retry.';
+          'Drive hosting could not bind to this machine FIPS address: ${error.osError?.message ?? error.message}. Check FIPS is running for this login session, then retry.';
+    } on FormatException catch (error) {
+      await stop();
+      message =
+          'Drive hosting found an invalid FIPS identity: ${error.message}. Repair FIPS, then retry.';
+    } catch (error) {
+      await stop();
+      message =
+          'Drive hosting failed during startup: ${FipsRuntimeService.redactSecrets(error.toString())}. Retry after checking FIPS and folder access.';
     }
     notifyListeners();
+  }
+
+  Future<String> _resolveLocalFipsEndpoint() async {
+    final status = await _fipsRuntime.ensureReadyForAppAccess();
+    final nodeNpub = status.nodeNpub?.trim();
+    if (nodeNpub == null || nodeNpub.isEmpty) {
+      if (status.state == FipsRuntimeState.controlAccessPending) {
+        throw const DriveHostStartupException(
+            'FIPS is running, but Drive hosting cannot read this machine FIPS identity from this login session yet. Log out and back in, then retry.');
+      }
+      throw DriveHostStartupException(
+          'Drive hosting cannot start because FIPS did not report this machine identity (${status.detail})');
+    }
+    if (!status.canAttemptAppAccess) {
+      throw DriveHostStartupException(
+          'Drive hosting cannot start because FIPS is not ready: ${status.detail}');
+    }
+    return 'http://$nodeNpub.fips:7345';
   }
 
   bool _owns(Map s) =>
@@ -503,4 +532,13 @@ class DriveHost extends ChangeNotifier {
     unawaited(stop());
     super.dispose();
   }
+}
+
+class DriveHostStartupException implements Exception {
+  const DriveHostStartupException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

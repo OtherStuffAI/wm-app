@@ -5,15 +5,17 @@ import '../../core/native_core_bridge.dart';
 import 'drive_host.dart';
 
 class DriveScreen extends StatefulWidget {
-  const DriveScreen({required this.config, required this.bridge, super.key});
+  const DriveScreen(
+      {required this.config, required this.bridge, this.host, super.key});
   final AppConfig config;
   final NativeCoreBridge bridge;
+  final DriveHost? host;
   @override
   State<DriveScreen> createState() => _DriveScreenState();
 }
 
 class _DriveScreenState extends State<DriveScreen> {
-  final DriveHost host = DriveHost();
+  late final DriveHost host = widget.host ?? DriveHost.shared;
   @override
   void initState() {
     super.initState();
@@ -28,7 +30,6 @@ class _DriveScreenState extends State<DriveScreen> {
 
   @override
   void dispose() {
-    host.dispose();
     super.dispose();
   }
 

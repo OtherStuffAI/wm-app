@@ -1,12 +1,81 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
+import 'package:wingman_app/src/core/fips_runtime_service.dart';
+import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/drive/drive_host.dart';
+import 'package:wingman_app/src/features/drive/drive_screen.dart';
 
 void main() {
+  test('startup reports missing FIPS identity and retry recovers', () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final statuses = <FipsRuntimeStatus>[
+      const FipsRuntimeStatus(
+        state: FipsRuntimeState.controlAccessPending,
+        detail: 'control permission pending',
+      ),
+      FipsRuntimeStatus(
+        state: FipsRuntimeState.running,
+        detail: 'FIPS is running.',
+        nodeNpub: service.npub,
+      ),
+    ];
+    final host = DriveHost(
+      fipsRuntime: _FakeFipsRuntimeService(statuses),
+      identityLoader: () async => service,
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+
+    try {
+      await host.configure(config);
+      expect(host.listeningPort, isNull);
+      expect(host.endpoint, isNull);
+      expect(host.message, contains('cannot read this machine FIPS identity'));
+
+      await host.configure(config);
+      expect(host.endpoint, 'http://${service.npub}.fips:7345');
+      expect(host.listeningPort, isNotNull);
+      expect(host.message,
+          'Hosting selected folders while WM App is running and unlocked.');
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  testWidgets('Drive screen disposal does not dispose its host',
+      (tester) async {
+    final host = _CountingDriveHost();
+
+    await tester.pumpWidget(MaterialApp(
+      home: DriveScreen(
+        config: AppConfig.defaults(),
+        bridge: NativeCoreBridge(),
+        host: host,
+      ),
+    ));
+    await tester.pump();
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+
+    expect(host.configureCount, 1);
+    expect(host.disposed, isFalse);
+  });
+
   test(
       'live loopback host reads selected files; denies private members, replay/restart, stale policy and local disable',
       () async {
@@ -171,4 +240,36 @@ void main() {
       await root.delete(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 5)));
+}
+
+class _CountingDriveHost extends DriveHost {
+  var configureCount = 0;
+  var disposed = false;
+
+  @override
+  Future<void> configure(AppConfig config) async {
+    configureCount += 1;
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+    super.dispose();
+  }
+}
+
+class _FakeFipsRuntimeService extends FipsRuntimeService {
+  _FakeFipsRuntimeService(this.statuses)
+      : super(
+          isMacOS: true,
+          fileExists: (_) async => true,
+        );
+
+  final List<FipsRuntimeStatus> statuses;
+
+  @override
+  Future<FipsRuntimeStatus> ensureReadyForAppAccess() async {
+    if (statuses.length > 1) return statuses.removeAt(0);
+    return statuses.single;
+  }
 }
