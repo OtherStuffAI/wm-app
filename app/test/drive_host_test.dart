@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
 import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -369,6 +370,301 @@ void main() {
     expect(host.disposed, isTrue);
   });
 
+  test('refused Tower request records copyable sanitized diagnostics',
+      () async {
+    final previousOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = previousOverrides);
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final closed = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = closed.port;
+    await closed.close();
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'http://127.0.0.1:$port/capability-secret',
+      workspaceId: 'workspace-secret-123',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000004',
+      'root': '/private/root/must/not/appear',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+
+      await expectLater(host.publish(share), throwsA(isA<SocketException>()));
+
+      final diagnostics = host.diagnosticsText;
+      expect(diagnostics, contains('wmapp-drive-diagnostics-v1'));
+      expect(diagnostics, contains('stage="connect"'));
+      expect(diagnostics, contains('method="PUT"'));
+      expect(diagnostics, contains('target_host="127.0.0.1"'));
+      expect(diagnostics, contains('target_port=$port'));
+      expect(diagnostics, contains('error="connection_refused"'));
+      expect(diagnostics, contains('route="<unknown>"'));
+      expect(diagnostics, isNot(contains(owner.nsec)));
+      expect(diagnostics, isNot(contains('/private/root')));
+      expect(diagnostics, isNot(contains('capability-secret')));
+      expect(diagnostics, isNot(contains('workspace-secret-123')));
+      expect(diagnostics, isNot(contains(share['id'])));
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  test('FIPS Tower request dials the configured FIPS endpoint port', () async {
+    final previousOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = previousOverrides);
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final tower = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final observed = Completer<HttpRequest>();
+    tower.listen((request) async {
+      if (!observed.isCompleted) observed.complete(request);
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'share': {'revision': 7}
+      }));
+      await request.response.close();
+    });
+    final towerOrigin = 'http://${service.npub}.fips:${tower.port}';
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+      socketConnector: (address, port) =>
+          Socket.startConnect(InternetAddress.loopbackIPv4, port),
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: towerOrigin,
+      workspaceId: 'workspace',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000005',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+      await host.publish(share);
+
+      final request = await observed.future.timeout(const Duration(seconds: 2));
+      expect(
+          request.headers.value('host'), '${service.npub}.fips:${tower.port}');
+      expect(share['published'], isTrue);
+      expect(host.diagnosticsText, contains('fips_mesh_port=${tower.port}'));
+      expect(host.diagnosticsText, contains('status=200'));
+    } finally {
+      await host.stop();
+      host.dispose();
+      await tower.close(force: true);
+    }
+  });
+
+  test('FIPS Tower URL without explicit port fails before default-port dial',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    var socketCalls = 0;
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+      socketConnector: (address, port) {
+        socketCalls += 1;
+        return Socket.startConnect(address, port);
+      },
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'http://${service.npub}.fips',
+      workspaceId: 'workspace',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000006',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+
+      await expectLater(
+          host.publish(share),
+          throwsA(isA<DriveRegistrationException>().having(
+              (e) => e.message,
+              'message',
+              'Invalid FIPS Tower URL. Use http://<node-npub>.fips:<port>.')));
+
+      expect(socketCalls, 0);
+      expect(share['last_registration_error'],
+          'Invalid FIPS Tower URL. Use http://<node-npub>.fips:<port>.');
+      expect(host.diagnosticsText, contains('error="invalid_fips_tower_url"'));
+      expect(host.diagnosticsText, contains('target_port=80'));
+    } finally {
+      await host.stop();
+      host.dispose();
+    }
+  });
+
+  test('delayed Tower diagnostics are dropped after workspace change',
+      () async {
+    final previousOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = previousOverrides);
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final tower = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final release = Completer<void>();
+    tower.listen((request) async {
+      await release.future;
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'code': 'delayed_secret_code'}));
+      await request.response.close();
+    });
+    final host = DriveHost(
+      identityLoader: () async => service,
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'http://127.0.0.1:${tower.port}',
+      workspaceId: 'workspace-a',
+    );
+    final share = <String, dynamic>{
+      'id': '00000000-0000-4000-8000-000000000007',
+      'root': '/tmp/root',
+      'tower': config.towerUrl,
+      'workspace_id': config.workspaceId,
+      'owner_npub': owner.npub,
+      'name': 'Folder',
+      'host_name': 'Desktop',
+      'audience': 'private',
+      'enabled': true,
+      'published': false,
+      'revision': 0,
+    };
+
+    try {
+      await host.configure(config);
+      final pending = host.publish(share);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await host.configure(config.copyWith(workspaceId: 'workspace-b'));
+      release.complete();
+      await expectLater(pending, throwsA(isA<DriveTowerException>()));
+
+      expect(host.diagnosticsText, isNot(contains('delayed_secret_code')));
+      expect(host.diagnosticsText, isNot(contains('workspace-a')));
+      expect(host.diagnosticsText, isNot(contains('status=500')));
+    } finally {
+      if (!release.isCompleted) release.complete();
+      await host.stop();
+      host.dispose();
+      await tower.close(force: true);
+    }
+  });
+
+  testWidgets('Drive diagnostics panel copies bounded sanitized text',
+      (tester) async {
+    final host = _DiagnosticsDriveHost();
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: 'npub-owner',
+      deviceSecret: 'nsec-secret',
+      towerUrl: 'https://tower.example?token=secret',
+      workspaceId: 'workspace',
+    );
+    final copied = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied.add((call.arguments as Map)['text'] as String);
+        return null;
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: DriveScreen(
+          config: config,
+          bridge: NativeCoreBridge(),
+          host: host,
+        ),
+      ),
+    ));
+    await tester.pump();
+    host.seedDiagnostic();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('drive-diagnostics-section')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('drive-copy-diagnostics')));
+    await tester.pump();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, contains('stage="connect"'));
+    expect(copied.single, contains('target_port=443'));
+    expect(copied.single, isNot(contains('nsec-secret')));
+    expect(copied.single, isNot(contains('/Users/')));
+
+    await tester.tap(find.byKey(const ValueKey('drive-clear-diagnostics')));
+    await tester.pump();
+    expect(host.hasDiagnostics, isFalse);
+  });
+
   test('initial configure is passive; explicit retry uses readiness repair',
       () async {
     SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
@@ -674,6 +970,39 @@ class _CountingDriveHost extends DriveHost {
     disposed = true;
     super.dispose();
   }
+}
+
+class _DiagnosticsDriveHost extends DriveHost {
+  var _text = '';
+
+  @override
+  bool get supported => true;
+
+  @override
+  bool get hasDiagnostics => _text.isNotEmpty;
+
+  @override
+  String get diagnosticsText => _text;
+
+  void seedDiagnostic() {
+    _text = 'wmapp-drive-diagnostics-v1 os=macos\n'
+        'ts="2026-09-12T00:00:00.000Z" stage="connect" '
+        'method="PUT" route="/api/v4/flightdeck-pg/workspaces/<workspace>/drive/shares/<share>" '
+        'target_host="tower.example" target_port=443 error="connection_refused"';
+    notifyListeners();
+  }
+
+  @override
+  Future<void> configure(AppConfig config, {bool repair = false}) async {}
+
+  @override
+  void clearDiagnostics({bool notify = true}) {
+    _text = '';
+    if (notify) notifyListeners();
+  }
+
+  @override
+  Future<void> stop() async {}
 }
 
 class _FakeFipsRuntimeService extends FipsRuntimeService {

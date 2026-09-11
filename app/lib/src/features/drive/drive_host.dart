@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/app_config.dart';
+import '../../core/fips_app_target.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
 import '../../core/tower_fips_proxy.dart';
@@ -21,12 +22,15 @@ class DriveHost extends ChangeNotifier {
       this.towerRequest,
       this.helperPath,
       this.beforeReplay,
+      Future<ConnectionTask<Socket>> Function(dynamic host, int port)?
+          socketConnector,
       FipsRuntimeService? fipsRuntime,
       SignerVaultSecretStore? hostSecretStore,
       this.listenAddress,
       this.listenPort = 7345,
       this.now = DateTime.now})
       : _fipsRuntime = fipsRuntime ?? FipsRuntimeService(),
+        _socketConnector = socketConnector ?? Socket.startConnect,
         _hostSecretStore =
             hostSecretStore ?? SecureStorageSignerVaultSecretStore();
   final Future<NostrIdentity> Function()? identityLoader;
@@ -36,6 +40,8 @@ class DriveHost extends ChangeNotifier {
   final String? helperPath;
   final Future<void> Function()? beforeReplay;
   final FipsRuntimeService _fipsRuntime;
+  final Future<ConnectionTask<Socket>> Function(dynamic host, int port)
+      _socketConnector;
   final SignerVaultSecretStore _hostSecretStore;
   int get activeRequests => _active.values.fold<int>(0, (n, x) => n + x.length);
   final InternetAddress? listenAddress;
@@ -46,7 +52,12 @@ class DriveHost extends ChangeNotifier {
   static const channel = MethodChannel('au.com.otherstuff.wingman/drive');
   static const storageKey = 'wingman.drive.shares.v1';
   static const hostIdentityStorageKey = 'wingman.drive.host-key.v1';
+  static const _diagnosticsLimit = 60;
+  static const _diagnosticsTextLimit = 24000;
+  static const _driveDiagnosticsMarker =
+      'wmapp-drive-diagnostics-v1 build=unknown revision=drive';
   final List<Map<String, dynamic>> shares = [];
+  final List<String> _diagnostics = [];
   final Map<String, DrivePolicy> _policies = {};
   final Map<String, Set<HttpResponse>> _active = {};
   final DriveRequestVerifier _verifier = DriveRequestVerifier();
@@ -58,10 +69,20 @@ class DriveHost extends ChangeNotifier {
   String? endpoint;
   bool _refreshing = false;
   int _generation = 0;
+  bool _disposed = false;
   bool get supported => !kIsWeb && (Platform.isMacOS || Platform.isLinux);
+  bool get hasDiagnostics => _diagnostics.isNotEmpty;
+  String get diagnosticsText => _diagnosticsText();
 
   Future<void> configure(AppConfig config, {bool repair = false}) async {
     if (!supported) return;
+    final contextChanged = _config == null ||
+        _config?.deviceNpub != config.deviceNpub ||
+        _config?.towerUrl != config.towerUrl ||
+        _config?.workspaceId != config.workspaceId;
+    if (contextChanged) {
+      clearDiagnostics(notify: false);
+    }
     if (_server != null &&
         _config?.deviceNpub == config.deviceNpub &&
         _config?.deviceSecret == config.deviceSecret &&
@@ -72,6 +93,7 @@ class DriveHost extends ChangeNotifier {
     final generation = ++_generation;
     await stop();
     _config = config;
+    final diagnosticsContext = _diagnosticsContext;
     if (config.deviceSecret.isEmpty) {
       message = 'Unlock your identity to host folders.';
       notifyListeners();
@@ -113,7 +135,8 @@ class DriveHost extends ChangeNotifier {
       }
       endpoint = endpointLoader != null
           ? await endpointLoader!()
-          : await _resolveLocalFipsEndpoint(repair: repair);
+          : await _resolveLocalFipsEndpoint(
+              repair: repair, diagnosticsContext: diagnosticsContext);
       if (generation != _generation) return;
       final server = await HttpServer.bind(
           listenAddress ?? TowerFipsProxy.meshAddress(endpoint!), listenPort);
@@ -152,10 +175,18 @@ class DriveHost extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String> _resolveLocalFipsEndpoint({required bool repair}) async {
+  Future<String> _resolveLocalFipsEndpoint(
+      {required bool repair, required String diagnosticsContext}) async {
     final status = repair
         ? await _fipsRuntime.ensureReadyForAppAccess()
         : await _fipsRuntime.inspect();
+    _recordDiagnostic({
+      'event': 'fips_readiness',
+      'repair': repair,
+      'state': status.state.name,
+      'can_attempt_app_access': status.canAttemptAppAccess,
+      'node_npub_present': status.nodeNpub?.trim().isNotEmpty == true,
+    }, diagnosticsContext: diagnosticsContext);
     if (!status.canAttemptAppAccess) {
       throw DriveHostStartupException(
           'Drive hosting cannot start because FIPS is not ready: ${status.detail}');
@@ -235,6 +266,7 @@ class DriveHost extends ChangeNotifier {
     if (towerRequest != null) {
       return towerRequest!(url, method, secret, payload);
     }
+    final started = Stopwatch()..start();
     final body = payload == null ? null : jsonEncode(payload);
     final auth = NostrCrypto.signNip98(
         secret: secret, method: method, url: url, body: body);
@@ -242,18 +274,57 @@ class DriveHost extends ChangeNotifier {
       ..connectionTimeout = const Duration(seconds: 10);
     client.findProxy = (_) => 'DIRECT';
     final uri = Uri.parse(url);
+    final target = _diagnosticTarget(uri);
+    final diagnosticsContext = _diagnosticsContext;
+    var activeStage = 'connect';
+    void record(String stage,
+        {int? statusCode, String? code, Object? error, bool notify = true}) {
+      activeStage = stage;
+      _recordDiagnostic({
+        'event': 'tower_request',
+        'stage': stage,
+        'elapsed_ms': started.elapsedMilliseconds,
+        'method': method.toUpperCase(),
+        'route': _safeRoute(uri),
+        'configured_tower_origin': _safeOrigin(_config?.towerUrl),
+        'share_tower_origin': _safeOrigin(uri.origin),
+        'target_host': target.host,
+        'target_port': target.port,
+        if (target.meshHost != null) 'fips_mesh_host': target.meshHost,
+        if (target.meshPort != null) 'fips_mesh_port': target.meshPort,
+        if (statusCode != null) 'status': statusCode,
+        if (code != null && code.isNotEmpty) 'code': _safeToken(code),
+        if (error != null) 'error': _safeError(error),
+      }, notify: notify, diagnosticsContext: diagnosticsContext);
+    }
+
     if (uri.host.endsWith('.fips')) {
-      client.connectionFactory = (u, h, p) =>
-          Socket.startConnect(TowerFipsProxy.meshAddress(uri.origin), u.port);
+      late final FipsAppTarget fipsTarget;
+      try {
+        fipsTarget = FipsAppTarget.parse(uri.origin);
+      } on FormatException {
+        record('connect',
+            error: StateError('invalid_fips_tower_url'), notify: false);
+        throw const DriveRegistrationException(
+            'Invalid FIPS Tower URL. Use http://<node-npub>.fips:<port>.');
+      }
+      client.connectionFactory = (u, h, p) {
+        record('connect', notify: false);
+        return _socketConnector(
+            TowerFipsProxy.meshAddress(fipsTarget.origin), fipsTarget.port);
+      };
     }
     try {
+      if (!uri.host.endsWith('.fips')) record('connect', notify: false);
       final req = await client.openUrl(method, uri);
+      record('send', notify: false);
       req.followRedirects = false;
       req.headers.set('authorization', auth.authorization);
       req.headers.set('content-type', 'application/json');
       if (body != null) req.write(body);
       final data = <int>[];
       final response = await req.close().timeout(const Duration(seconds: 10));
+      record('response', statusCode: response.statusCode, notify: false);
       await for (final chunk in response.timeout(const Duration(seconds: 10))) {
         data.addAll(chunk);
         if (data.length > 1024 * 1024) throw StateError('policy_too_large');
@@ -269,12 +340,23 @@ class DriveHost extends ChangeNotifier {
         }
       }
       if ({401, 403, 404}.contains(response.statusCode)) {
+        record('parse',
+            statusCode: response.statusCode, code: _safeBodyCode(decoded));
         throw DrivePolicyDenied(statusCode: response.statusCode, body: decoded);
       }
       if (response.statusCode != 200) {
+        record('parse',
+            statusCode: response.statusCode, code: _safeBodyCode(decoded));
         throw DriveTowerException(response.statusCode, decoded, text);
       }
+      record('parse', statusCode: response.statusCode);
       return decoded ?? <String, dynamic>{};
+    } catch (error) {
+      if (error is DrivePolicyDenied || error is DriveTowerException) {
+        rethrow;
+      }
+      record(_transportStage(error, activeStage), error: error);
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -612,8 +694,178 @@ class DriveHost extends ChangeNotifier {
   @override
   void dispose() {
     ++_generation;
+    _disposed = true;
+    clearDiagnostics(notify: false);
     unawaited(stop());
     super.dispose();
+  }
+
+  void clearDiagnostics({bool notify = true}) {
+    if (_diagnostics.isEmpty) return;
+    _diagnostics.clear();
+    if (notify) notifyListeners();
+  }
+
+  String _diagnosticsText() {
+    final lines = <String>[
+      '$_driveDiagnosticsMarker os=${Platform.operatingSystem}',
+      ..._diagnostics,
+    ];
+    final text = lines.join('\n');
+    if (text.length <= _diagnosticsTextLimit) return text;
+    return text.substring(text.length - _diagnosticsTextLimit);
+  }
+
+  String get _diagnosticsContext =>
+      '$_generation|${_config?.deviceNpub ?? ''}|${_config?.towerUrl ?? ''}|${_config?.workspaceId ?? ''}';
+
+  void _recordDiagnostic(Map<String, Object?> fields,
+      {bool notify = true, String? diagnosticsContext}) {
+    if (_disposed) return;
+    if (diagnosticsContext != null &&
+        diagnosticsContext != _diagnosticsContext) {
+      return;
+    }
+    final safe = <String, Object?>{
+      'ts': now().toUtc().toIso8601String(),
+      'workspace_scoped': _config?.workspaceId.trim().isNotEmpty == true,
+      for (final entry in fields.entries)
+        if (entry.value != null) entry.key: entry.value,
+    };
+    final line = safe.entries
+        .map((entry) => '${entry.key}=${_diagnosticValue(entry.value)}')
+        .join(' ');
+    _diagnostics.add(line);
+    while (_diagnostics.length > _diagnosticsLimit) {
+      _diagnostics.removeAt(0);
+    }
+    if (notify) notifyListeners();
+  }
+
+  static String _diagnosticValue(Object? value) {
+    if (value is bool || value is num) return value.toString();
+    return jsonEncode(_safeText(value?.toString() ?? ''));
+  }
+
+  static String _safeText(String value) {
+    final withoutControls = value
+        .replaceAll(RegExp(r'[\r\n\t]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return withoutControls.length <= 220
+        ? withoutControls
+        : '${withoutControls.substring(0, 220)}...';
+  }
+
+  static String _safeToken(String value) {
+    final match = RegExp(r'^[a-zA-Z0-9_.:-]{1,80}$').firstMatch(value);
+    return match == null ? 'redacted' : value;
+  }
+
+  static String? _safeBodyCode(Map<String, dynamic>? body) {
+    final code = body?['code'] ?? body?['error'];
+    return code is String ? _safeTowerCode(code) : null;
+  }
+
+  static String _safeTowerCode(String value) {
+    return switch (value) {
+      'invalid_host_proof' ||
+      'invalid_name' ||
+      'invalid_request' ||
+      'not_found' ||
+      'unauthorized' ||
+      'forbidden' =>
+        value,
+      _ => 'tower_error',
+    };
+  }
+
+  static String _safeError(Object error) {
+    if (error is SocketException) {
+      final message = (error.osError?.message ?? error.message).toLowerCase();
+      if (message.contains('connection refused')) return 'connection_refused';
+      if (message.contains('timed out')) return 'connect_timeout';
+      if (message.contains('network is unreachable')) {
+        return 'network_unreachable';
+      }
+      if (message.contains('no route')) return 'no_route_to_host';
+      if (message.contains('connection reset')) return 'connection_reset';
+      return 'socket_error';
+    }
+    if (error is TimeoutException) return 'timeout';
+    if (error is HandshakeException) return 'tls_handshake_failed';
+    if (error is FormatException) return 'invalid_response';
+    if (error is StateError) {
+      return switch (error.message) {
+        'invalid_fips_tower_url' => 'invalid_fips_tower_url',
+        'policy_too_large' => 'response_too_large',
+        _ => 'state_error',
+      };
+    }
+    return error.runtimeType.toString();
+  }
+
+  static String _transportStage(Object error, String activeStage) {
+    if (error is FormatException) return 'parse';
+    if (error is StateError && error.message == 'policy_too_large') {
+      return 'response';
+    }
+    return activeStage;
+  }
+
+  static String _safeOrigin(String? value) {
+    final uri = Uri.tryParse((value ?? '').trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return '';
+    return uri.hasPort
+        ? '${uri.scheme}://${uri.host}:${uri.port}'
+        : '${uri.scheme}://${uri.host}';
+  }
+
+  static String _safeRoute(Uri uri) {
+    final parts = uri.pathSegments;
+    const prefix = ['api', 'v4', 'flightdeck-pg', 'workspaces'];
+    final driveShare = parts.length == 8 &&
+        parts.take(4).toList().join('/') == prefix.join('/') &&
+        parts[5] == 'drive' &&
+        parts[6] == 'shares';
+    if (driveShare) {
+      return '/api/v4/flightdeck-pg/workspaces/<workspace>/drive/shares/<share>';
+    }
+    final drivePolicy = parts.length == 9 &&
+        parts.take(4).toList().join('/') == prefix.join('/') &&
+        parts[5] == 'drive' &&
+        parts[6] == 'shares' &&
+        parts[8] == 'policy';
+    if (drivePolicy) {
+      return '/api/v4/flightdeck-pg/workspaces/<workspace>/drive/shares/<share>/policy';
+    }
+    return '<unknown>';
+  }
+
+  static _TowerDiagnosticTarget _diagnosticTarget(Uri uri) {
+    String? meshHost;
+    int? meshPort;
+    if (uri.host.endsWith('.fips')) {
+      try {
+        final target = FipsAppTarget.parse(uri.origin);
+        meshHost = TowerFipsProxy.meshAddress(target.origin).address;
+        meshPort = target.port;
+      } catch (_) {
+        meshHost = 'invalid_fips_target';
+      }
+    }
+    return _TowerDiagnosticTarget(
+      host: uri.host,
+      port: uri.hasPort ? uri.port : _defaultPort(uri.scheme),
+      meshHost: meshHost,
+      meshPort: meshPort,
+    );
+  }
+
+  static int _defaultPort(String scheme) {
+    if (scheme == 'https') return 443;
+    if (scheme == 'http') return 80;
+    return 0;
   }
 }
 
@@ -624,4 +876,18 @@ class DriveHostStartupException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class _TowerDiagnosticTarget {
+  const _TowerDiagnosticTarget({
+    required this.host,
+    required this.port,
+    this.meshHost,
+    this.meshPort,
+  });
+
+  final String host;
+  final int port;
+  final String? meshHost;
+  final int? meshPort;
 }

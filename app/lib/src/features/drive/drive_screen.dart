@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/app_config.dart';
 import '../../core/native_core_bridge.dart';
 import 'drive_host.dart';
@@ -183,6 +184,65 @@ class _DriveScreenState extends State<DriveScreen> {
               ]),
             if (!widget.config.hasWorkspace)
               const Text('Choose a Tower workspace in Setup first.'),
+            if (host.supported) ...[
+              const SizedBox(height: 12),
+              Material(
+                type: MaterialType.transparency,
+                child: ExpansionTile(
+                  key: const ValueKey('drive-diagnostics-section'),
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text('Diagnostics'),
+                  initiallyExpanded: false,
+                  children: [
+                    SizedBox(
+                      height: 180,
+                      width: double.infinity,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: Theme.of(context).colorScheme.outline),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(12),
+                          child: SelectableText(host.diagnosticsText.isEmpty
+                              ? 'No Drive diagnostics captured yet.'
+                              : host.diagnosticsText),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 12, children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('drive-copy-diagnostics'),
+                        onPressed: host.hasDiagnostics
+                            ? () async {
+                                await Clipboard.setData(
+                                    ClipboardData(text: host.diagnosticsText));
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text(
+                                              'Drive diagnostics copied.')));
+                                }
+                              }
+                            : null,
+                        icon: const Icon(Icons.copy),
+                        label: const Text('Copy diagnostics'),
+                      ),
+                      TextButton.icon(
+                        key: const ValueKey('drive-clear-diagnostics'),
+                        onPressed: host.hasDiagnostics
+                            ? () => host.clearDiagnostics()
+                            : null,
+                        icon: const Icon(Icons.clear),
+                        label: const Text('Clear'),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+            ],
             for (final s in host.visible)
               ListTile(
                   leading: const Icon(Icons.folder_shared),
