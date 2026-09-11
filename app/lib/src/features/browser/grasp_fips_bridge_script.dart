@@ -248,7 +248,6 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     async disconnect() { pair=null; generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
   });
   Object.defineProperty(window, 'fipsTransport', {configurable:true, value:transport});
-  Object.defineProperty(window, 'wingmanGraspTransport', {configurable:true, value:transport});
   window.dispatchEvent(new Event('wingman-grasp-transport-ready'));
 })();
 ''';

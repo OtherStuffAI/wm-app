@@ -36,36 +36,33 @@ function host({ frame = false, origin = 'https://example.com' } = {}) {
   return { window, calls, endpoint, run: () => runInNewContext(source, context) };
 }
 
-test('both names share the frozen capability before readiness, without changing the signer', async () => {
+test('FIPS capability preserves readiness, binary transport, revocation and separate signing', async () => {
   const h = host(); const signer = h.window.nostr;
   let ready = 0;
   h.window.addEventListener('wingman-grasp-transport-ready', () => {
     ready++;
-    assert.equal(h.window.fipsTransport, h.window.wingmanGraspTransport);
     assert.ok(Object.isFrozen(h.window.fipsTransport));
   });
   h.run();
   assert.equal(ready, 1); assert.equal(h.window.nostr, signer);
   await h.window.fipsTransport.connect({ endpoint: h.endpoint });
-  const response = await h.window.wingmanGraspTransport.fetch(h.endpoint + '/echo', {
+  const response = await h.window.fipsTransport.fetch(h.endpoint + '/echo', {
     method: 'POST', body: new Uint8Array([0, 255, 13]),
   });
   assert.equal(response.status, 201);
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0, 255, 13]);
   assert.equal(h.calls.find(c => c.method === 'write').params.chunk, 'AP8N');
   await h.window.fipsTransport.disconnect();
-  await assert.rejects(h.window.wingmanGraspTransport.fetch(h.endpoint + '/'), /Connect/);
-  await h.window.wingmanGraspTransport.connect({ endpoint: h.endpoint });
+  await assert.rejects(h.window.fipsTransport.fetch(h.endpoint + '/'), /Connect/);
+  await h.window.fipsTransport.connect({ endpoint: h.endpoint });
   h.window.__wingmanGraspRevoke('test-token');
   await assert.rejects(h.window.fipsTransport.connect({ endpoint: h.endpoint }), /revoked/);
-  await assert.rejects(h.window.wingmanGraspTransport.connect({ endpoint: h.endpoint }), /revoked/);
 });
 
 for (const options of [{ frame: true }, { origin: 'https://other.example' }]) {
-  test(`does not install either capability outside approved top origin: ${JSON.stringify(options)}`, () => {
+  test(`does not install capability outside approved top origin: ${JSON.stringify(options)}`, () => {
     const h = host(options); h.run();
     assert.equal(h.window.fipsTransport, undefined);
-    assert.equal(h.window.wingmanGraspTransport, undefined);
     assert.equal(h.calls.length, 0);
   });
 }

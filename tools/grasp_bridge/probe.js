@@ -3,7 +3,7 @@
   const assert=(ok,label)=>{if(!ok)throw Error(label);};
   const {endpoint,repositoryRoot,fixture}=globalThis.graspProbe;
   const transport=window.fipsTransport;
-  assert(transport===window.wingmanGraspTransport && Object.isFrozen(transport),'canonical frozen compatibility alias');
+  assert(transport && Object.isFrozen(transport),'frozen FIPS capability');
   try {
     assert(location.protocol==='https:' && isSecureContext,'HTTPS context');
     const iframe=document.createElement('iframe');

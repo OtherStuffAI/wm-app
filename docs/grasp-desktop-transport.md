@@ -5,8 +5,7 @@ page load. Register `wingman-grasp-transport-ready` before checking availability
 retry initial private-service admission on readiness. Keep the full application UI.
 
 ```js
-const transport = window.fipsTransport === undefined
-  ? window.wingmanGraspTransport : window.fipsTransport;
+const transport = window.fipsTransport;
 const endpoint = 'http://<node-npub>.fips:<port>';
 await transport.connect({endpoint}); // returns {version:1, endpoint}
 const info = await transport.fetch(endpoint + '/', {
@@ -15,12 +14,6 @@ const info = await transport.fetch(endpoint + '/', {
 const relay = new transport.WebSocket(endpoint.replace('http:', 'ws:') + '/');
 relay.onmessage = ({data}) => handleRelayFrame(JSON.parse(data));
 ```
-
-`window.wingmanGraspTransport` remains an alias of the same frozen object.
-Consumers use the legacy name only when `window.fipsTransport` is undefined;
-an incompatible canonical capability must fail closed, never select the alias.
-The existing `wingman-grasp-transport-ready` event is unchanged and fires after
-both names are installed. Validate version and required methods before use.
 
 Connect requires native consent for one exact FIPS identity and port. No slash suffix,
 path, query, credentials or fragment is accepted. Native consent displays the page,
