@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/app_config.dart';
 import '../../core/nostr_crypto.dart';
+import '../../core/signer_vault.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_runtime_service.dart';
 import 'drive_protocol.dart';
@@ -22,10 +22,13 @@ class DriveHost extends ChangeNotifier {
       this.helperPath,
       this.beforeReplay,
       FipsRuntimeService? fipsRuntime,
+      SignerVaultSecretStore? hostSecretStore,
       this.listenAddress,
       this.listenPort = 7345,
       this.now = DateTime.now})
-      : _fipsRuntime = fipsRuntime ?? FipsRuntimeService();
+      : _fipsRuntime = fipsRuntime ?? FipsRuntimeService(),
+        _hostSecretStore =
+            hostSecretStore ?? SecureStorageSignerVaultSecretStore();
   final Future<NostrIdentity> Function()? identityLoader;
   final Future<String> Function()? endpointLoader;
   final Future<Map<String, dynamic>> Function(
@@ -33,6 +36,7 @@ class DriveHost extends ChangeNotifier {
   final String? helperPath;
   final Future<void> Function()? beforeReplay;
   final FipsRuntimeService _fipsRuntime;
+  final SignerVaultSecretStore _hostSecretStore;
   int get activeRequests => _active.values.fold<int>(0, (n, x) => n + x.length);
   final InternetAddress? listenAddress;
   final int listenPort;
@@ -41,6 +45,7 @@ class DriveHost extends ChangeNotifier {
 
   static const channel = MethodChannel('au.com.otherstuff.wingman/drive');
   static const storageKey = 'wingman.drive.shares.v1';
+  static const hostIdentityStorageKey = 'wingman.drive.host-key.v1';
   final List<Map<String, dynamic>> shares = [];
   final Map<String, DrivePolicy> _policies = {};
   final Map<String, Set<HttpResponse>> _active = {};
@@ -76,11 +81,12 @@ class DriveHost extends ChangeNotifier {
       if (identityLoader != null) {
         _hostIdentity = await identityLoader!();
       } else {
-        const secure = FlutterSecureStorage();
-        var secret = await secure.read(key: 'wingman.drive.host-key.v1');
+        var secret = await _hostSecretStore.read(hostIdentityStorageKey);
         if (generation != _generation) return;
-        secret ??= NostrCrypto.generateIdentity().nsec;
-        await secure.write(key: 'wingman.drive.host-key.v1', value: secret);
+        if (secret == null) {
+          secret = NostrCrypto.generateIdentity().nsec;
+          await _hostSecretStore.write(hostIdentityStorageKey, secret);
+        }
         if (generation != _generation) return;
         _hostIdentity = NostrCrypto.importIdentity(secret);
       }

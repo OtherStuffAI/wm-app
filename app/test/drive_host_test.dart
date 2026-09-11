@@ -1,7 +1,12 @@
+// ignore_for_file: depend_on_referenced_packages
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
+import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
@@ -12,6 +17,88 @@ import 'package:wingman_app/src/features/drive/drive_host.dart';
 import 'package:wingman_app/src/features/drive/drive_screen.dart';
 
 void main() {
+  test('default host identity storage uses non-data-protection macOS keychain',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final previousStoragePlatform = FlutterSecureStoragePlatform.instance;
+    final previousTargetPlatform = debugDefaultTargetPlatformOverride;
+    final storage = _RecordingSecureStoragePlatform({});
+    FlutterSecureStoragePlatform.instance = storage;
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final host = DriveHost(
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+
+    try {
+      await host.configure(config);
+
+      expect(host.listeningPort, isNotNull, reason: host.message);
+      expect(storage.reads, hasLength(1));
+      expect(storage.reads.single.key, DriveHost.hostIdentityStorageKey);
+      expect(
+          storage.reads.single.options['usesDataProtectionKeychain'], 'false');
+      expect(storage.writes, hasLength(1));
+      expect(storage.writes.single.key, DriveHost.hostIdentityStorageKey);
+      expect(
+          storage.writes.single.options['usesDataProtectionKeychain'], 'false');
+      expect(storage.data[DriveHost.hostIdentityStorageKey], isNotNull);
+    } finally {
+      await host.stop();
+      host.dispose();
+      debugDefaultTargetPlatformOverride = previousTargetPlatform;
+      FlutterSecureStoragePlatform.instance = previousStoragePlatform;
+    }
+  });
+
+  test('default host identity storage preserves an existing host key',
+      () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final previousStoragePlatform = FlutterSecureStoragePlatform.instance;
+    final previousTargetPlatform = debugDefaultTargetPlatformOverride;
+    final existing = NostrCrypto.generateIdentity();
+    final storage = _RecordingSecureStoragePlatform({
+      DriveHost.hostIdentityStorageKey: existing.nsec,
+    });
+    FlutterSecureStoragePlatform.instance = storage;
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final host = DriveHost(
+      endpointLoader: () async => 'http://${service.npub}.fips:7345',
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+
+    try {
+      await host.configure(config);
+
+      expect(host.listeningPort, isNotNull, reason: host.message);
+      expect(storage.writes, isEmpty);
+      expect(storage.data[DriveHost.hostIdentityStorageKey], existing.nsec);
+    } finally {
+      await host.stop();
+      host.dispose();
+      debugDefaultTargetPlatformOverride = previousTargetPlatform;
+      FlutterSecureStoragePlatform.instance = previousStoragePlatform;
+    }
+  });
+
   test('startup passively reports missing FIPS identity and retry recovers',
       () async {
     SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
@@ -332,6 +419,42 @@ void main() {
       await root.delete(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 5)));
+}
+
+class _SecureStorageCall {
+  const _SecureStorageCall(this.key, this.options);
+
+  final String key;
+  final Map<String, String> options;
+
+  @override
+  String toString() => '_SecureStorageCall($key, $options)';
+}
+
+class _RecordingSecureStoragePlatform extends TestFlutterSecureStoragePlatform {
+  _RecordingSecureStoragePlatform(super.data);
+
+  final reads = <_SecureStorageCall>[];
+  final writes = <_SecureStorageCall>[];
+
+  @override
+  Future<String?> read({
+    required String key,
+    required Map<String, String> options,
+  }) {
+    reads.add(_SecureStorageCall(key, Map<String, String>.from(options)));
+    return super.read(key: key, options: options);
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String value,
+    required Map<String, String> options,
+  }) {
+    writes.add(_SecureStorageCall(key, Map<String, String>.from(options)));
+    return super.write(key: key, value: value, options: options);
+  }
 }
 
 class _CountingDriveHost extends DriveHost {
