@@ -1892,7 +1892,8 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     final origin = SignerPolicy.normalizeOrigin(url);
-    if (Uri.tryParse(origin)?.scheme != 'https') return;
+    final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    if (Uri.tryParse(origin)?.scheme != 'https' && origin != local) return;
     late final GraspFipsBrowserBridge bridge;
     bool current() =>
         mounted &&

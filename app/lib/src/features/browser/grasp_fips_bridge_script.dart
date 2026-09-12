@@ -183,12 +183,14 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   }
   const transport = Object.freeze({
     version:1, available:true,
+    capabilities:Object.freeze({connect:true, connectDrive:true, fetch:true, save:false, WebSocket:true}),
     async connect(options) {
       const current = generation;
       const result = await rpc('connect', options);
       if (revoked || current !== generation) throw new Error('Connection revoked.');
       pair = result; return pair;
     },
+    async connectDrive(options) { return this.connect(options); },
     fetch:nativeFetch,
     WebSocket:NativeWebSocket,
     detachWorker(worker) { workerPorts.get(worker)?.(); workerPorts.delete(worker); },

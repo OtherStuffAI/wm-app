@@ -143,6 +143,8 @@ void main() {
         });
     final token =
         RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+    expect(bridge.script, contains('connectDrive'));
+    expect(bridge.script, contains('save:false'));
     Future<void> rpc(String method, Map<String, dynamic> params) =>
         bridge.receive(jsonEncode({
           'token': token,

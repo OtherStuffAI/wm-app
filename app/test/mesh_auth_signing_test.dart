@@ -67,8 +67,9 @@ class AuthStore extends SignerStore {
 }
 
 class Harness {
-  Harness({this.realBridge});
+  Harness({this.realBridge, this.localFlightDeckUrl = 'https://flightdeck.example'});
   final NativeCoreBridge? realBridge;
+  final String localFlightDeckUrl;
   final signer = AuthSigner();
   final store = AuthStore();
   final key = GlobalKey<BrowserScreenState>();
@@ -86,7 +87,7 @@ class Harness {
               bridge: realBridge ?? signer,
               signerStore: store,
               profileRelayClient: NostrProfileRelayClient(relays: const []),
-              localFlightDeckUrl: 'https://flightdeck.example',
+              localFlightDeckUrl: localFlightDeckUrl,
               onOpenDrawer: () {},
               onOpenSetup: () {},
               onOpenSigner: () {},
