@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../../app/lib/src/features/browser/grasp_fi
   .split("=> '''\n")[1].split("\n''';")[0]
   .replace('${jsonEncode(pageOrigin)}', JSON.stringify('https://example.com'))
   .replace('${jsonEncode(documentToken)}', JSON.stringify('test-token'));
-function host({ frame = false, origin = 'https://example.com' } = {}) {
+function host({ frame = false, origin = 'https://example.com', timer = setTimeout } = {}) {
   const window = new EventTarget();
   window.top = frame ? {} : window;
   window.nostr = { signEvent() { throw Error('Unexpected signing'); } };
@@ -19,7 +19,7 @@ function host({ frame = false, origin = 'https://example.com' } = {}) {
     window, location: { origin }, EventTarget, Event, MessageEvent,
     Request, Response, ReadableStream, AbortController, DOMException,
     Blob, URL, TextEncoder, Uint8Array, ArrayBuffer, MessageChannel,
-    setTimeout, clearTimeout, atob, btoa,
+    setTimeout: timer, clearTimeout, atob, btoa,
     WingmanGrasp: { postMessage(message) {
       const call = JSON.parse(message); calls.push(call);
       let result;
@@ -126,4 +126,35 @@ test('late abort preserves a native committed save and export outcome', async ()
   };
   const result=await h.window.fipsTransport.save(new Response('data'),{name:'file',signal:controller.signal});
   assert.equal(result.saved,true); assert.equal(result.committed,true); assert.equal(result.exportCompleted,false);
+});
+
+
+test('save picker and export wait for the user without RPC deadlines', async () => {
+  const deadlines=[];
+  const h=host({timer:(fn,ms)=>{deadlines.push(ms);return setTimeout(fn,ms);}});h.run();
+  const original=h.window.__wingmanGraspReply;
+  h.window.__wingmanGraspReply=(secret,id,result,error)=>{
+    const call=h.calls.find(c=>c.id===id);
+    return original(secret,id,call?.method==='saveBegin'?'save-id':result,error);
+  };
+  await h.window.fipsTransport.save(new Response(new Uint8Array(0)),{name:'empty.txt'});
+  assert.deepEqual(deadlines,[]);
+});
+
+test('cancel during save picker promptly aborts and cleans a late native destination', async () => {
+  const h=host();h.run();const controller=new AbortController();let pendingReply;
+  const original=h.window.__wingmanGraspReply;
+  h.window.__wingmanGraspReply=(secret,id,result,error)=>{
+    if(h.calls.find(c=>c.id===id)?.method==='saveBegin') {pendingReply=()=>original(secret,id,'late-save',error);return;}
+    return original(secret,id,result,error);
+  };
+  let cancelled=false;
+  const response=new Response(new ReadableStream({cancel(){cancelled=true;}}));
+  const saving=h.window.fipsTransport.save(response,{name:'file.txt',signal:controller.signal});
+  await new Promise(resolve=>setImmediate(resolve));controller.abort();
+  await assert.rejects(saving,{name:'AbortError'});
+  assert.equal(cancelled,true);
+  pendingReply();await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(h.calls.some(c=>c.method==='saveCancel'&&c.params.saveId==='late-save'));
+  assert.equal(h.calls.some(c=>c.method==='saveWrite'||c.method==='saveFinish'),false);
 });

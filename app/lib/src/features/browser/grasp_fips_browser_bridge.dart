@@ -134,7 +134,15 @@ class GraspFipsBrowserBridge {
                 : error is StateError && error.message == 'unavailable'
                     ? 'unavailable'
                     : 'offline')
-            : 'Transport failed or revoked.';
+            : operation?.startsWith('save') == true
+                ? (error is StateError && error.message == 'cancelled'
+                    ? 'save-cancelled'
+                    : operation == 'saveBegin'
+                        ? 'save-dialog-failed'
+                        : operation == 'saveWrite'
+                            ? 'save-write-failed'
+                            : 'save-finish-failed')
+                : 'Transport failed or revoked.';
         await reply(
             'window.__wingmanGraspReply?.(${jsonEncode(_token)},${jsonEncode(id)},null,${jsonEncode(errorMessage)})');
       }

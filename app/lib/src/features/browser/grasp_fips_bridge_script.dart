@@ -16,7 +16,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   const rpc = (method, params = {}) => new Promise((resolve, reject) => {
     if (revoked) { reject(new Error('GRASP grant revoked.')); return; }
     const id = String(++seq);
-    const timer = (method === 'pull' || method === 'connect' || method === 'connectDrive' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
+    const timer = (method === 'pull' || method === 'connect' || method === 'connectDrive' || method === 'saveBegin' || method === 'saveFinish' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
     pending.set(id, {resolve, reject, timer});
     WingmanGrasp.postMessage(JSON.stringify({token, id, method, params}));
   });
@@ -190,7 +190,13 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       let id, reader, done=false, total=0;
       const abort=()=>{reader?.cancel().catch(()=>{});if(id)rpc('saveCancel',{saveId:id}).catch(()=>{});};
       try {
-        id=await rpc('saveBegin',{name});
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        const opening=rpc('saveBegin',{name});
+        let cancelOpening;
+        const interrupted=new Promise((_,reject)=>{cancelOpening=()=>reject(new DOMException('Aborted','AbortError'));signal?.addEventListener('abort',cancelOpening,{once:true});});
+        try { id=await Promise.race([opening,interrupted]); }
+        catch(error){opening.then(saveId=>rpc('saveCancel',{saveId})).catch(()=>{});throw error;}
+        finally{signal?.removeEventListener('abort',cancelOpening);}
         if(signal?.aborted)throw new DOMException('Aborted','AbortError');
         signal?.addEventListener('abort',abort,{once:true}); reader=response.body.getReader();
         while(true){if(signal?.aborted)throw new DOMException('Aborted','AbortError');const chunk=await reader.read();if(chunk.done)break;
@@ -198,7 +204,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         if(signal?.aborted)throw new DOMException('Aborted','AbortError');
         const expected=response.headers.get('content-length');if(expected!==null&&total!==Number(expected))throw new Error('Changed or interrupted file');
         const result=await rpc('saveFinish',{saveId:id,open});if(signal?.aborted&&!result?.committed)throw new DOMException('Cancelled','AbortError');done=true;return result||{saved:true};
-      }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
+      }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!reader)await response.body?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
     },
     async connect(options) {
       const current = generation;
