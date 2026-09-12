@@ -1463,7 +1463,16 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     if (tab.currentUrl == url && tab.addressController.text == url) return;
-    tab.signerDocumentEpoch++;
+    final previousOrigin = SignerPolicy.normalizeOrigin(
+        tab.currentUrl ?? tab.addressController.text);
+    final nextOrigin = SignerPolicy.normalizeOrigin(url);
+    if (previousOrigin.isNotEmpty &&
+        nextOrigin.isNotEmpty &&
+        previousOrigin != nextOrigin) {
+      tab.towerBridge?.close();
+      tab.towerBridge = null;
+      tab.revokeSigningDocument();
+    }
     setState(() {
       tab.isHome = false;
       tab.currentUrl = url;
@@ -1911,31 +1920,37 @@ class BrowserScreenState extends State<BrowserScreen> {
           ? widget.onPrepareFipsNavigation!(endpoint)
           : 'Document revoked.',
       approve: (endpoint) async {
-        if (!current() || _activeTabId != tab.id) return false;
+        if (!current() || _activeTabId != tab.id) {
+          return GraspFipsConsentResult.unavailable;
+        }
         final target = Uri.parse(endpoint);
         final approved = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Connect to private FIPS service?'),
-                content: SelectableText(
-                    'Allow this page to read and send HTTP and relay data '
-                    'to the announced service for this tab? The announcement is supplied by '
-                    'the site. Approve only a service you recognise. Signing requests are '
-                    'approved separately. Reload, close the tab, lock, or disconnect to revoke.\n\n'
-                    'Page: $origin\nFIPS node: ${target.host.replaceFirst('.fips', '')}\n'
-                    'Port: ${target.port}\nIdentity: $identity'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Deny')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Connect')),
-                ],
-              ),
-            ) ??
-            false;
-        return approved && current() && _activeTabId == tab.id;
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Connect to private FIPS service?'),
+            content: SelectableText(
+                'Allow this page to read and send HTTP and relay data '
+                'to the announced service for this tab? The announcement is supplied by '
+                'the site. Approve only a service you recognise. Signing requests are '
+                'approved separately. Reload, close the tab, lock, or disconnect to revoke.\n\n'
+                'Page: $origin\nFIPS node: ${target.host.replaceFirst('.fips', '')}\n'
+                'Port: ${target.port}\nIdentity: $identity'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Deny')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Connect')),
+            ],
+          ),
+        );
+        if (!current() || _activeTabId != tab.id) {
+          return GraspFipsConsentResult.unavailable;
+        }
+        if (approved == true) return GraspFipsConsentResult.approved;
+        if (approved == false) return GraspFipsConsentResult.denied;
+        return GraspFipsConsentResult.unavailable;
       },
     );
     tab.graspBridge = bridge;

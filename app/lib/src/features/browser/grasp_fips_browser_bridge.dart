@@ -12,6 +12,8 @@ import 'mesh_auth_request.dart';
 import '../drive/drive_native_save.dart';
 
 /// Ephemeral transport grant for one native-verified top-level document.
+enum GraspFipsConsentResult { approved, denied, unavailable }
+
 class GraspFipsBrowserBridge {
   GraspFipsBrowserBridge(
       {required this.pageOrigin,
@@ -20,7 +22,7 @@ class GraspFipsBrowserBridge {
       required this.reply,
       this.transportFactory});
   final String pageOrigin;
-  final Future<bool> Function(String endpoint) approve;
+  final Future<GraspFipsConsentResult> Function(String endpoint) approve;
   final Future<String?> Function(String endpoint) prepare;
   final Future<void> Function(String script) reply;
   final GraspFipsTransport Function(String endpoint)? transportFactory;
@@ -129,7 +131,9 @@ class GraspFipsBrowserBridge {
         final errorMessage = operation == 'connectDrive'
             ? (error is StateError && error.message == 'denied'
                 ? 'consent-denied'
-                : 'offline')
+                : error is StateError && error.message == 'unavailable'
+                    ? 'unavailable'
+                    : 'offline')
             : 'Transport failed or revoked.';
         await reply(
             'window.__wingmanGraspReply?.(${jsonEncode(_token)},${jsonEncode(id)},null,${jsonEncode(errorMessage)})');
@@ -144,15 +148,20 @@ class GraspFipsBrowserBridge {
       if (_drive.containsKey(endpoint)) {
         return {'version': 1, 'endpoint': endpoint};
       }
-      if (_connecting || _drive.length >= 8 || _denied.contains(endpoint)) {
+      if (_denied.contains(endpoint)) {
         throw StateError('denied');
       }
+      if (_connecting || _drive.length >= 8) throw StateError('unavailable');
       _connecting = true;
       final epoch = _epoch;
       try {
-        if (!await approve(endpoint)) {
+        final consent = await approve(endpoint);
+        if (consent == GraspFipsConsentResult.denied) {
           _denied.add(endpoint);
           throw StateError('denied');
+        }
+        if (consent != GraspFipsConsentResult.approved) {
+          throw StateError('unavailable');
         }
         if (_closed || epoch != _epoch) throw StateError('revoked');
         if (await prepare('$endpoint/') != null) throw StateError('offline');
@@ -240,9 +249,10 @@ class GraspFipsBrowserBridge {
     if (method == 'connect') {
       final endpoint = p['endpoint'] as String;
       TowerFipsProxy.validateEndpoint(endpoint);
-      if (_connecting || _denied.contains(endpoint)) {
+      if (_denied.contains(endpoint)) {
         throw StateError('Connection denied.');
       }
+      if (_connecting) throw StateError('Connection unavailable.');
       if (_transport?.endpoint == endpoint) {
         return {'version': 1, 'endpoint': endpoint};
       }
@@ -253,9 +263,13 @@ class GraspFipsBrowserBridge {
       _connecting = true;
       final epoch = _epoch;
       try {
-        if (!await approve(endpoint)) {
+        final consent = await approve(endpoint);
+        if (consent == GraspFipsConsentResult.denied) {
           _denied.add(endpoint);
           throw StateError('Denied.');
+        }
+        if (consent != GraspFipsConsentResult.approved) {
+          throw StateError('Connection unavailable.');
         }
         if (_closed || epoch != _epoch) throw StateError('Revoked.');
         final failure = await prepare('$endpoint/');

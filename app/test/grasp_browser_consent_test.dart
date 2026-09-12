@@ -30,8 +30,8 @@ Future<String> start(Harness h, WidgetTester tester) async {
   h.token = jsonDecode(RegExp(r'const signerDocumentToken = (.*);')
       .firstMatch(signer)!
       .group(1)!);
-  final script = fakeExecutedJavaScripts
-      .lastWhere((s) => s.contains("'fipsTransport'"));
+  final script =
+      fakeExecutedJavaScripts.lastWhere((s) => s.contains("'fipsTransport'"));
   return RegExp(r'const token = "([^"]+)"').firstMatch(script)!.group(1)!;
 }
 
@@ -42,6 +42,15 @@ void rpc(String token, String method) => submitFakeJavaScriptMessage(
       'token': token,
       'id': method,
       'method': method,
+      'params': {'endpoint': endpoint}
+    }));
+void driveRpc(String token, String id) => submitFakeJavaScriptMessage(
+    controllerIndex: 0,
+    channel: 'WingmanGrasp',
+    message: jsonEncode({
+      'token': token,
+      'id': id,
+      'method': 'connectDrive',
       'params': {'endpoint': endpoint}
     }));
 Future<void> connect(String token, WidgetTester tester) async {
@@ -95,6 +104,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.signer.events.length, 1);
     expect(find.text('Approve private app authentication?'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('same-document Files route keeps Drive consent prompt eligible',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    submitFakeUrlChange(
+        controllerIndex: 0, url: 'https://gitworkshop.example/files?tab=drive');
+    await tester.pumpAndSettle();
+    driveRpc(token, 'drive-after-spa-route');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsOneWidget);
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('full navigation revokes old Drive bridge without prompting',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    await submitFakeNavigationRequest(
+        controllerIndex: 0,
+        url: 'https://gitworkshop.example/other-document',
+        isMainFrame: true);
+    driveRpc(token, 'old-document-drive');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('cross-origin URL callback revokes old Drive bridge',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    submitFakeUrlChange(controllerIndex: 0, url: 'https://other.example/files');
+    await tester.pumpAndSettle();
+    driveRpc(token, 'old-origin-drive');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('explicit Drive denial remains remembered for the document',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    driveRpc(token, 'first-drive');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsOneWidget);
+    await tester.tap(find.text('Deny'));
+    await tester.pumpAndSettle();
+    driveRpc(token, 'second-drive');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   for (final reason in [

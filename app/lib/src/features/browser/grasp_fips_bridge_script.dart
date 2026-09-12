@@ -16,7 +16,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   const rpc = (method, params = {}) => new Promise((resolve, reject) => {
     if (revoked) { reject(new Error('GRASP grant revoked.')); return; }
     const id = String(++seq);
-    const timer = (method === 'pull' || method === 'connect' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
+    const timer = (method === 'pull' || method === 'connect' || method === 'connectDrive' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
     pending.set(id, {resolve, reject, timer});
     WingmanGrasp.postMessage(JSON.stringify({token, id, method, params}));
   });

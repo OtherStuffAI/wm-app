@@ -131,7 +131,7 @@ void main() {
     dynamic result;
     final bridge = GraspFipsBrowserBridge(
         pageOrigin: 'https://app.example',
-        approve: (_) async => true,
+        approve: (_) async => GraspFipsConsentResult.approved,
         prepare: (_) async => null,
         transportFactory: (_) => transport,
         reply: (s) async {
@@ -203,7 +203,9 @@ void main() {
         pageOrigin: 'https://app.example',
         approve: (_) {
           prompts++;
-          return gate.future;
+          return gate.future.then((approved) => approved
+              ? GraspFipsConsentResult.approved
+              : GraspFipsConsentResult.denied);
         },
         prepare: (_) async => null,
         reply: (_) async {});
@@ -224,7 +226,7 @@ void main() {
         pageOrigin: 'https://app.example',
         approve: (_) async {
           prompts++;
-          return false;
+          return GraspFipsConsentResult.denied;
         },
         prepare: (_) async => null,
         reply: (_) async {});
@@ -241,4 +243,86 @@ void main() {
     expect(prompts, 2);
     denied.close();
   });
+  test('transient unavailable connectDrive consent is not remembered',
+      () async {
+    var prompts = 0;
+    var first = true;
+    final errors = <String>[];
+    final bridge = GraspFipsBrowserBridge(
+        pageOrigin: 'https://app.example',
+        approve: (_) async {
+          prompts++;
+          if (first) {
+            first = false;
+            return GraspFipsConsentResult.unavailable;
+          }
+          return GraspFipsConsentResult.approved;
+        },
+        prepare: (_) async => null,
+        transportFactory: (_) => transport,
+        reply: (script) async {
+          final match = RegExp(r'null,"([^"]+)"\)$').firstMatch(script);
+          if (match != null) errors.add(match.group(1)!);
+        });
+    final token =
+        RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+    Future<void> rpc(String id) => bridge.receive(jsonEncode({
+          'token': token,
+          'id': id,
+          'method': 'connectDrive',
+          'params': {'endpoint': endpoint}
+        }));
+    await rpc('first');
+    expect(bridge.hasDrive, isFalse);
+    expect(errors, contains('unavailable'));
+    await rpc('second');
+    expect(prompts, 2);
+    expect(bridge.hasDrive, isTrue);
+    bridge.close();
+  });
+  test('duplicate connectDrive does not cache endpoint denial', () async {
+    var prompts = 0;
+    final gate = Completer<GraspFipsConsentResult>();
+    final bridge = GraspFipsBrowserBridge(
+        pageOrigin: 'https://app.example',
+        approve: (_) {
+          prompts++;
+          return gate.future;
+        },
+        prepare: (_) async => null,
+        transportFactory: (_) => transport,
+        reply: (_) async {});
+    final token =
+        RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+    Future<void> rpc(String id) => bridge.receive(jsonEncode({
+          'token': token,
+          'id': id,
+          'method': 'connectDrive',
+          'params': {'endpoint': endpoint}
+        }));
+    final first = rpc('first');
+    await Future<void>.delayed(Duration.zero);
+    await rpc('duplicate');
+    expect(prompts, 1);
+    gate.complete(GraspFipsConsentResult.approved);
+    await first;
+    expect(bridge.hasDrive, isTrue);
+    bridge.close();
+  });
+  test('connectDrive waits for native consent instead of timing out', () {
+    expect(
+        bridgeTimerGuard(GraspFipsBrowserBridge(
+          pageOrigin: 'https://app.example',
+          approve: (_) async => GraspFipsConsentResult.approved,
+          prepare: (_) async => null,
+          reply: (_) async {},
+        ).script),
+        isTrue);
+  });
+}
+
+bool bridgeTimerGuard(String script) {
+  final timerLine =
+      script.split('\n').firstWhere((line) => line.contains('const timer ='));
+  return timerLine.contains("method === 'connectDrive'");
 }
