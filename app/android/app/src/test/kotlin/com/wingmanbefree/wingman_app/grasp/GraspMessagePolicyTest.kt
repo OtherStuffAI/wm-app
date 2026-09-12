@@ -15,6 +15,12 @@ class GraspMessagePolicyTest {
         assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://app.example", "http://app.example"))
     }
 
+    @Test fun `bundled Flight Deck is exact port and main frame only`() {
+        assertTrue(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47831", "http://127.0.0.1:47831/drive"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", false, "http://127.0.0.1:47831", "http://127.0.0.1:47831/drive"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47832", "http://127.0.0.1:47832/drive"))
+    }
+
     @Test fun `signer and tower reject iframe spoofing but preserve HTTP top frames`() {
         for (name in listOf("WingmanSigner", "WingmanTower")) {
             assertTrue(GraspMessagePolicy.accepts(name, true, "http://localhost:8080", "http://localhost:8080/app"))

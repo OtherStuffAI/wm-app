@@ -6,9 +6,9 @@ with tempfile.TemporaryDirectory(prefix='wmapp-tower-wk-') as tmp:
     # Exercise the actual FD consumer together with native production JS/Dart.
     fd=pathlib.Path(os.environ.get('FLIGHT_DECK_DIR', root.parent/'flightdeck'))
     entry=pathlib.Path(tmp)/'consumer.js'
-    entry.write_text("import * as transport from "+repr(str(fd/'src/tower-transport.js'))+"; globalThis.fixtureTransport=transport;")
+    entry.write_text("import {getSharedDb} from "+repr(str(fd/'src/db.js'))+"; import * as transport from "+repr(str(fd/'src/tower-transport.js'))+"; getSharedDb(); globalThis.fixtureTransport=transport;")
     bundle=pathlib.Path(tmp)/'consumer-bundle.js'
-    subprocess.run(['bun','build',str(entry),'--target=browser','--outfile='+str(bundle)],check=True,cwd=fd)
+    subprocess.run(['bun','build',str(entry),'--target=browser','--format=iife','--define','import.meta.env={}','--define','__FLIGHT_DECK_PG_APP_NPUB__="npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98"','--outfile='+str(bundle)],check=True,cwd=fd)
     integration=pathlib.Path(tmp)/'integration.js'
     integration.write_text(bundle.read_text()+"\n"+(root/'tools/tower_bridge/wk_integration.js').read_text())
     exe=str(pathlib.Path(tmp)/'probe')
