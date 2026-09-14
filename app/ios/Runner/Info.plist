@@ -43,6 +43,12 @@
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose a photo to use as your profile avatar.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_fips._udp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Find nearby FIPS peers on your local network.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

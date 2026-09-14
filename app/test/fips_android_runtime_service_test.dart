@@ -17,7 +17,9 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   int inspectCalls = 0;
   int startCalls = 0;
   int peerCalls = 0;
+  int probeCalls = 0;
   int exportCalls = 0;
+  String? lastProbeNpub;
   final journalEvents = <String>[];
   Completer<void>? startGate;
   Object? inspectError;
@@ -55,10 +57,14 @@ class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
   }
 
   @override
-  Future<Map<String, dynamic>> probe(String npub) async => const {
-        'ok': true,
-        'detail': 'Probe completed: ok.',
-      };
+  Future<Map<String, dynamic>> probe(String npub) async {
+    probeCalls += 1;
+    lastProbeNpub = npub;
+    return const {
+      'ok': true,
+      'detail': 'Probe completed: ok.',
+    };
+  }
 
   @override
   Future<Map<String, dynamic>> stop() async {

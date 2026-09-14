@@ -31,13 +31,20 @@ node:
   buffers: {packet_channel: 64, tun_channel: 64, dns_channel: 16}
   session: {pending_max_destinations: 16}
   rendezvous:
-    nostr: {enabled: false}
-    lan: {enabled: false}
+    nostr:
+      enabled: true
+      policy: open
+      app: "wingman-fips-poc-v1"
+      advertise: true
+      share_local_candidates: true
+    lan:
+      enabled: true
+      scope: "wingman-fips-poc-v1"
   control: {enabled: true, socket_path: "fips.sock"}
 tun: {enabled: true, mtu: 1280}
 dns: {enabled: true, bind_addr: "::1", port: 0}
 transports:
-  udp: {bind_addr: "0.0.0.0:0", accept_connections: true, outbound_only: false}
+  udp: {bind_addr: "0.0.0.0:0", advertise_on_nostr: true, accept_connections: true, outbound_only: false}
 peers:
   - npub: "npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98"
     alias: "wingman-bootstrap-poc"
@@ -242,6 +249,34 @@ fn peers() -> Value {
         Err(_) => json!({"connected":false}),
     }
 }
+fn probe(npub: &str) -> Value {
+    let start = match control(json!({"command":"probe_start","params":{"npub":npub}})) {
+        Ok(value) => value,
+        Err(_) => return json!({"ok":false,"detail":"FIPS probe could not start."}),
+    };
+    let Some(id) = start.pointer("/data/probe_id").and_then(Value::as_u64) else {
+        return json!({"ok":false,"detail":"FIPS probe was rejected."});
+    };
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_millis(500));
+        let report = match control(json!({"command":"probe_poll","params":{"probe_id":id}})) {
+            Ok(value) => value,
+            Err(_) => return json!({"ok":false,"detail":"FIPS probe status was unavailable."}),
+        };
+        let overall = report
+            .pointer("/data/overall")
+            .and_then(Value::as_str)
+            .unwrap_or("running");
+        if overall != "running" {
+            return json!({
+                "ok": overall == "ok",
+                "detail": format!("FIPS probe completed: {overall}.")
+            });
+        }
+    }
+    let _ = control(json!({"command":"probe_cancel","params":{"probe_id":id}}));
+    json!({"ok":false,"detail":"FIPS probe timed out."})
+}
 fn mesh_packet(packet: &[u8]) -> bool {
     packet.len() >= 40
         && packet.len() <= MAX_PACKET
@@ -317,6 +352,23 @@ pub extern "C" fn wm_fips_peers() -> *mut c_char {
     boundary(peers)
 }
 /// # Safety
+/// npub is a valid NUL-terminated UTF-8 string. Input is not retained.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wm_fips_probe(npub: *const c_char) -> *mut c_char {
+    boundary(|| {
+        if npub.is_null() {
+            return json!({"ok":false,"detail":"A FIPS node is required."});
+        }
+        let Ok(npub) = (unsafe { CStr::from_ptr(npub) }).to_str() else {
+            return json!({"ok":false,"detail":"Invalid FIPS node npub."});
+        };
+        if npub.len() != 63 || !npub.starts_with("npub1") {
+            return json!({"ok":false,"detail":"Invalid FIPS node npub."});
+        }
+        probe(npub)
+    })
+}
+/// # Safety
 /// ptr is NULL or an unfreed pointer returned by a wm_fips JSON function.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wm_fips_string_free(ptr: *mut c_char) {
@@ -387,10 +439,31 @@ mod tests {
                 "failed"
             );
             wm_fips_string_free(p);
+            let probe = wm_fips_probe(std::ptr::null());
+            let decoded: Value = serde_json::from_slice(CStr::from_ptr(probe).to_bytes()).unwrap();
+            assert_eq!(decoded["ok"], false);
+            assert!(decoded["detail"].as_str().unwrap().contains("required"));
+            wm_fips_string_free(probe);
             wm_fips_string_free(std::ptr::null_mut());
             assert_eq!(wm_fips_input(std::ptr::null(), 10), -1);
             assert_eq!(wm_fips_output(std::ptr::null_mut(), 4096), -1);
         }
+    }
+    #[test]
+    fn pinned_config_enables_wingman_rendezvous_and_bootstrap() {
+        const RENDEZVOUS_SCOPE: &str = "wingman-fips-poc-v1";
+        let config: fips::Config = serde_yaml::from_str(CONFIG).unwrap();
+        assert_eq!(config.peers.len(), 1);
+        assert_eq!(config.peers[0].npub, BOOTSTRAP);
+        assert!(CONFIG.contains("217.77.8.91:2121"));
+        assert!(CONFIG.contains(RENDEZVOUS_SCOPE));
+        assert!(CONFIG.contains("nostr:"));
+        assert!(CONFIG.contains("enabled: true"));
+        assert!(CONFIG.contains("policy: open"));
+        assert!(CONFIG.contains("share_local_candidates: true"));
+        assert!(CONFIG.contains("lan:"));
+        assert!(CONFIG.contains("advertise_on_nostr: true"));
+        assert!(CONFIG.contains("connect_policy: auto_connect"));
     }
     #[test]
     fn packet_lengths_and_destinations() {

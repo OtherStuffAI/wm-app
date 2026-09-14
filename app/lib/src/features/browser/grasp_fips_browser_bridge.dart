@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import '../../core/grasp_fips_transport.dart';
 import '../../core/tower_fips_proxy.dart';
@@ -61,6 +62,7 @@ class GraspFipsBrowserBridge {
 
   Future<void> receive(String message) async {
     String? id;
+    String? method;
     final epoch = _epoch;
     try {
       if (_closed || message.length > 1500000) return;
@@ -68,21 +70,69 @@ class GraspFipsBrowserBridge {
       if (value['token'] != _token) return;
       id = value['id'] as String;
       if (id.length > 128) return;
-      final result = await _call(value['method'] as String,
-          (value['params'] as Map).cast<String, dynamic>());
+      method = value['method'] as String;
+      final result =
+          await _call(method, (value['params'] as Map).cast<String, dynamic>());
       if (!_closed &&
-          (epoch == _epoch ||
-              value['method'] == 'connect' ||
-              value['method'] == 'disconnect')) {
+          (epoch == _epoch || method == 'connect' || method == 'disconnect')) {
         await reply(
             'window.__wingmanGraspReply?.(${jsonEncode(_token)},${jsonEncode(id)},${jsonEncode(result)},null)');
       }
-    } catch (_) {
+    } catch (error) {
       if (!_closed && id != null) {
         await reply(
-            'window.__wingmanGraspReply?.(${jsonEncode(_token)},${jsonEncode(id)},null,"GRASP transport denied, revoked, or failed. No public fallback.")');
+            'window.__wingmanGraspReply?.(${jsonEncode(_token)},${jsonEncode(id)},null,${jsonEncode(_safeFailure(method, error))})');
       }
     }
+  }
+
+  String _safeFailure(String? method, Object error) {
+    final text = error.toString().toLowerCase();
+    String stage(String suffix) {
+      switch (method) {
+        case 'connect':
+          return 'wmapp_grasp_connect_$suffix';
+        case 'open':
+          return 'wmapp_grasp_open_$suffix';
+        case 'write':
+          return 'wmapp_grasp_upload_$suffix';
+        case 'finish':
+          return 'wmapp_grasp_response_$suffix';
+        case 'pull':
+          return 'wmapp_grasp_stream_$suffix';
+        case 'wsOpen':
+          return 'wmapp_grasp_relay_open_$suffix';
+        case 'wsNext':
+          return 'wmapp_grasp_relay_stream_$suffix';
+        case 'wsSend':
+          return 'wmapp_grasp_relay_send_$suffix';
+        case 'wsClose':
+        case 'cancel':
+        case 'disconnect':
+          return 'wmapp_grasp_revoked';
+        default:
+          return 'wmapp_grasp_request_$suffix';
+      }
+    }
+
+    if (text.contains('denied')) return 'wmapp_grasp_consent_denied';
+    if (text.contains('revoked') || text.contains('closed')) {
+      return 'wmapp_grasp_revoked';
+    }
+    if (error is TimeoutException || text.contains('timed out')) {
+      return stage('timeout');
+    }
+    if (error is SocketException) return stage('socket_failed');
+    if (text.contains('unavailable')) return 'wmapp_grasp_unavailable';
+    if (text.contains('redirect')) return 'wmapp_grasp_redirect_rejected';
+    if (error is FormatException || text.contains('unapproved')) {
+      return stage('rejected');
+    }
+    if (text.contains('too many') || text.contains('busy')) {
+      return 'wmapp_grasp_busy';
+    }
+    if (text.contains('invalid')) return stage('invalid_state');
+    return stage('failed');
   }
 
   Future<dynamic> _call(String method, Map<String, dynamic> p) async {

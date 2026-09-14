@@ -7,6 +7,7 @@ char *wm_fips_start(const uint8_t *secret32, const char *private_directory);
 char *wm_fips_stop(void);
 char *wm_fips_status(void);
 char *wm_fips_peers(void);
+char *wm_fips_probe(const char *npub);
 void wm_fips_string_free(char *value);
 int32_t wm_fips_input(const uint8_t *bytes, size_t length);
 // Owned duplicate; close ONLY in DispatchSource cancellation handler. Do not

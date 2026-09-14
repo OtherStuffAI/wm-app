@@ -145,6 +145,8 @@ void main() {
         RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
     expect(bridge.script, contains('connectDrive'));
     expect(bridge.script, contains('save:false'));
+    expect(bridge.script, contains('new TypeError(failure)'));
+    expect(bridge.script, contains("error:safeError(error)"));
     Future<void> rpc(String method, Map<String, dynamic> params) =>
         bridge.receive(jsonEncode({
           'token': token,
@@ -198,6 +200,42 @@ void main() {
     expect(bridge.permitsAuthentication('signEvent', http), isFalse);
     bridge.close();
   });
+  test('native request failures return sanitized bridge diagnostics', () async {
+    final replies = <String>[];
+    final bridge = GraspFipsBrowserBridge(
+        pageOrigin: 'https://app.example',
+        approve: (_) async => true,
+        prepare: (_) async => null,
+        transportFactory: (_) => _FailingOpenTransport(endpoint),
+        reply: (script) async => replies.add(script));
+    final token =
+        RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+
+    Future<List<dynamic>> rpc(
+        String id, String method, Map<String, dynamic> params) async {
+      await bridge.receive(jsonEncode({
+        'token': token,
+        'id': id,
+        'method': method,
+        'params': params,
+      }));
+      final reply = replies.last;
+      return jsonDecode(
+              '[${reply.substring(reply.indexOf('(') + 1, reply.length - 1)}]')
+          as List<dynamic>;
+    }
+
+    final connected = await rpc('connect', 'connect', {'endpoint': endpoint});
+    expect(connected[2], {'version': 1, 'endpoint': endpoint});
+    final failed = await rpc('open', 'open', {
+      'url': '$endpoint/drive/v1/share/list?path=',
+      'method': 'GET',
+      'headers': {'authorization': 'Nostr test'},
+    });
+    expect(failed[2], isNull);
+    expect(failed[3], 'wmapp_grasp_open_socket_failed');
+    bridge.close();
+  });
   test('denial not reprompted and stale consent cannot activate', () async {
     var prompts = 0;
     final gate = Completer<bool>();
@@ -243,4 +281,14 @@ void main() {
     expect(prompts, 2);
     denied.close();
   });
+}
+
+class _FailingOpenTransport extends GraspFipsTransport {
+  _FailingOpenTransport(super.endpoint);
+
+  @override
+  Future<GraspHttpRequest> open(
+      String url, String method, Map<String, dynamic> headers) {
+    throw const SocketException('private mesh address unavailable');
+  }
 }

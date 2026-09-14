@@ -57,4 +57,20 @@ void main() {
     native.inspectError = StateError('native extension exited');
     expect((await runtime.inspect()).state, FipsRuntimeState.failed);
   });
+  test('iPhone running runtime routes probe through native channel', () async {
+    final native = FakeAndroidFipsRuntime()
+      ..status = const {
+        'state': 'running',
+        'detail': 'FIPS VPN is connected.',
+      };
+    final runtime = service(native);
+    final npub = 'npub1${List.filled(58, 'q').join()}';
+
+    final result = await runtime.probe(npub);
+
+    expect(result.ok, isTrue);
+    expect(result.detail, 'Probe completed: ok.');
+    expect(native.probeCalls, 1);
+    expect(native.lastProbeNpub, npub);
+  });
 }

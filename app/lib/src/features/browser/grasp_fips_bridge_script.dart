@@ -25,7 +25,10 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     if (!p) return;
     pending.delete(id);
     clearTimeout(p.timer);
-    if (error) p.reject(new Error(error)); else p.resolve(result);
+    if (error) {
+      const failure = String(error);
+      p.reject(failure.startsWith('wmapp_grasp_') ? new TypeError(failure) : new Error(failure));
+    } else p.resolve(result);
   };
   window.__wingmanGraspRevoke = secret => {
     if (secret !== token) return;
@@ -41,6 +44,16 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     return btoa(s);
   };
   const decode = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const safeError = error => {
+    const message = String(error?.message || error || '');
+    if (message.startsWith('wmapp_grasp_')) return message;
+    if (error?.name === 'AbortError') return 'wmapp_grasp_cancelled';
+    if (/denied/i.test(message)) return 'wmapp_grasp_consent_denied';
+    if (/revoked|closed/i.test(message)) return 'wmapp_grasp_revoked';
+    if (/timed out|timeout/i.test(message)) return 'wmapp_grasp_request_timeout';
+    if (/unapproved|security/i.test(message)) return 'wmapp_grasp_request_rejected';
+    return 'wmapp_grasp_request_failed';
+  };
   const nativeFetch = async (input, init = {}) => {
     if (!pair) throw new Error('Connect to the selected GRASP service first.');
     const request = new Request(input, init);
@@ -200,7 +213,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       const requests = new Map();
       const cleanup = (close = true) => {
         for (const [id,state] of requests) {
-          state.abort.abort(); channel.port1.postMessage({type:'error',id});
+          state.abort.abort(); channel.port1.postMessage({type:'error',id,error:'wmapp_grasp_revoked'});
         }
         requests.clear();
         if (close) { channel.port1.close(); portCleanups.delete(cleanup); }
@@ -239,9 +252,9 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
             if (next.done) { requests.delete(id); send({type:'end',id}); }
             else send({type:'chunk',id,bodyBase64:encode(next.value)});
           }
-        } catch (_) {
+        } catch (error) {
           const state = requests.get(id); requests.delete(id);
-          state?.abort.abort(); send({type:'error',id});
+          state?.abort.abort(); send({type:'error',id,error:safeError(error)});
         }
       };
       channel.port1.start();

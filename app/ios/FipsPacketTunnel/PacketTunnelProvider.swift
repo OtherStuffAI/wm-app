@@ -4,6 +4,7 @@ import Network
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let worker = DispatchQueue(label: "com.wingman.fips.packet", qos: .userInitiated)
+    private let diagnostics = DispatchQueue(label: "com.wingman.fips.diagnostics", qos: .utility)
     private let lifecycle = FipsPacketLifecycle()
     private var generation: Int { lifecycle.generation }
     private var active: Bool { lifecycle.active }
@@ -191,14 +192,33 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        // Commands are fixed and contain no key/configuration access.
-        worker.async {
-            guard messageData.count <= 64 else { completionHandler?(nil); return }
-            let command = String(data: messageData, encoding: .utf8)
+        // Commands are fixed and contain no key/configuration access. Keep
+        // diagnostics off the packet worker so a probe cannot pause packet I/O.
+        diagnostics.async {
+            guard messageData.count <= 512 else { completionHandler?(nil); return }
+            let command: String?
+            let npub: String?
+            if let text = String(data: messageData, encoding: .utf8),
+                text == "inspect" || text == "peerStatus" {
+                command = text
+                npub = nil
+            } else if let value = (try? JSONSerialization.jsonObject(with: messageData)) as? [String: Any] {
+                command = value["command"] as? String
+                npub = value["npub"] as? String
+            } else {
+                command = nil
+                npub = nil
+            }
             let result: [String: Any]
             switch command {
             case "inspect": result = self.decode(wm_fips_status())
             case "peerStatus": result = self.decode(wm_fips_peers())
+            case "probe":
+                guard let npub, npub.count == 63, npub.hasPrefix("npub1") else {
+                    result = ["ok": false, "detail": "Invalid FIPS node npub."]
+                    break
+                }
+                result = npub.withCString { self.decode(wm_fips_probe($0)) }
             default: result = ["state": "failed", "detail": "Unsupported FIPS diagnostic command."]
             }
             completionHandler?(try? JSONSerialization.data(withJSONObject: result))

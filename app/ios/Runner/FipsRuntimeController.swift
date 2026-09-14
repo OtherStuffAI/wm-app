@@ -78,7 +78,15 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
             }
         case "peerStatus": message("peerStatus", result: result)
         case "probe":
-            result(["ok": false, "detail": "An end-to-end probe is not available on iPhone. Open the exact FIPS app URL to test access."])
+            let npub = (call.arguments as? [String: Any])?["npub"] as? String ?? ""
+            guard npub.count == 63, npub.hasPrefix("npub1"),
+                let payload = try? JSONSerialization.data(withJSONObject: ["command": "probe", "npub": npub]),
+                payload.count <= 512 else {
+                result(["ok": false, "detail": "Invalid FIPS node npub."]); return
+            }
+            message(payload, disconnected: ["ok": false, "detail": "FIPS VPN is not connected."],
+                failure: ["ok": false, "detail": "FIPS probe failed. Please retry."],
+                timeout: 18, result: result)
         case "journalEvent":
             let code = (call.arguments as? [String: Any])?["eventCode"] as? String ?? ""
             if ["dart_ui_retry", "dart_export_requested", "dart_export_failed", "dart_inspect_failed", "dart_start_failed"].contains(code) { record(code) }
@@ -184,25 +192,32 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.waitForStop(id, attempt: attempt + 1) }
     }
     private func message(_ command: String, result: @escaping FlutterResult) {
+        message(Data(command.utf8),
+            disconnected: command == "peerStatus" ? ["connected": false] : currentStatus(),
+            failure: value("failed", "FIPS diagnostics did not respond."),
+            timeout: 3,
+            result: result)
+    }
+    private func message(_ payload: Data, disconnected: [String: Any], failure: [String: Any], timeout: TimeInterval, result: @escaping FlutterResult) {
         guard let session = manager?.connection as? NETunnelProviderSession, session.status == .connected else {
-            result(command == "peerStatus" ? ["connected": false] : currentStatus()); return
+            result(disconnected); return
         }
         var completed = false
         let finish: ([String: Any]) -> Void = { value in
             guard !completed else { return }; completed = true; result(value)
         }
         do {
-            try session.sendProviderMessage(Data(command.utf8)) { data in
+            try session.sendProviderMessage(payload) { data in
                 DispatchQueue.main.async {
                     guard let data, data.count <= 16_384,
                         let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                        finish(self.value("failed", "FIPS diagnostics did not respond.")); return
+                        finish(failure); return
                     }
                     finish(value)
                 }
             }
-        } catch { finish(value("failed", "FIPS runtime is unavailable. Restart the VPN.")) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(self.value("failed", "FIPS diagnostics timed out.")) }
+        } catch { finish(failure) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(failure) }
     }
     private func exportDiagnostics(_ result: @escaping FlutterResult) {
         guard exportResult == nil else { result(["outcome": "failed", "detail": "An export is already open."]); return }
