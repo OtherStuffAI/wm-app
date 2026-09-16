@@ -22,7 +22,7 @@
     let revoked=false;try{await bridge.fetch(endpoint+'/health');}catch(_){revoked=true;}
     assert(revoked,'mismatch leaves no active mesh capability');
     const pair=await transport.connectTowerBridge(logicalTower,endpoint,serviceNpub);
-    transport.saveTowerTransportPreference(logicalTower,pair);
+    await transport.saveTowerTransportPreference(logicalTower,pair);
     await bridge.disconnect();
     await transport.initializeTowerTransports();
     assert(transport.getTowerTransport(logicalTower).transport==='native','saved preference reconnects without HTTPS');

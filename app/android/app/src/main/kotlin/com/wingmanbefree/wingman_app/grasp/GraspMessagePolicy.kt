@@ -12,7 +12,7 @@ object GraspMessagePolicy {
         if (!mainFrame || channel !in channels || currentUrl == null) return false
         val source = origin(sourceOrigin) ?: return false
         val current = origin(currentUrl) ?: return false
-        if (channel == "WingmanGrasp" && source.scheme != "https") return false
+        if (channel == "WingmanGrasp" && source.scheme != "https" && source != Origin("http", "127.0.0.1", 47831)) return false
         return source == current
     }
 

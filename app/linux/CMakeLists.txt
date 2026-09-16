@@ -164,3 +164,9 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Selected-folder filesystem helper; uses descriptor-relative no-follow reads.
+add_custom_target(drive_fs ALL
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/build_drive_fs.sh ${CMAKE_CURRENT_BINARY_DIR}/drive-fs
+  VERBATIM)
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/drive-fs/wmapp-drive-fs" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}")

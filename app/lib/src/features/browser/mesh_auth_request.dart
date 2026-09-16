@@ -23,8 +23,9 @@ class MeshAuthRequest {
       if (tags is! List) return null;
       final values = <String, String>{};
       relay = kind == 22242;
-      final allowed =
-          relay ? {'relay', 'challenge'} : {'u', 'method', 'payload'};
+      final allowed = relay
+          ? {'relay', 'challenge'}
+          : {'u', 'method', 'payload', 'workspace', 'share', 'nonce'};
       for (final tag in tags) {
         if (tag is! List ||
             tag.length != 2 ||

@@ -4875,6 +4875,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wmapp-drive-fs"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
 name = "wmapp-fips-android"
 version = "0.1.0"
 dependencies = [

@@ -7,6 +7,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   if (window !== window.top || location.origin !== ${jsonEncode(pageOrigin)}) return;
   const token = ${jsonEncode(documentToken)};
   let seq = 0, pair = null, revoked = false, generation = 0;
+  const drivePairs = new Map();
   const sockets = new Set();
   const activeStreams = new Set();
   const pending = new Map();
@@ -15,7 +16,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   const rpc = (method, params = {}) => new Promise((resolve, reject) => {
     if (revoked) { reject(new Error('GRASP grant revoked.')); return; }
     const id = String(++seq);
-    const timer = (method === 'pull' || method === 'connect' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
+    const timer = (method === 'pull' || method === 'connect' || method === 'connectDrive' || method === 'saveBegin' || method === 'saveFinish' || method === 'wsNext') ? null : setTimeout(() => { pending.delete(id); reject(new Error('GRASP FIPS request timed out.')); }, 30000);
     pending.set(id, {resolve, reject, timer});
     WingmanGrasp.postMessage(JSON.stringify({token, id, method, params}));
   });
@@ -25,14 +26,11 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     if (!p) return;
     pending.delete(id);
     clearTimeout(p.timer);
-    if (error) {
-      const failure = String(error);
-      p.reject(failure.startsWith('wmapp_grasp_') ? new TypeError(failure) : new Error(failure));
-    } else p.resolve(result);
+    if (error) p.reject(new Error(error)); else p.resolve(result);
   };
   window.__wingmanGraspRevoke = secret => {
     if (secret !== token) return;
-    revoked = true; pair = null; generation++;
+    revoked = true; pair = null; drivePairs.clear(); generation++;
     for (const socket of [...sockets]) socket._end(1006, '', false);
     for (const stop of [...activeStreams]) stop();
     for (const cleanup of [...portCleanups]) cleanup();
@@ -44,20 +42,11 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     return btoa(s);
   };
   const decode = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-  const safeError = error => {
-    const message = String(error?.message || error || '');
-    if (message.startsWith('wmapp_grasp_')) return message;
-    if (error?.name === 'AbortError') return 'wmapp_grasp_cancelled';
-    if (/denied/i.test(message)) return 'wmapp_grasp_consent_denied';
-    if (/revoked|closed/i.test(message)) return 'wmapp_grasp_revoked';
-    if (/timed out|timeout/i.test(message)) return 'wmapp_grasp_request_timeout';
-    if (/unapproved|security/i.test(message)) return 'wmapp_grasp_request_rejected';
-    return 'wmapp_grasp_request_failed';
-  };
   const nativeFetch = async (input, init = {}) => {
-    if (!pair) throw new Error('Connect to the selected GRASP service first.');
+    if (!pair && drivePairs.size===0) throw new Error('Connect to a service first.');
     const request = new Request(input, init);
-    if (!request.url.startsWith(pair.endpoint + '/'))
+    const approvedPair = drivePairs.get(new URL(request.url).origin) || pair;
+    if (!approvedPair || !request.url.startsWith(approvedPair.endpoint + '/'))
       throw new Error('Request must target the approved GRASP service.');
     if (request.signal.aborted) throw request.signal.reason || new DOMException('Aborted', 'AbortError');
     const headers = Object.fromEntries(request.headers.entries());
@@ -196,14 +185,34 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   }
   const transport = Object.freeze({
     version:1, available:true,
-    capabilities:Object.freeze({connect:true, connectDrive:true, fetch:true, save:false, WebSocket:true}),
+    capabilities:Object.freeze({connect:true, connectDrive:true, fetch:true, save:true, WebSocket:true}),
+    async connectDrive(options) { const g=generation; const result=await rpc('connectDrive',{endpoint:options.endpoint}); if(revoked||g!==generation)throw new Error('Revoked'); drivePairs.set(result.endpoint,result); return result; },
+    async save(response, {name, signal, onProgress, open=false}={}) {
+      let id, reader, done=false, total=0;
+      const abort=()=>{reader?.cancel().catch(()=>{});if(id)rpc('saveCancel',{saveId:id}).catch(()=>{});};
+      try {
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        const opening=rpc('saveBegin',{name});
+        let cancelOpening;
+        const interrupted=new Promise((_,reject)=>{cancelOpening=()=>reject(new DOMException('Aborted','AbortError'));signal?.addEventListener('abort',cancelOpening,{once:true});});
+        try { id=await Promise.race([opening,interrupted]); }
+        catch(error){opening.then(saveId=>rpc('saveCancel',{saveId})).catch(()=>{});throw error;}
+        finally{signal?.removeEventListener('abort',cancelOpening);}
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        signal?.addEventListener('abort',abort,{once:true}); reader=response.body.getReader();
+        while(true){if(signal?.aborted)throw new DOMException('Aborted','AbortError');const chunk=await reader.read();if(chunk.done)break;
+          for(let n=0;n<chunk.value.length;n+=65536){await rpc('saveWrite',{saveId:id,chunk:encode(chunk.value.subarray(n,n+65536))});total+=Math.min(65536,chunk.value.length-n);onProgress?.(total);}}
+        if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+        const expected=response.headers.get('content-length');if(expected!==null&&total!==Number(expected))throw new Error('Changed or interrupted file');
+        const result=await rpc('saveFinish',{saveId:id,open});if(signal?.aborted&&!result?.committed)throw new DOMException('Cancelled','AbortError');done=true;return result||{saved:true};
+      }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!reader)await response.body?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
+    },
     async connect(options) {
       const current = generation;
       const result = await rpc('connect', options);
       if (revoked || current !== generation) throw new Error('Connection revoked.');
       pair = result; return pair;
     },
-    async connectDrive(options) { return this.connect(options); },
     fetch:nativeFetch,
     WebSocket:NativeWebSocket,
     detachWorker(worker) { workerPorts.get(worker)?.(); workerPorts.delete(worker); },
@@ -213,7 +222,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       const requests = new Map();
       const cleanup = (close = true) => {
         for (const [id,state] of requests) {
-          state.abort.abort(); channel.port1.postMessage({type:'error',id,error:'wmapp_grasp_revoked'});
+          state.abort.abort(); channel.port1.postMessage({type:'error',id});
         }
         requests.clear();
         if (close) { channel.port1.close(); portCleanups.delete(cleanup); }
@@ -252,17 +261,17 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
             if (next.done) { requests.delete(id); send({type:'end',id}); }
             else send({type:'chunk',id,bodyBase64:encode(next.value)});
           }
-        } catch (error) {
+        } catch (_) {
           const state = requests.get(id); requests.delete(id);
-          state?.abort.abort(); send({type:'error',id,error:safeError(error)});
+          state?.abort.abort(); send({type:'error',id});
         }
       };
       channel.port1.start();
       worker.postMessage({type:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
     },
-    async disconnect() { pair=null; generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
+    async disconnect() { pair=null; drivePairs.clear(); generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
   });
   Object.defineProperty(window, 'fipsTransport', {configurable:true, value:transport});
-  window.dispatchEvent(new Event('fips-transport-ready'));
+  window.dispatchEvent(new Event('wingman-grasp-transport-ready'));
 })();
 ''';

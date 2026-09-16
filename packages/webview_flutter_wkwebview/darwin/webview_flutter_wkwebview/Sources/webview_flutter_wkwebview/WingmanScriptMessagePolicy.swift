@@ -12,8 +12,10 @@ enum WingmanScriptMessagePolicy {
       let frameURL = message.frameInfo.request.url else { return false }
     if message.name == "WingmanGrasp" {
       let origin = message.frameInfo.securityOrigin
-      guard origin.protocol == "https", origin.host == currentURL.host,
-        (origin.port == 0 ? 443 : origin.port) == (currentURL.port ?? 443) else { return false }
+      let bundled = origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == 47831
+      let defaultPort = origin.protocol == "https" ? 443 : 80
+      guard (origin.protocol == "https" || bundled), origin.host == currentURL.host,
+        (origin.port == 0 ? defaultPort : origin.port) == (currentURL.port ?? defaultPort) else { return false }
     }
     return currentURL.scheme == frameURL.scheme
       && currentURL.host == frameURL.host && currentURL.port == frameURL.port

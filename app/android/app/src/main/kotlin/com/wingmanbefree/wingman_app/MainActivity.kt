@@ -40,6 +40,20 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "au.com.otherstuff.wingman/drive").setMethodCallHandler { call, result ->
+            if (call.method != "open") { result.notImplemented() } else {
+                try {
+                    val file = java.io.File(call.arguments as String)
+                    val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.drivefiles", file)
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/octet-stream"
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(android.content.Intent.createChooser(intent, "Save or open file")); result.success(mapOf("localSaved" to true, "exportPresented" to true))
+                } catch (_: Exception) { result.error("export_failed", "Cannot export file", null) }
+            }
+        }
         val nativeGraspChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, GraspChannelCoordinator.CHANNEL)
         graspChannel = nativeGraspChannel
         graspCoordinator = GraspChannelCoordinator(nativeGraspChannel) { id ->
