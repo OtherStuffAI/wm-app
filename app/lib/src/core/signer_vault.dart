@@ -224,15 +224,28 @@ class SecureStorageSignerVaultSecretStore implements SignerVaultSecretStore {
   SecureStorageSignerVaultSecretStore({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
 
+  static const _macOsAccountName = 'com.wingmanbefree.wmapp.signer-vault';
   static const _macOsOptions = MacOsOptions(
+    accountName: _macOsAccountName,
+  );
+  static const _legacyMacOsOptions = MacOsOptions(
     usesDataProtectionKeychain: false,
   );
 
   final FlutterSecureStorage _storage;
 
   @override
-  Future<String?> read(String key) {
-    return _storage.read(key: key, mOptions: _macOsOptions);
+  Future<String?> read(String key) async {
+    final current = await _storage.read(key: key, mOptions: _macOsOptions);
+    if (current != null && current.isNotEmpty) return current;
+
+    // Older macOS builds used flutter_secure_storage's default service name
+    // in the traditional keychain. Copy that device secret forward once.
+    final legacy = await _storage.read(key: key, mOptions: _legacyMacOsOptions);
+    if (legacy != null && legacy.isNotEmpty) {
+      await _storage.write(key: key, value: legacy, mOptions: _macOsOptions);
+    }
+    return legacy;
   }
 
   @override
@@ -241,8 +254,9 @@ class SecureStorageSignerVaultSecretStore implements SignerVaultSecretStore {
   }
 
   @override
-  Future<void> delete(String key) {
-    return _storage.delete(key: key, mOptions: _macOsOptions);
+  Future<void> delete(String key) async {
+    await _storage.delete(key: key, mOptions: _macOsOptions);
+    await _storage.delete(key: key, mOptions: _legacyMacOsOptions);
   }
 }
 

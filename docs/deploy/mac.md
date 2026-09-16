@@ -89,6 +89,10 @@ On first launch WMApp asks for:
 - a local PIN.
 
 The nsec is encrypted into the app's local signer vault. Do not put signer keys in `.env.local`.
+The macOS vault device secret is stored under WMAPP's own Keychain service name.
+Older local builds may have a legacy `flutter_secure_storage_service` item; the
+app migrates it on the next successful unlock, so manual cleanup should wait
+until after that unlock has succeeded.
 
 ## Updating
 

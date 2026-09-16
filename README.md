@@ -117,8 +117,10 @@ device:
   encryption key is wrapped with RSA-OAEP using a wrapping key protected by
   Android Keystore. This is the extra protection for the random per-install
   secret, not storage of the raw `nsec` itself.
-- **macOS:** Apple Keychain. WM-App explicitly selects traditional Keychain
-  mode (`usesDataProtectionKeychain: false`).
+- **macOS:** Apple Keychain. WM-App uses a WMAPP-specific secure-storage
+  service name in the macOS data-protection keychain. Builds from before
+  0.1.6 used the plugin's generic traditional-keychain service name; the app
+  copies that legacy device secret forward on the next successful unlock.
 - **Linux:** `libsecret`, which talks to the desktop Secret Service—normally
   GNOME Keyring or KDE KWallet.
 
@@ -127,6 +129,11 @@ Secure Enclave protection or native biometric/user-presence enforcement. It
 also does not promise that vault data will survive uninstalling and
 reinstalling the app, or that secure-storage keys are hardware-backed on every
 device.
+
+After upgrading from an older macOS build, unlock the signer once before
+removing any legacy `flutter_secure_storage_service` Keychain item. Cleanup is
+optional after a successful unlock because WM-App reads the migrated
+WMAPP-specific item first.
 
 The browser prototype has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
