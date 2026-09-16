@@ -11,6 +11,7 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
+import 'package:wingman_app/src/core/signer_vault.dart';
 import 'fake_webview_platform.dart';
 import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart';
 import 'mesh_auth_request_test.dart'
@@ -67,8 +68,13 @@ class AuthStore extends SignerStore {
 }
 
 class Harness {
-  Harness({this.realBridge, this.localFlightDeckUrl = 'https://flightdeck.example'});
+  Harness({
+    this.realBridge,
+    this.signerVault,
+    this.localFlightDeckUrl = 'https://flightdeck.example',
+  });
   final NativeCoreBridge? realBridge;
+  final SignerVault? signerVault;
   final String localFlightDeckUrl;
   final signer = AuthSigner();
   final store = AuthStore();
@@ -92,6 +98,7 @@ class Harness {
               onOpenSetup: () {},
               onOpenSigner: () {},
               onOpenStatus: () {},
+              signerVault: signerVault,
               onPrepareFipsNavigation: (_) async => null)));
   Future<void> start(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -127,6 +134,22 @@ class Harness {
           'params': event ?? authEvent()
         }));
   }
+}
+
+class UnlockCountingVault extends SignerVault {
+  UnlockCountingVault()
+      : super(
+          localStore: MemorySignerVaultLocalStore(),
+          secretStore: MemorySignerVaultSecretStore(),
+        );
+
+  @override
+  Future<SignerVaultUnlock> unlock({required String pin}) async {
+    unlockCalls += 1;
+    throw StateError('Browser signing must not unlock the signer vault.');
+  }
+
+  int unlockCalls = 0;
 }
 
 void main() {
@@ -186,6 +209,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.signer.events.single, {'url': httpTarget, 'method': 'GET'});
     await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('Flight Deck boot and signing do not unlock signer vault',
+      (tester) async {
+    final vault = UnlockCountingVault();
+    final identity = NostrCrypto.importIdentity('1'.padLeft(64, '0'));
+    final h = Harness(
+      localFlightDeckUrl: appPage,
+      signerVault: vault,
+    )..config = AppConfig.defaults().copyWith(
+        flightDeckUrl: 'https://flightdeck.example',
+        deviceNpub: identity.npub,
+        devicePublicKeyHex: identity.publicKeyHex,
+        deviceSecret: identity.nsec,
+      );
+    await h.start(tester);
+    expect(vault.unlockCalls, 0);
+
+    h.sign(
+      'flight-deck-nip98',
+      method: 'signNip98',
+      event: {'url': appPage, 'httpMethod': 'GET'},
+    );
+    for (var i = 0; i < 5; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(h.signer.events.single, {'url': appPage, 'method': 'GET'});
+    expect(vault.unlockCalls, 0);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
   });
   for (final reason in [
     'navigation',

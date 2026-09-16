@@ -146,7 +146,7 @@ void main() {
     expect(bridge.script, contains('connectDrive'));
     expect(bridge.script, contains('save:false'));
     expect(bridge.script, contains('new TypeError(failure)'));
-    expect(bridge.script, contains("error:safeError(error)"));
+    expect(bridge.script, contains('error:safeError(error)'));
     Future<void> rpc(String method, Map<String, dynamic> params) =>
         bridge.receive(jsonEncode({
           'token': token,
