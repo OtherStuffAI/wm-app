@@ -46,6 +46,24 @@ flutter build macos --debug
 open build/macos/Build/Products/Debug/wingman_app.app
 ```
 
+## Release DMG
+
+A public DMG requires a `Developer ID Application` identity and an existing
+notarytool keychain profile. The helper never stores credentials:
+
+```bash
+MACOS_NOTARY_PROFILE=wmapp-notary ./tools/build_macos_dmg.sh
+```
+
+Set `MACOS_SIGN_IDENTITY` only when more than one Developer ID Application
+identity is installed. The helper builds the universal release app, signs and
+verifies it, creates and verifies the DMG, submits it for notarization, staples
+the accepted ticket, runs Gatekeeper assessment, and prints the SHA-256.
+
+For local packaging diagnostics only, `./tools/build_macos_dmg.sh --ad-hoc`
+creates a clearly non-notarized artifact. It is not suitable for a public
+release or normal installation on another Mac.
+
 The Xcode build bundles the pinned FIPS v0.5.0 macOS packages for both arm64
 and x86_64. `tools/prepare_fips_macos.sh` downloads them from the upstream
 release into an ignored cache and refuses a checksum mismatch. Generated
