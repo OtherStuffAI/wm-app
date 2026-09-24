@@ -249,7 +249,7 @@ void main() {
       'params': {'endpoint': endpoint, 'serviceNpub': tower}
     }));
     expect(binds, 0);
-    expect(replies.single, contains('No public fallback'));
+    expect(replies.single, contains('fips_not_ready'));
     bridge.close();
   });
   test('stalled readiness returns a bounded actionable pairing error',
@@ -279,7 +279,7 @@ void main() {
         }))
         .timeout(const Duration(seconds: 1));
     expect(binds, 0);
-    expect(replies.single, contains('timed out while preparing FIPS'));
+    expect(replies.single, contains('fips_readiness_timeout'));
     expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
     bridge.close();
   });
@@ -292,6 +292,43 @@ void main() {
         reply: (_) async {});
     expect(bridge.script, contains("method === 'connect' ? 120000 : 30000"));
     expect(bridge.script, contains('Tower pairing timed out. Check FIPS'));
+    bridge.close();
+  });
+
+  test('connection diagnostics correlate safe stages without response bodies',
+      () async {
+    final events = <Map<String, Object?>>[];
+    final replies = <String>[];
+    final bridge = TowerFipsBrowserBridge(
+      pageOrigin: page,
+      approve: (_, __) async => true,
+      prepare: (_) async => 'not ready',
+      diagnostic: events.add,
+      reply: (value) async => replies.add(value),
+    );
+    await bridge.receive(jsonEncode({
+      'token': bridge.signingDocumentToken,
+      'id': 'request',
+      'method': 'connect',
+      'params': {
+        'endpoint': endpoint,
+        'serviceNpub': tower,
+        'correlationId': 'connect-test-1',
+      },
+    }));
+    expect(
+        events.map((event) => event['stage']),
+        containsAllInOrder([
+          'native_bridge_received',
+          'endpoint_validated',
+          'approval_resolved',
+          'fips_readiness_started',
+          'native_reply_delivered',
+        ]));
+    expect(events.every((event) => event['correlationId'] == 'connect-test-1'),
+        true);
+    expect(jsonEncode(events), isNot(contains('not ready')));
+    expect(replies.single, contains('fips_not_ready'));
     bridge.close();
   });
 }
