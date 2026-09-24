@@ -39,12 +39,31 @@ If `flutter doctor` says CocoaPods is missing, install it before iOS work. macOS
 
 ## Manual Build
 
+This is the canonical certificate-free local build. The Xcode project uses an
+ad-hoc identity for Debug, Profile, and the unsigned Release staging build, so
+neither an Apple Developer team nor a development certificate is required:
+
 ```bash
 cd ~/code/wm/wmapp/app
 flutter pub get
 flutter build macos --debug
 open build/macos/Build/Products/Debug/wingman_app.app
 ```
+
+The debug app is intentionally local-only. Its signature can be inspected with:
+
+```bash
+codesign --verify --deep --strict --verbose=2 \
+  build/macos/Build/Products/Debug/wingman_app.app
+codesign -dvv --entitlements - \
+  build/macos/Build/Products/Debug/wingman_app.app
+```
+
+Only `com.apple.security.cs.allow-jit` is requested by Debug/Profile because
+Flutter's debug runtime needs JIT execution. WMApp is deliberately not sandboxed
+for its local core bridge, so sandbox network entitlements are neither required
+nor claimed. Packaging applies the selected distribution signature after the
+certificate-free Flutter staging build.
 
 ## Private Mac-to-Mac DMG
 
@@ -116,7 +135,17 @@ and acceptance status for the packages embedded in that app build.
 
 For local packaging diagnostics only, `./tools/build_macos_dmg.sh --ad-hoc`
 creates a clearly non-notarized artifact. It is not suitable for a public
-release or normal installation on another Mac.
+release or normal installation on another Mac. It is the certificate-free DMG
+mode and is expected to fail Gatekeeper assessment after download. To test it
+locally without changing system-wide security settings, mount it, copy WMApp to
+Applications, then Control-click **Open** and approve that exact app once.
+
+An Apple Development-signed `--local` DMG is also not notarized and therefore
+is expected to fail command-line Gatekeeper assessment on another Mac. It is a
+private transfer artifact, not the file to publish as a normal download. A DMG
+offered as a public download must be produced by `--public`; a renamed `--local`
+or `--ad-hoc` artifact is a packaging defect even when its checksum, universal
+architectures, bundled Flutter runtime, and internal code signature are valid.
 
 The Xcode build bundles the pinned FIPS v0.5.0 macOS packages for both arm64
 and x86_64. `tools/prepare_fips_macos.sh` downloads them from the upstream
