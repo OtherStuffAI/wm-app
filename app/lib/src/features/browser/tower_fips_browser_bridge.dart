@@ -25,6 +25,7 @@ class TowerFipsBrowserBridge {
   final void Function(Map<String, Object?> event)? diagnostic;
   final String pageOrigin;
   String? _serviceNpub;
+  String? _installationNpub;
   final Future<bool> Function(String endpoint, String serviceNpub) approve;
   final Future<String?> Function(String endpoint) prepare;
   final Future<void> Function(String script) reply;
@@ -89,16 +90,33 @@ class TowerFipsBrowserBridge {
       final endpoint = p['endpoint'] as String;
       TowerFipsProxy.validateEndpoint(endpoint);
       final serviceNpub = p['serviceNpub'] as String;
+      final installationNpub = p['installationNpub'] as String?;
       final correlationId = _safeCorrelationId(p['correlationId']);
-      // Validate a service npub independently of the mesh node's identity.
+      // serviceNpub is the signed FIPS transport identity. installationNpub is
+      // the distinct v2 control-plane identity. Its absence selects the
+      // legacy v1 service_npub health contract only.
       TowerFipsProxy.meshAddress('http://$serviceNpub.fips:1');
+      if (installationNpub != null) {
+        TowerFipsProxy.meshAddress('http://$installationNpub.fips:1');
+      }
       final target = Uri.parse(endpoint);
+      if (target.host != '$serviceNpub.fips') {
+        throw const TowerFipsPublicError('transport_identity_mismatch',
+            'The FIPS endpoint did not match the signed transport identity. Regenerate the connect package from this Autopilot installation.');
+      }
       _log('endpoint_validated', correlationId, {
         'host': target.host,
         'port': target.port,
-        'serviceNpub': serviceNpub,
       });
-      if (_proxy?.endpoint == endpoint && _serviceNpub == serviceNpub) {
+      _log('transport_identity_compared', correlationId, {'matches': true});
+      _log('installation_identity_validated', correlationId, {
+        'contract': installationNpub == null ? 'legacy_v1' : 'v2',
+        'differsFromTransport':
+            installationNpub != null && installationNpub != serviceNpub,
+      });
+      if (_proxy?.endpoint == endpoint &&
+          _serviceNpub == serviceNpub &&
+          _installationNpub == installationNpub) {
         return _connection();
       }
       _connecting = true;
@@ -134,7 +152,8 @@ class TowerFipsBrowserBridge {
         }
         _pendingProxy = proxy;
         try {
-          await _verifyService(proxy, serviceNpub, correlationId)
+          await _verifyService(
+                  proxy, serviceNpub, installationNpub, correlationId)
               .timeout(const Duration(seconds: 15), onTimeout: () {
             throw const TowerFipsPublicError('health_timeout',
                 'FIPS connected, but the endpoint health check timed out. Verify the advertised FIPS service is reachable.');
@@ -148,6 +167,7 @@ class TowerFipsBrowserBridge {
           if (identical(_pendingProxy, proxy)) _pendingProxy = null;
         }
         _serviceNpub = serviceNpub;
+        _installationNpub = installationNpub;
         _proxy = proxy;
         return _connection();
       } finally {
@@ -239,8 +259,8 @@ class TowerFipsBrowserBridge {
 
   // Only this unsigned identity probe is allowed before activating the route.
   // It uses the same pinned transport and redirect policy as signed requests.
-  Future<void> _verifyService(
-      TowerFipsProxy proxy, String expected, String? correlationId) async {
+  Future<void> _verifyService(TowerFipsProxy proxy, String transportNpub,
+      String? installationNpub, String? correlationId) async {
     _log('health_request_started', correlationId, {'path': '/health'});
     final request = await TowerFipsNativeRequest.open(
         proxy, '${proxy.endpoint}/health', 'GET', {});
@@ -262,12 +282,21 @@ class TowerFipsBrowserBridge {
         if (bytes.length > 65536) throw StateError('Tower health too large.');
       }
       final health = jsonDecode(utf8.decode(bytes)) as Map;
-      if (health['service_npub'] != expected) {
-        _log('health_identity_compared', correlationId, {'matches': false});
-        throw const TowerFipsPublicError('health_identity_mismatch',
-            'FIPS endpoint identity did not match the signed transport identity. Regenerate the connect package from this Autopilot installation.');
+      final isV2 = installationNpub != null;
+      final identityField = isV2 ? 'installation_npub' : 'service_npub';
+      final expected = installationNpub ?? transportNpub;
+      final matches = health[identityField] == expected;
+      _log('health_identity_compared', correlationId, {
+        'identity': isV2 ? 'installation' : 'legacy_service',
+        'matches': matches,
+      });
+      if (!matches) {
+        throw TowerFipsPublicError(
+            'health_identity_mismatch',
+            isV2
+                ? 'FIPS endpoint installation identity did not match the signed connect package. Regenerate it from this Autopilot installation.'
+                : 'FIPS endpoint identity did not match the signed transport identity. Regenerate the connect package from this Autopilot installation.');
       }
-      _log('health_identity_compared', correlationId, {'matches': true});
     } finally {
       request.close();
     }
@@ -306,6 +335,7 @@ class TowerFipsBrowserBridge {
     final proxy = _proxy;
     _proxy = null;
     _serviceNpub = null;
+    _installationNpub = null;
     await pending?.close();
     await proxy?.close();
   }

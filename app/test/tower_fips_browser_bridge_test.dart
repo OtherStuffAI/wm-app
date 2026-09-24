@@ -11,6 +11,8 @@ const endpoint =
     'http://npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98.fips:8787';
 const page = 'https://flightdeck.example',
     tower = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
+const installation =
+    'npub1xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6qqcvexj';
 void main() {
   test(
       'manual grants are scoped to page, Tower, endpoint and identity, and revoked',
@@ -32,32 +34,33 @@ void main() {
     expect(await store.contains(page, tower, endpoint, 'identity-a'), false);
   });
   test(
-      'mesh identity probe gates signing, mismatch revokes and reconnect verifies again',
+      'v2 verifies installation identity separately while descriptor and pairing use transport identity',
       () async {
-    const service =
-        'npub1xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6rgdp5xs6qqcvexj';
     var healthIdentity = tower,
         healthReads = 0,
         approved = false,
         revocations = 0;
+    final events = <Map<String, Object?>>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((r) async {
       expect(r.uri.path, '/health');
       healthReads++;
       r.response.headers.contentType = ContentType.json;
-      r.response.write(jsonEncode({'service_npub': healthIdentity}));
+      r.response.write(jsonEncode({'installation_npub': healthIdentity}));
       await r.response.close();
     });
     final replies = <String>[];
     final bridge = TowerFipsBrowserBridge(
         pageOrigin: page,
         approve: (e, s) async {
-          expect(s, service);
+          expect(s, tower);
           return approved;
         },
         unpair: (e, s) async {
+          expect(s, tower);
           revocations++;
         },
+        diagnostic: events.add,
         prepare: (_) async => null,
         bindProxy: (e, p) => TowerFipsProxy.bind(
             endpoint: e,
@@ -78,7 +81,11 @@ void main() {
           'token': token,
           'id': 'pair',
           'method': 'connect',
-          'params': {'endpoint': endpoint, 'serviceNpub': service}
+          'params': {
+            'endpoint': endpoint,
+            'serviceNpub': tower,
+            'installationNpub': installation,
+          }
         }));
     try {
       await connect();
@@ -89,10 +96,29 @@ void main() {
       expect(healthReads, 1);
       expect(revocations, 1);
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
-      healthIdentity = service;
+      healthIdentity = installation;
       await connect();
       expect(healthReads, 2);
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), true);
+      expect(replies.last, contains('"serviceNpub":"$tower"'));
+      expect(replies.last, isNot(contains(installation)));
+      expect(
+          events,
+          contains(predicate<Map<String, Object?>>((event) =>
+              event['stage'] == 'transport_identity_compared' &&
+              event['matches'] == true)));
+      expect(
+          events,
+          contains(predicate<Map<String, Object?>>((event) =>
+              event['stage'] == 'installation_identity_validated' &&
+              event['contract'] == 'v2' &&
+              event['differsFromTransport'] == true)));
+      expect(
+          events,
+          contains(predicate<Map<String, Object?>>((event) =>
+              event['stage'] == 'health_identity_compared' &&
+              event['identity'] == 'installation' &&
+              event['matches'] == true)));
       expect(bridge.permitsMeshSigning(token, 'https://tower.example/api/read'),
           false);
       await bridge.receive(
@@ -101,6 +127,91 @@ void main() {
       await connect();
       expect(healthReads, 3, reason: 'Reconnect revalidates identity on mesh');
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), true);
+    } finally {
+      bridge.close();
+      await server.close(force: true);
+    }
+  });
+
+  test('legacy v1 without installationNpub verifies service_npub', () async {
+    var healthReads = 0;
+    final replies = <String>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((r) async {
+      healthReads++;
+      r.response.headers.contentType = ContentType.json;
+      r.response.write(jsonEncode({'service_npub': tower}));
+      await r.response.close();
+    });
+    final bridge = TowerFipsBrowserBridge(
+        pageOrigin: page,
+        approve: (_, identity) async => identity == tower,
+        prepare: (_) async => null,
+        bindProxy: (e, p) => TowerFipsProxy.bind(
+            endpoint: e,
+            pageOrigin: p,
+            clientFactory: () => HttpClient()
+              ..connectionFactory = (url, host, port) => Socket.startConnect(
+                  InternetAddress.loopbackIPv4, server.port)),
+        reply: (value) async => replies.add(value));
+    try {
+      await bridge.receive(jsonEncode({
+        'token': bridge.signingDocumentToken,
+        'id': 'legacy',
+        'method': 'connect',
+        'params': {'endpoint': endpoint, 'serviceNpub': tower},
+      }));
+      expect(healthReads, 1);
+      expect(replies.single, contains('"serviceNpub":"$tower"'));
+      expect(
+          bridge.permitsMeshSigning(
+              bridge.signingDocumentToken, '$endpoint/api/read'),
+          true);
+    } finally {
+      bridge.close();
+      await server.close(force: true);
+    }
+  });
+
+  test('v2 rejects mismatch and never falls back to legacy service_npub',
+      () async {
+    final replies = <String>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((r) async {
+      r.response.headers.contentType = ContentType.json;
+      r.response.write(jsonEncode({
+        'installation_npub': tower,
+        'service_npub': installation,
+      }));
+      await r.response.close();
+    });
+    final bridge = TowerFipsBrowserBridge(
+        pageOrigin: page,
+        approve: (_, __) async => true,
+        prepare: (_) async => null,
+        bindProxy: (e, p) => TowerFipsProxy.bind(
+            endpoint: e,
+            pageOrigin: p,
+            clientFactory: () => HttpClient()
+              ..connectionFactory = (url, host, port) => Socket.startConnect(
+                  InternetAddress.loopbackIPv4, server.port)),
+        reply: (value) async => replies.add(value));
+    try {
+      await bridge.receive(jsonEncode({
+        'token': bridge.signingDocumentToken,
+        'id': 'v2-mismatch',
+        'method': 'connect',
+        'params': {
+          'endpoint': endpoint,
+          'serviceNpub': tower,
+          'installationNpub': installation,
+        },
+      }));
+      expect(replies.single, contains('health_identity_mismatch'));
+      expect(
+          bridge.permitsMeshSigning(
+              bridge.signingDocumentToken, '$endpoint/api/read'),
+          false);
     } finally {
       bridge.close();
       await server.close(force: true);
@@ -192,9 +303,17 @@ void main() {
       'method': 'connect',
       'params': {'endpoint': endpoint, 'serviceNpub': 'https://evil.example'}
     }));
+    await bridge.receive(jsonEncode({
+      'token': token,
+      'id': '3',
+      'method': 'connect',
+      'params': {'endpoint': endpoint, 'serviceNpub': installation}
+    }));
     expect(approvals, 0);
     expect(readiness, 0);
-    expect(replies.single, contains('failed'));
+    expect(replies, hasLength(2));
+    expect(replies.first, contains('failed'));
+    expect(replies.last, contains('transport_identity_mismatch'));
     bridge.close();
   });
   test('close during pending approval cannot resurrect a proxy', () async {
