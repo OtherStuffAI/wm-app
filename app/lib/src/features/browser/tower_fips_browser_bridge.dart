@@ -152,12 +152,20 @@ class TowerFipsBrowserBridge {
         }
         _pendingProxy = proxy;
         try {
-          await _verifyService(
-                  proxy, serviceNpub, installationNpub, correlationId)
-              .timeout(const Duration(seconds: 15), onTimeout: () {
-            throw const TowerFipsPublicError('health_timeout',
-                'FIPS connected, but the endpoint health check timed out. Verify the advertised FIPS service is reachable.');
-          });
+          if (installationNpub == null) {
+            await _verifyLegacyService(proxy, serviceNpub, correlationId)
+                .timeout(const Duration(seconds: 15), onTimeout: () {
+              throw const TowerFipsPublicError('health_timeout',
+                  'FIPS connected, but the legacy endpoint health check timed out. Verify the advertised FIPS service is reachable.');
+            });
+          } else {
+            // Agent Connect supplies installationNpub when Flight Deck owns
+            // the exact advertised health path and authenticates it with
+            // NIP-98 after this transport binding is returned. Native connect
+            // must not invent an unsigned /health.
+            _log('authenticated_health_delegated', correlationId,
+                {'owner': 'flight_deck', 'contract': 'v2'});
+          }
           if (_closed || epoch != _epoch) throw StateError('Document closed.');
         } catch (_) {
           await proxy.close();
@@ -257,17 +265,17 @@ class TowerFipsBrowserBridge {
           ? 'fips_readiness_timeout'
           : 'fips_connection_failed';
 
-  // Only this unsigned identity probe is allowed before activating the route.
-  // It uses the same pinned transport and redirect policy as signed requests.
-  Future<void> _verifyService(TowerFipsProxy proxy, String transportNpub,
-      String? installationNpub, String? correlationId) async {
-    _log('health_request_started', correlationId, {'path': '/health'});
+  // Legacy callers did not supply an advertised authenticated health route.
+  // Keep their established root-health contract without applying it to v2.
+  Future<void> _verifyLegacyService(
+      TowerFipsProxy proxy, String transportNpub, String? correlationId) async {
+    _log('legacy_health_request_started', correlationId, {'path': '/health'});
     final request = await TowerFipsNativeRequest.open(
         proxy, '${proxy.endpoint}/health', 'GET', {});
     try {
       final response = await request.finish();
       final status = response['status'] as int?;
-      _log('health_response_received', correlationId, {
+      _log('legacy_health_response_received', correlationId, {
         'statusClass': status == null ? 'unknown' : '${status ~/ 100}xx',
       });
       if (status != 200) {
@@ -282,20 +290,14 @@ class TowerFipsBrowserBridge {
         if (bytes.length > 65536) throw StateError('Tower health too large.');
       }
       final health = jsonDecode(utf8.decode(bytes)) as Map;
-      final isV2 = installationNpub != null;
-      final identityField = isV2 ? 'installation_npub' : 'service_npub';
-      final expected = installationNpub ?? transportNpub;
-      final matches = health[identityField] == expected;
-      _log('health_identity_compared', correlationId, {
-        'identity': isV2 ? 'installation' : 'legacy_service',
+      final matches = health['service_npub'] == transportNpub;
+      _log('legacy_health_identity_compared', correlationId, {
+        'identity': 'legacy_service',
         'matches': matches,
       });
       if (!matches) {
-        throw TowerFipsPublicError(
-            'health_identity_mismatch',
-            isV2
-                ? 'FIPS endpoint installation identity did not match the signed connect package. Regenerate it from this Autopilot installation.'
-                : 'FIPS endpoint identity did not match the signed transport identity. Regenerate the connect package from this Autopilot installation.');
+        throw const TowerFipsPublicError('health_identity_mismatch',
+            'FIPS endpoint identity did not match the signed transport identity. Regenerate the connect package from this Autopilot installation.');
       }
     } finally {
       request.close();

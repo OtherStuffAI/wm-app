@@ -34,19 +34,19 @@ void main() {
     expect(await store.contains(page, tower, endpoint, 'identity-a'), false);
   });
   test(
-      'v2 verifies installation identity separately while descriptor and pairing use transport identity',
+      'v2 binds transport without root health and permits the advertised owner health route',
       () async {
-    var healthIdentity = tower,
-        healthReads = 0,
-        approved = false,
-        revocations = 0;
+    const healthPath = '/api/owners/npub1owner/control-plane/v1/health';
+    var approved = false, revocations = 0;
+    final requestedPaths = <String>[];
     final events = <Map<String, Object?>>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((r) async {
-      expect(r.uri.path, '/health');
-      healthReads++;
+      requestedPaths.add(r.uri.path);
+      expect(r.uri.path, healthPath);
+      expect(r.headers.value(HttpHeaders.authorizationHeader), 'Nostr signed');
       r.response.headers.contentType = ContentType.json;
-      r.response.write(jsonEncode({'installation_npub': healthIdentity}));
+      r.response.write(jsonEncode({'installation_npub': installation}));
       await r.response.close();
     });
     final replies = <String>[];
@@ -89,16 +89,14 @@ void main() {
         }));
     try {
       await connect();
-      expect(healthReads, 0, reason: 'No network or signing before approval');
+      expect(requestedPaths, isEmpty,
+          reason: 'No network or signing before approval');
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
       approved = true;
       await connect();
-      expect(healthReads, 1);
-      expect(revocations, 1);
-      expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
-      healthIdentity = installation;
-      await connect();
-      expect(healthReads, 2);
+      expect(requestedPaths, isEmpty,
+          reason: 'Agent Connect v2 must not probe an invented root /health');
+      expect(revocations, 0);
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), true);
       expect(replies.last, contains('"serviceNpub":"$tower"'));
       expect(replies.last, isNot(contains(installation)));
@@ -116,16 +114,38 @@ void main() {
       expect(
           events,
           contains(predicate<Map<String, Object?>>((event) =>
-              event['stage'] == 'health_identity_compared' &&
-              event['identity'] == 'installation' &&
-              event['matches'] == true)));
+              event['stage'] == 'authenticated_health_delegated' &&
+              event['owner'] == 'flight_deck' &&
+              event['contract'] == 'v2')));
+      await bridge.receive(jsonEncode({
+        'token': token,
+        'id': 'open-health',
+        'method': 'open',
+        'params': {
+          'url': '$endpoint$healthPath',
+          'method': 'GET',
+          'headers': {'Authorization': 'Nostr signed'},
+        },
+      }));
+      final requestId = jsonDecode(
+              RegExp(r',("[^"]+"),null\)$').firstMatch(replies.last)!.group(1)!)
+          as String;
+      await bridge.receive(jsonEncode({
+        'token': token,
+        'id': 'finish-health',
+        'method': 'finish',
+        'params': {'requestId': requestId},
+      }));
+      expect(requestedPaths, [healthPath]);
+      expect(requestedPaths, isNot(contains('/health')));
       expect(bridge.permitsMeshSigning(token, 'https://tower.example/api/read'),
           false);
       await bridge.receive(
           jsonEncode({'token': token, 'id': 'off', 'method': 'disconnect'}));
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
       await connect();
-      expect(healthReads, 3, reason: 'Reconnect revalidates identity on mesh');
+      expect(requestedPaths, [healthPath],
+          reason: 'Reconnect still must not invent a root health request');
       expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), true);
     } finally {
       bridge.close();
@@ -173,11 +193,13 @@ void main() {
     }
   });
 
-  test('v2 rejects mismatch and never falls back to legacy service_npub',
+  test('v2 transport binding does not duplicate installation validation',
       () async {
+    var requests = 0;
     final replies = <String>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((r) async {
+      requests++;
       r.response.headers.contentType = ContentType.json;
       r.response.write(jsonEncode({
         'installation_npub': tower,
@@ -207,11 +229,12 @@ void main() {
           'installationNpub': installation,
         },
       }));
-      expect(replies.single, contains('health_identity_mismatch'));
+      expect(requests, 0);
+      expect(replies.single, contains('"serviceNpub":"$tower"'));
       expect(
           bridge.permitsMeshSigning(
               bridge.signingDocumentToken, '$endpoint/api/read'),
-          false);
+          true);
     } finally {
       bridge.close();
       await server.close(force: true);
