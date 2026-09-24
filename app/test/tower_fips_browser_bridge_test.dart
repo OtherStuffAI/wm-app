@@ -252,4 +252,46 @@ void main() {
     expect(replies.single, contains('No public fallback'));
     bridge.close();
   });
+  test('stalled readiness returns a bounded actionable pairing error',
+      () async {
+    final readiness = Completer<String?>();
+    var binds = 0;
+    final replies = <String>[];
+    final bridge = TowerFipsBrowserBridge(
+        pageOrigin: page,
+        approve: (_, __) async => true,
+        prepare: (_) => readiness.future,
+        connectPhaseTimeout: const Duration(milliseconds: 20),
+        bindProxy: (e, p) async {
+          binds++;
+          return TowerFipsProxy.bind(endpoint: e, pageOrigin: p);
+        },
+        reply: (s) async {
+          replies.add(s);
+        });
+    final token = bridge.signingDocumentToken;
+    await bridge
+        .receive(jsonEncode({
+          'token': token,
+          'id': 'stalled-readiness',
+          'method': 'connect',
+          'params': {'endpoint': endpoint, 'serviceNpub': tower}
+        }))
+        .timeout(const Duration(seconds: 1));
+    expect(binds, 0);
+    expect(replies.single, contains('timed out while preparing FIPS'));
+    expect(bridge.permitsMeshSigning(token, '$endpoint/api/read'), false);
+    bridge.close();
+  });
+
+  test('page bridge bounds connect if the native callback is lost', () {
+    final bridge = TowerFipsBrowserBridge(
+        pageOrigin: page,
+        approve: (_, __) async => true,
+        prepare: (_) async => null,
+        reply: (_) async {});
+    expect(bridge.script, contains("method === 'connect' ? 120000 : 30000"));
+    expect(bridge.script, contains('Tower pairing timed out. Check FIPS'));
+    bridge.close();
+  });
 }

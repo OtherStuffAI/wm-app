@@ -14,7 +14,13 @@ String towerFipsBridgeScript(String documentToken, String pageOrigin) => '''
   const rpc = (method, params = {}) => new Promise((resolve, reject) => {
     if (revoked) { reject(new Error('Tower pairing revoked.')); return; }
     const id = String(++seq);
-    const timer = (method === 'pull' || method === 'connect') ? null : setTimeout(() => { pending.delete(id); reject(new Error('Tower FIPS request timed out.')); }, 30000);
+    const timeout = method === 'connect' ? 120000 : 30000;
+    const timer = method === 'pull' ? null : setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(method === 'connect'
+        ? 'Tower pairing timed out. Check FIPS in Setup, then retry.'
+        : 'Tower FIPS request timed out.'));
+    }, timeout);
     pending.set(id, {resolve, reject, timer});
     WingmanTower.postMessage(JSON.stringify({token, id, method, params}));
   });

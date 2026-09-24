@@ -14,10 +14,12 @@ class TowerFipsBrowserBridge {
       required this.prepare,
       required this.reply,
       this.bindProxy,
-      this.unpair});
+      this.unpair,
+      this.connectPhaseTimeout = const Duration(seconds: 30)});
   final Future<TowerFipsProxy> Function(String endpoint, String pageOrigin)?
       bindProxy;
   final Future<void> Function(String endpoint, String serviceNpub)? unpair;
+  final Duration connectPhaseTimeout;
   final String pageOrigin;
   String? _serviceNpub;
   final Future<bool> Function(String endpoint, String serviceNpub) approve;
@@ -59,11 +61,11 @@ class TowerFipsBrowserBridge {
         await reply('window.__wingmanTowerReply?.('
             '${jsonEncode(_token)},${jsonEncode(id)},${jsonEncode(result)},null)');
       }
-    } catch (_) {
+    } catch (error) {
       if (!_closed && id != null) {
         await reply('window.__wingmanTowerReply?.('
             '${jsonEncode(_token)},${jsonEncode(id)},null,'
-            '"Tower FIPS request failed or pairing was denied. No public fallback.")');
+            '${jsonEncode(_publicError(error))})');
       }
     }
   }
@@ -88,7 +90,12 @@ class TowerFipsBrowserBridge {
             epoch != _epoch) {
           throw StateError('Pairing denied.');
         }
-        final failure = await prepare('$endpoint/');
+        final failure = await prepare('$endpoint/').timeout(
+          connectPhaseTimeout,
+          onTimeout: () => throw TimeoutException(
+            'Tower pairing timed out while preparing FIPS. Open Setup, check the mesh status, then retry.',
+          ),
+        );
         if (failure != null || _closed || epoch != _epoch) {
           throw StateError('FIPS not ready.');
         }
@@ -186,6 +193,13 @@ class TowerFipsBrowserBridge {
         'serviceNpub': _serviceNpub,
         'transport': 'native'
       };
+
+  String _publicError(Object error) {
+    if (error is TimeoutException && error.message != null) {
+      return error.message!;
+    }
+    return 'Tower FIPS request failed or pairing was denied. No public fallback.';
+  }
 
   // Only this unsigned identity probe is allowed before activating the route.
   // It uses the same pinned transport and redirect policy as signed requests.
