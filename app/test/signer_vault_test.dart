@@ -218,7 +218,7 @@ void main() {
     expect(await store.read(deviceSecretKey), 'device-secret');
     expect(platform.reads, hasLength(2));
     expect(platform.reads.first['accountName'], currentMacOsAccountName);
-    expect(platform.reads.first['usesDataProtectionKeychain'], 'true');
+    expect(platform.reads.first['usesDataProtectionKeychain'], 'false');
     expect(platform.reads.last['accountName'], legacyMacOsAccountName);
     expect(platform.reads.last['usesDataProtectionKeychain'], 'false');
     expect(platform.writes.single['accountName'], currentMacOsAccountName);

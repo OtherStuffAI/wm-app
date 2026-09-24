@@ -227,6 +227,11 @@ class SecureStorageSignerVaultSecretStore implements SignerVaultSecretStore {
   static const _macOsAccountName = 'com.wingmanbefree.wmapp.signer-vault';
   static const _macOsOptions = MacOsOptions(
     accountName: _macOsAccountName,
+    // The data-protection keychain requires a provisioning-profile-authorized
+    // keychain access group. WMApp's private Mac-to-Mac builds deliberately do
+    // not require an Apple provisioning profile, so use the traditional macOS
+    // keychain with a WMApp-specific service name instead.
+    usesDataProtectionKeychain: false,
   );
   static const _legacyMacOsOptions = MacOsOptions(
     usesDataProtectionKeychain: false,

@@ -46,19 +46,73 @@ flutter build macos --debug
 open build/macos/Build/Products/Debug/wingman_app.app
 ```
 
-## Release DMG
+## Private Mac-to-Mac DMG
 
-A public DMG requires a `Developer ID Application` identity and an existing
-notarytool keychain profile. The helper never stores credentials:
+The default release helper restores the private installation path. It signs the
+app and DMG with the first available `Apple Development` identity, retains the
+stable `com.wingmanbefree.wmapp` bundle ID, and does not contact Apple's notary
+service:
 
 ```bash
-MACOS_NOTARY_PROFILE=wmapp-notary ./tools/build_macos_dmg.sh
+./tools/build_macos_dmg.sh --local
+```
+
+Set `MACOS_LOCAL_SIGN_IDENTITY` to the exact identity name or SHA-1 hash when
+using a private/self-signed Code Signing certificate or when more than one
+local identity is installed. The identity must appear in
+`security find-identity -v -p codesigning`. The private key remains only in the
+build Mac's Keychain. Export only the public certificate (never the private key)
+when a self-signed certificate must be trusted on another Mac.
+
+On the target Mac, verify the reported SHA-256 before opening the DMG. An Apple
+Development build normally needs no certificate import, but it is not a public
+Developer ID release: after copying WMApp to Applications, Control-click it,
+choose **Open**, and confirm once. For a private self-signed identity, first
+import its public certificate into the login Keychain and set that certificate
+to **Always Trust** for Code Signing, then use the same Control-click **Open**
+flow. Trusting that certificate permits code signed by that private identity;
+only do this for a certificate received and fingerprint-checked out of band.
+
+The bundled FIPS 0.5.0 installers remain checksum-pinned upstream packages in
+private mode. Open the matching package from
+`WMApp.app/Contents/Resources/FIPS` with Control-click **Open**, approve the
+installer, and use arm64 on Apple silicon or x86_64 on Intel. This is a
+per-package local trust decision and does not disable Gatekeeper globally.
+
+Ad-hoc signing (`--ad-hoc`) has no persistent signer identity and can cause
+Keychain ACL prompts after every rebuild. It remains a diagnostic mode, not the
+private cross-Mac installation path.
+
+WMApp stores its vault secret in the traditional macOS Keychain under the
+WMApp-specific service `com.wingmanbefree.wmapp.signer-vault`. It does not claim
+`keychain-access-groups`: Apple treats that as a restricted entitlement that
+must be authorized by a provisioning profile, whereas this app does not share
+the item with another target. The stable bundle ID and stable signing identity
+let macOS retain the expected per-app Keychain ACL across upgrades.
+
+## Public Release DMG
+
+A public DMG requires a `Developer ID Application` identity and an existing
+notarytool keychain profile. Because FIPS is installed separately by macOS, it
+also requires a `Developer ID Installer` identity. The helper never stores
+credentials:
+
+```bash
+MACOS_NOTARY_PROFILE=wmapp-notary ./tools/build_macos_dmg.sh --public
 ```
 
 Set `MACOS_SIGN_IDENTITY` only when more than one Developer ID Application
 identity is installed. The helper builds the universal release app, signs and
 verifies it, creates and verifies the DMG, submits it for notarization, staples
-the accepted ticket, runs Gatekeeper assessment, and prints the SHA-256.
+the accepted ticket, runs Gatekeeper assessment, and prints the SHA-256. Before
+signing the app, it verifies the pinned upstream SHA-256 of each architecture's
+FIPS package, Developer ID Application-signs its three executable payloads with
+the hardened runtime and a trusted timestamp, then Developer ID Installer-signs
+the reproducibly repackaged installer. It submits each package separately to
+Apple and staples and validates each accepted ticket. `FIPS/provenance.json`
+records the upstream source/checksum, executable checksums before and after
+signing, signed-and-stapled package checksum, architecture, Apple submission ID,
+and acceptance status for the packages embedded in that app build.
 
 For local packaging diagnostics only, `./tools/build_macos_dmg.sh --ad-hoc`
 creates a clearly non-notarized artifact. It is not suitable for a public
@@ -93,11 +147,15 @@ After unlocking WMapp, open **Setup → FIPS transport**:
 FIPS machine identity is separate from the WMapp user signer. No FIPS private
 key is copied into Flutter settings, command arguments, or logs.
 
-The upstream v0.5.0 `.pkg` files are not signed and macOS `spctl` reports `no
-usable signature`. This is acceptable only for this local PoC. Production
-distribution is blocked until the FIPS packages are rebuilt, Developer ID
-Installer signed, and notarized as part of the Wingman release process. Do not
-disable Gatekeeper to work around this.
+The upstream v0.5.0 `.pkg` files are unsigned. Public release packaging verifies
+each original package checksum, expands it, signs only its three executable
+payloads with a Developer ID Application identity, flattens it, applies the
+Developer ID Installer signature, notarizes it, and staples Apple's ticket
+before embedding it in WMApp. The provenance manifest records the transformation.
+Private and ad-hoc builds retain the checksum-pinned unsigned upstream packages.
+Private builds use a stable signing identity for direct Mac-to-Mac installation;
+ad-hoc builds are suitable only for local diagnostics. Do not disable
+Gatekeeper globally to work around a signature or notarization failure.
 
 ## First Launch
 
