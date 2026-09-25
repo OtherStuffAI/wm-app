@@ -21,12 +21,11 @@ class GraspMessagePolicyTest {
         assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47832", "http://127.0.0.1:47832/drive"))
     }
 
-    @Test fun `signer and tower reject iframe spoofing but preserve HTTP top frames`() {
-        for (name in listOf("WingmanSigner", "WingmanTower")) {
-            assertTrue(GraspMessagePolicy.accepts(name, true, "http://localhost:8080", "http://localhost:8080/app"))
-            assertFalse(GraspMessagePolicy.accepts(name, false, "https://app.example", "https://app.example"))
-            assertFalse(GraspMessagePolicy.accepts(name, true, "https://evil.example", "https://app.example"))
-        }
+    @Test fun `signer rejects iframe spoofing but preserves HTTP top frames`() {
+        assertTrue(GraspMessagePolicy.accepts("WingmanSigner", true, "http://localhost:8080", "http://localhost:8080/app"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanSigner", false, "https://app.example", "https://app.example"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanSigner", true, "https://evil.example", "https://app.example"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanTower", true, "https://app.example", "https://app.example"))
     }
 
     @Test fun `opaque malformed credentialed and missing origins fail closed`() {

@@ -231,7 +231,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     fetch:nativeFetch,
     WebSocket:NativeWebSocket,
     detachWorker(worker) { workerPorts.get(worker)?.(); workerPorts.delete(worker); },
-    attachWorker(worker) {
+    attachWorker(worker, messageType='wingman-fips-transport-port') {
       workerPorts.get(worker)?.();
       const channel = new MessageChannel();
       const requests = new Map();
@@ -282,7 +282,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         }
       };
       channel.port1.start();
-      worker.postMessage({type:'wingman-fips-transport-port',legacyType:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
+      worker.postMessage({type:messageType,port:channel.port2},[channel.port2]);
     },
     async disconnect(handleOrId) {
       const grantId=typeof handleOrId==='string'?handleOrId:handleOrId?.grantId;
@@ -300,7 +300,8 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
       return {version:2,endpoint:towerHandle.endpoint,serviceNpub:options.serviceNpub,transport:'native'};
     },
     fetch:(input,init)=>{if(!towerHandle)throw new Error('Connect first.');return towerHandle.fetch(input,init);},
-    attachWorker:transport.attachWorker,detachWorker:transport.detachWorker,
+    attachWorker:(worker)=>transport.attachWorker(worker,'wingman-tower-transport-port'),
+    detachWorker:transport.detachWorker,
     async disconnect(){if(towerHandle)await transport.disconnect(towerHandle);towerHandle=null;}
   })});
   window.dispatchEvent(new Event('wingman-fips-transport-ready'));

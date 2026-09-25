@@ -5,7 +5,7 @@ import java.util.Locale
 
 /** Native frame authority; page-supplied origin fields are never trusted. */
 object GraspMessagePolicy {
-    val channels = setOf("WingmanGrasp", "WingmanSigner", "WingmanTower")
+    val channels = setOf("WingmanGrasp", "WingmanSigner")
     const val MAX_MESSAGE_LENGTH = 1_500_000
 
     fun accepts(channel: String, mainFrame: Boolean, sourceOrigin: String, currentUrl: String?): Boolean {

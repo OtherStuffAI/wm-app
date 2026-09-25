@@ -121,6 +121,11 @@ test('legacy Tower surface delegates connect, fetch and disconnect to fipsTransp
   await (await tower.fetch(h.endpoint+'/api')).body.cancel();
   assert.equal(h.calls.find(c=>c.method==='connect').params.purpose,'tower');
   assert.equal(h.calls.find(c=>c.method==='connect').params.peerNpub,'synthetic');
+  let workerMessage;
+  const worker={postMessage:(message)=>{workerMessage=message;}};
+  tower.attachWorker(worker);
+  assert.equal(workerMessage.type,'wingman-tower-transport-port');
+  tower.detachWorker(worker);
   await tower.disconnect();
   await assert.rejects(Promise.resolve().then(()=>tower.fetch(h.endpoint+'/api')),/Connect/);
 });
