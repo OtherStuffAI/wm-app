@@ -11,18 +11,22 @@ HTTP or relay authentication address from the actual signing request. No FIPS
 address needs to be entered in Setup or a Tower pairing dialog.
 
 The native **Approve private app authentication?** dialog shows the requesting
-website, full exact target (including scheme, port and path), operation and active
-signing identity. Choose **Approve signature** only for the intended target, or
-**Deny**. Website titles and links in chat are not authenticated app identity.
-App-list visibility does not grant signing permission.
+website, full exact target (including scheme, port and path), operation, active
+signing identity, and connected service scope when one exists. Choose **Once**
+to approve only this request, **Always allow** to remember the exact scoped
+service policy, or **Deny**. Website titles and links in chat are not
+authenticated app identity. App-list visibility does not grant signing
+permission.
 
-Each approval signs one request. HTTP and WebSocket relay authentication are
-separate, and repeated Git reads or relay reconnects can prompt again. No wildcard
-port, matching-host exception, saved target grant or public fallback is created.
-Existing signer deny rules still apply; remembered allows do not bypass this
-native confirmation. Closing the tab, navigating, locking/changing identity or
-clearing browser data invalidates pending approval. If a same-document navigation
-leaves the signer unavailable, reload the page and reconnect.
+**Always allow** remembers consent, never the signed event or Authorization
+header. WMapp generates a fresh signature for every exact URL, method, body or
+relay challenge. Remembered service consent is keyed by requesting origin,
+device identity, exact verified peer endpoint and port, transport purpose,
+authentication protocol, and operation. No wildcard port, matching-host
+exception, saved transport grant or public fallback is created. Existing signer
+deny rules still win. Disconnect, navigation, tab closure, lock/logout, identity
+change, or a scope mismatch fails closed even while the policy remains visible
+and revocable in the Signer screen.
 
 This direct-app path supports strict FIPS HTTP authentication (kind 27235 or
 `signNip98`) and FIPS WebSocket relay authentication (kind 22242). It rejects
@@ -30,10 +34,11 @@ ambiguous target tags, URL credentials/fragments, malformed authentication and
 non-FIPS destinations. Authentication does not grant repository membership or
 change the server's read/write rules.
 
-Flight Deck's Tower transport remains separate: it requires its exact verified
-Tower service pairing and document token. Configured Flight Deck pages cannot
-use the direct-app approval as a substitute, including after disconnect. GRASP
-must not be entered as a Tower endpoint; it is a different service.
+Flight Deck's Tower and Autopilot handles remain separate and purpose-scoped.
+Configured Flight Deck pages may authenticate only to the exact active service
+handle that matches the request; they cannot use a direct-app approval or an
+approval remembered for another purpose, including after disconnect. GRASP must
+not be entered as a Tower or Autopilot endpoint; it is a different service.
 
 The existing personal-WApp signer metadata contract describes future native
 identity/discovery integration. The browser does not currently consume those

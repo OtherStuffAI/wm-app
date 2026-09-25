@@ -15,6 +15,15 @@ Authentication, request signing, and service protocol verification stay above
 the transport. Native callers must reuse the same generic FIPS socket transport
 and security semantics; they must not grow service-specific network stacks.
 
+Service authentication approval is distinct from transport consent. Native
+"Always allow" decisions for either capability remember only versioned policy
+rules scoped to the verified top-level origin, active device identity, exact
+FIPS endpoint/peer/port, transport purpose, and capability class; signing rules
+also include the authentication protocol and operation. They must never cache
+or replay a signature: every allowed NIP-98 request is freshly signed for its
+exact URL, method, and body. Mismatched or revoked document/handle state fails
+closed.
+
 `window.wingmanTowerTransport` is compatibility-only and must be implemented as
 an adapter over `window.fipsTransport`. New consumers must not use it. Remove
 the adapter after the tracked Flight Deck migration is complete.

@@ -1893,12 +1893,25 @@ class BrowserScreenState extends State<BrowserScreen> {
       prepare: (endpoint) async => current()
           ? widget.onPrepareFipsNavigation!(endpoint)
           : 'Document revoked.',
-      approve: (endpoint) async {
-        if (!current() || _activeTabId != tab.id) {
+      approve: (request) async {
+        if (!mounted || !current() || _activeTabId != tab.id) {
           return GraspFipsConsentResult.unavailable;
         }
-        final target = Uri.parse(endpoint);
-        final approved = await showDialog<bool>(
+        final remembered = await widget.signerStore.findPolicyRule(
+          pageOrigin: origin,
+          operation: request.policyOperation,
+          target: request.endpoint,
+          deviceNpub: identity,
+        );
+        if (!mounted || !current() || _activeTabId != tab.id) {
+          return GraspFipsConsentResult.unavailable;
+        }
+        if (remembered?.allows == true) {
+          return GraspFipsConsentResult.approved;
+        }
+        if (remembered != null) return GraspFipsConsentResult.denied;
+        final target = Uri.parse(request.endpoint);
+        final approval = await showDialog<SignerPromptResult>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Connect to private FIPS service?'),
@@ -1908,23 +1921,42 @@ class BrowserScreenState extends State<BrowserScreen> {
                 'the site. Approve only a service you recognise. Signing requests are '
                 'approved separately. Reload, close the tab, lock, or disconnect to revoke.\n\n'
                 'Page: $origin\nFIPS node: ${target.host.replaceFirst('.fips', '')}\n'
-                'Port: ${target.port}'),
+                'Port: ${target.port}\nPurpose: ${request.purpose}'),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(context, false),
+                  onPressed: () => Navigator.pop(
+                      context, const SignerPromptResult(approved: false)),
                   child: const Text('Deny')),
               FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Connect')),
+                  onPressed: () => Navigator.pop(
+                      context, const SignerPromptResult(approved: true)),
+                  child: const Text('Once')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context,
+                      const SignerPromptResult(approved: true, remember: true)),
+                  child: const Text('Always allow')),
             ],
           ),
         );
         if (!current() || _activeTabId != tab.id) {
           return GraspFipsConsentResult.unavailable;
         }
-        if (approved == true) return GraspFipsConsentResult.approved;
-        if (approved == false) return GraspFipsConsentResult.denied;
-        return GraspFipsConsentResult.unavailable;
+        if (approval == null) return GraspFipsConsentResult.unavailable;
+        if (!approval.approved) return GraspFipsConsentResult.denied;
+        if (approval.remember) {
+          await _rememberSignerPolicy(
+            pageOrigin: origin,
+            operation: request.policyOperation,
+            target: request.endpoint,
+            decision: SignerPolicyRuleDecision.allow,
+            label: 'FIPS ${request.purpose} transport via '
+                '${request.peerNpub}',
+          );
+          if (!current() || _activeTabId != tab.id) {
+            return GraspFipsConsentResult.unavailable;
+          }
+        }
+        return GraspFipsConsentResult.approved;
       },
     );
     tab.graspBridge = bridge;
@@ -2066,14 +2098,9 @@ class BrowserScreenState extends State<BrowserScreen> {
     // disconnect. This is a separate, request-only capability for direct WApps.
     final driveAuth =
         graspDocument?.permitsDriveAuthentication(signingParams) == true;
-    final graspAuth = driveAuth ||
-        (graspDocument?.endpoint != null &&
-            meshTarget != null &&
-            // Tower pairing keeps its own existing signing authority.
-            pageOriginForAuth !=
-                SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
-            pageOriginForAuth !=
-                SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
+    final serviceAuthGrant =
+        graspDocument?.authenticationGrant(method, signingParams);
+    final graspAuth = driveAuth || serviceAuthGrant != null;
     final directAuth = graspAuth ||
         ((meshTarget != null ||
                 method == 'signNip98' ||
@@ -2099,7 +2126,12 @@ class BrowserScreenState extends State<BrowserScreen> {
         (!graspAuth ||
             (identical(tab.graspBridge, graspDocument) &&
                 graspDocument!.grantEpoch == graspGrantEpoch &&
-                graspDocument.permitsAuthentication(method, signingParams)));
+                graspDocument.permitsAuthentication(method, signingParams) &&
+                (serviceAuthGrant == null ||
+                    graspDocument
+                            .authenticationGrant(method, signingParams)
+                            ?.grantId ==
+                        serviceAuthGrant.grantId)));
     Future<void> auditNativeDenial(String outcome) =>
         widget.signerStore.appendAudit(
           SignerAuditEntry.create(
@@ -2113,6 +2145,7 @@ class BrowserScreenState extends State<BrowserScreen> {
           ),
         );
     var nativeApproved = false;
+    var nativeRemembered = false;
     bool signingContextValid() {
       if (directAuth) return nativeApproved && nativeContextValid();
       if (meshTarget == null) return true;
@@ -2144,18 +2177,21 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (directAuth) {
       if (nativeAuth == null || !nativeContextValid() || tab.meshAuthPending) {
         await _resolveSignerRequest(tab, requestId, {
-          'error': 'An active exact Tower pairing is required for mesh signing.'
+          'error': 'fips_signing_scope_required: An active exact FIPS service '
+              'grant is required for signing.'
         });
         return;
       }
-      // Existing explicit denials win. Broad remembered allows never approve
-      // this new target: only the native per-request confirmation below does.
+      final nativePolicyOperation = serviceAuthGrant?.policyOperation ??
+          (method == 'signEvent' ? 'signEvent' : 'nip98');
+      final nativePolicyTarget = serviceAuthGrant?.endpoint ??
+          (method == 'signEvent'
+              ? _signEventPolicyTarget(signingParams)
+              : SignerPolicy.normalizeOrigin(nativeAuth.target));
       final rule = await widget.signerStore.findPolicyRule(
         pageOrigin: pageOriginForAuth,
-        operation: method == 'signEvent' ? 'signEvent' : 'nip98',
-        target: method == 'signEvent'
-            ? _signEventPolicyTarget(signingParams)
-            : SignerPolicy.normalizeOrigin(nativeAuth.target),
+        operation: nativePolicyOperation,
+        target: nativePolicyTarget,
         deviceNpub: signingIdentity,
       );
       if (!nativeContextValid()) return;
@@ -2171,13 +2207,24 @@ class BrowserScreenState extends State<BrowserScreen> {
             {'error': 'Another authentication approval is pending.'});
         return;
       }
-      tab.meshAuthPending = true;
-      try {
-        nativeApproved = await _confirmMeshAuthentication(
-            pageOriginForAuth, nativeAuth, signingIdentity);
-      } finally {
-        tab.meshAuthPending = false;
+      nativeRemembered = serviceAuthGrant != null && rule?.allows == true;
+      SignerPromptResult nativeApproval;
+      if (nativeRemembered) {
+        nativeApproval = const SignerPromptResult(approved: true);
+      } else {
+        tab.meshAuthPending = true;
+        try {
+          nativeApproval = await _confirmMeshAuthentication(
+            pageOriginForAuth,
+            nativeAuth,
+            signingIdentity,
+            serviceAuthGrant,
+          );
+        } finally {
+          tab.meshAuthPending = false;
+        }
       }
+      nativeApproved = nativeApproval.approved;
       if (!nativeContextValid()) return;
       if (!nativeApproved) {
         await auditNativeDenial('user_denied');
@@ -2185,11 +2232,22 @@ class BrowserScreenState extends State<BrowserScreen> {
         await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
         return;
       }
+      if (nativeApproval.remember && serviceAuthGrant != null) {
+        await _rememberSignerPolicy(
+          pageOrigin: pageOriginForAuth,
+          operation: nativePolicyOperation,
+          target: nativePolicyTarget,
+          decision: SignerPolicyRuleDecision.allow,
+          label: 'FIPS ${serviceAuthGrant.purpose} '
+              '${serviceAuthGrant.operation} via ${serviceAuthGrant.peerNpub}',
+        );
+      }
     }
 
     if (!signingContextValid()) {
       await _resolveSignerRequest(tab, requestId, {
-        'error': 'An active exact Tower pairing is required for mesh signing.'
+        'error': 'fips_signing_scope_required: An active exact FIPS service '
+            'grant is required for signing.'
       });
       return;
     }
@@ -2297,7 +2355,9 @@ class BrowserScreenState extends State<BrowserScreen> {
         event: event,
         allowed: true,
         outcome: nativeApproved
-            ? 'signed_exact_request'
+            ? nativeRemembered
+                ? 'signed_with_scoped_service_policy'
+                : 'signed_exact_request'
             : remembered
                 ? 'signed_with_policy'
                 : 'signed',
@@ -2504,9 +2564,13 @@ class BrowserScreenState extends State<BrowserScreen> {
     return null;
   }
 
-  Future<bool> _confirmMeshAuthentication(
-      String pageOrigin, MeshAuthRequest request, String identity) async {
-    return await showDialog<bool>(
+  Future<SignerPromptResult> _confirmMeshAuthentication(
+    String pageOrigin,
+    MeshAuthRequest request,
+    String identity,
+    FipsAuthenticationGrant? grant,
+  ) async {
+    return await showDialog<SignerPromptResult>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Approve private app authentication?'),
@@ -2522,6 +2586,11 @@ class BrowserScreenState extends State<BrowserScreen> {
                   SelectableText(request.target),
                   const SizedBox(height: 12),
                   Text('Signing identity: $identity'),
+                  if (grant != null) ...[
+                    const SizedBox(height: 12),
+                    Text('Service purpose: ${grant.purpose}'),
+                    SelectableText('${grant.peerNpub} at ${grant.endpoint}'),
+                  ],
                   const SizedBox(height: 12),
                   const Text(
                       'Sign this authentication request only. The website '
@@ -2532,15 +2601,28 @@ class BrowserScreenState extends State<BrowserScreen> {
             ),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(context, false),
+                  onPressed: () => Navigator.pop(
+                      context, const SignerPromptResult(approved: false)),
                   child: const Text('Deny')),
               FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Approve signature')),
+                  onPressed: () => Navigator.pop(
+                      context, const SignerPromptResult(approved: true)),
+                  child: const Text('Once')),
+              if (grant != null)
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    const SignerPromptResult(
+                      approved: true,
+                      remember: true,
+                    ),
+                  ),
+                  child: const Text('Always allow'),
+                ),
             ],
           ),
         ) ??
-        false;
+        const SignerPromptResult(approved: false);
   }
 
   Map<String, dynamic>? _decodeMessage(String message) {

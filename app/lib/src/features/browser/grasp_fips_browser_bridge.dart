@@ -15,6 +15,42 @@ import '../drive/drive_native_save.dart';
 /// document. Authentication remains a separate signer concern.
 enum GraspFipsConsentResult { approved, denied, unavailable }
 
+class FipsTransportConsentRequest {
+  const FipsTransportConsentRequest({
+    required this.endpoint,
+    required this.peerNpub,
+    required this.purpose,
+  });
+
+  final String endpoint;
+  final String peerNpub;
+  final String purpose;
+
+  String get policyOperation => 'fips-policy-v1:transport:$purpose:$peerNpub';
+}
+
+class FipsAuthenticationGrant {
+  const FipsAuthenticationGrant({
+    required this.grantId,
+    required this.endpoint,
+    required this.peerNpub,
+    required this.purpose,
+    required this.operation,
+    required this.authentication,
+  });
+
+  final String grantId;
+  final String endpoint;
+  final String peerNpub;
+  final String purpose;
+  final String operation;
+  final String authentication;
+
+  String get policyOperation =>
+      'fips-policy-v1:signing:$authentication:$purpose:'
+      '$peerNpub:${operation.toUpperCase()}';
+}
+
 class GraspFipsBrowserBridge {
   GraspFipsBrowserBridge(
       {required this.pageOrigin,
@@ -23,7 +59,8 @@ class GraspFipsBrowserBridge {
       required this.reply,
       this.transportFactory});
   final String pageOrigin;
-  final Future<GraspFipsConsentResult> Function(String endpoint) approve;
+  final Future<GraspFipsConsentResult> Function(
+      FipsTransportConsentRequest request) approve;
   final Future<String?> Function(String endpoint) prepare;
   final Future<void> Function(String script) reply;
   final GraspFipsTransport Function(String endpoint)? transportFactory;
@@ -53,33 +90,72 @@ class GraspFipsBrowserBridge {
   }
 
   bool permitsAuthentication(String method, Map<String, dynamic> params) {
-    if (_closed || method != 'signEvent') return false;
+    if (_closed) return false;
     if (permitsDriveAuthentication(params)) return true;
+    return authenticationGrant(method, params) != null;
+  }
+
+  FipsAuthenticationGrant? authenticationGrant(
+      String method, Map<String, dynamic> params) {
+    if (_closed) return null;
     final auth = MeshAuthRequest.parse(method, params);
-    if (auth == null ||
+    if (auth == null) return null;
+    if (method == 'signEvent' &&
         (DateTime.now().millisecondsSinceEpoch ~/ 1000 -
                     (params['created_at'] as int))
                 .abs() >
             60) {
-      return false;
+      return null;
     }
-    if (params['kind'] == 27235) {
+    bool narrowGit = false;
+    var gitTarget = false;
+    if (method == 'signEvent' && params['kind'] == 27235) {
       final tags = params['tags'] as List;
       final uri = Uri.parse(auth.target);
-      return auth.operation == 'GET' &&
+      gitTarget = RegExp(r'^/[^/]+/[^/]+\.git$').hasMatch(uri.path);
+      narrowGit = auth.operation == 'GET' &&
           tags.length == 2 &&
-          _grants.values.any((transport) => transport.accepts(auth.target)) &&
           !uri.hasQuery &&
-          RegExp(r'^/[^/]+/[^/]+\.git$').hasMatch(uri.path);
+          gitTarget;
     }
+    final matches = _grants.entries.where((entry) {
+      final purpose = _grantPurposes[entry.key];
+      if (!entry.value
+          .accepts(auth.target, websocket: params['kind'] == 22242)) {
+        return false;
+      }
+      if (method == 'signNip98') {
+        return {'service', 'tower', 'autopilot'}.contains(purpose);
+      }
+      if (params['kind'] == 27235) {
+        if (gitTarget && !narrowGit) return false;
+        return narrowGit
+            ? {'service', 'git'}.contains(purpose)
+            : {'service', 'tower', 'autopilot'}.contains(purpose);
+      }
+      return params['kind'] == 22242;
+    }).toList();
+    if (matches.length != 1) return null;
+    final match = matches.single;
     if (params['kind'] == 22242) {
       final tags = params['tags'] as List;
       final challenge =
           tags.firstWhere((t) => t[0] == 'challenge')[1] as String;
-      return _grants.values
-          .any((transport) => transport.hasChallenge(auth.target, challenge));
+      if (!match.value.hasChallenge(auth.target, challenge)) return null;
     }
-    return false;
+    final endpoint = match.value.endpoint;
+    return FipsAuthenticationGrant(
+      grantId: match.key,
+      endpoint: endpoint,
+      peerNpub: Uri.parse(endpoint).host.replaceFirst(RegExp(r'\.fips$'), ''),
+      purpose: _grantPurposes[match.key]!,
+      operation: auth.operation,
+      authentication: method == 'signNip98'
+          ? 'nip98'
+          : params['kind'] == 22242
+              ? 'nip42'
+              : 'nip98-event',
+    );
   }
 
   bool permitsDriveAuthentication(Map<String, dynamic> p) {
@@ -433,7 +509,13 @@ class GraspFipsBrowserBridge {
     if (!{'service', 'tower', 'drive', 'git', 'autopilot'}.contains(purpose)) {
       throw const FormatException('Unsupported transport purpose.');
     }
-    if (_denied.contains(endpoint)) throw StateError('Connection denied.');
+    final consentRequest = FipsTransportConsentRequest(
+      endpoint: endpoint,
+      peerNpub: nodeNpub,
+      purpose: purpose,
+    );
+    final denialKey = '${consentRequest.policyOperation}|$endpoint';
+    if (_denied.contains(denialKey)) throw StateError('Connection denied.');
     if (_connectingEndpoints.contains(endpoint) ||
         _grants.length + _connectingEndpoints.length >= 8) {
       throw StateError('Connection unavailable.');
@@ -441,9 +523,9 @@ class GraspFipsBrowserBridge {
     _connectingEndpoints.add(endpoint);
     final epoch = _epoch;
     try {
-      final consent = await approve(endpoint);
+      final consent = await approve(consentRequest);
       if (consent == GraspFipsConsentResult.denied) {
-        _denied.add(endpoint);
+        _denied.add(denialKey);
         throw StateError('Denied.');
       }
       if (consent != GraspFipsConsentResult.approved) {

@@ -39,8 +39,13 @@ await tower.disconnect();
 
 `connect()` requires one exact `http://<npub>.fips:<port>` origin. When
 `peerNpub` is supplied it must equal the node identity encoded by the hostname.
-Native consent shows the calling origin, node and port. It returns an immutable,
-endpoint-scoped handle with:
+Native consent shows the calling origin, node, port, and purpose, with **Once**,
+**Always allow**, and **Deny** choices. **Always allow** persists only a
+versioned transport-policy rule keyed by signer identity, top-level origin,
+endpoint, peer, purpose, and transport capability class. A later exact match
+may mint a fresh document-scoped handle without prompting; any scope or policy
+version change prompts again. It returns an immutable, endpoint-scoped handle
+with:
 
 - `grantId`, `endpoint`, `peerNpub`, `purpose`, and `version` metadata;
 - `fetch(input, init)` with request-body and response-body streaming and
@@ -78,6 +83,19 @@ application identity, or grant application permissions. NIP-98, NIP-42,
 installation/service health checks, repository rules and Drive share rules are
 consumer protocols layered over an already-approved handle. Signer consent and
 transport consent are separate.
+
+For exact-service authentication, the native signer offers **Once**, **Always
+allow**, and **Deny**. **Always allow** stores a revocable policy decision, not
+a signature. The policy key includes the verified top-level page origin,
+current device identity, exact connected endpoint, explicit peer identity and
+port, handle purpose, policy version, signing capability class, authentication
+protocol, and HTTP/auth operation. Every
+accepted call still validates the live handle and exact request, then creates a
+fresh NIP-98/NIP-42 signature for the supplied URL, method, body/challenge and
+current timestamp. A different page, identity, peer, port, purpose or operation
+does not inherit the decision. Navigation, disconnect, lock/logout and tab
+teardown make the remembered rule unusable until a matching handle exists
+again; the rule stays visible and revocable in the Signer screen.
 
 WMapp revokes the document provider and all grants on full navigation,
 cross-origin navigation, tab close, identity change, signer lock/logout, browser

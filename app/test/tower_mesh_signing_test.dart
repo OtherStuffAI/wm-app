@@ -135,8 +135,10 @@ void main() {
             }
           }));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Connect'));
-      await tester.pumpAndSettle();
+      if (find.text('Once').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Once'));
+        await tester.pumpAndSettle();
+      }
       sign('forged', proof: 'wrong');
       await tester.pumpAndSettle();
       expect(signer.calls, 0);

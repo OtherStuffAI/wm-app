@@ -36,15 +36,16 @@ Future<String> start(Harness h, WidgetTester tester) async {
   return RegExp(r'const token = "([^"]+)"').firstMatch(script)!.group(1)!;
 }
 
-void rpc(String token, String method) => submitFakeJavaScriptMessage(
-    controllerIndex: 0,
-    channel: 'WingmanGrasp',
-    message: jsonEncode({
-      'token': token,
-      'id': method,
-      'method': method,
-      'params': {'endpoint': endpoint}
-    }));
+void rpc(String token, String method, [Map<String, dynamic>? params]) =>
+    submitFakeJavaScriptMessage(
+        controllerIndex: 0,
+        channel: 'WingmanGrasp',
+        message: jsonEncode({
+          'token': token,
+          'id': method,
+          'method': method,
+          'params': params ?? {'endpoint': endpoint}
+        }));
 void driveRpc(String token, String id) => submitFakeJavaScriptMessage(
     controllerIndex: 0,
     channel: 'WingmanGrasp',
@@ -59,7 +60,22 @@ Future<void> connect(String token, WidgetTester tester) async {
   await tester.pumpAndSettle();
   expect(find.text('Connect to private FIPS service?'), findsOneWidget);
   expect(find.byType(TextField), findsNothing);
-  await tester.tap(find.text('Connect'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Once').last);
+  await tester.pumpAndSettle();
+}
+
+Future<void> connectForPurpose(
+  String token,
+  WidgetTester tester,
+  String purpose,
+) async {
+  rpc(token, 'connect', {
+    'endpoint': endpoint,
+    'peerNpub': Uri.parse(endpoint).host.replaceFirst('.fips', ''),
+    'purpose': purpose,
+  });
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(FilledButton, 'Once').last);
   await tester.pumpAndSettle();
 }
 
@@ -86,7 +102,7 @@ void main() {
     h.sign('approved', event: auth());
     await tester.pumpAndSettle();
     expect(find.text('Approve private app authentication?'), findsOneWidget);
-    await tester.tap(find.text('Approve signature'));
+    await tester.tap(find.text('Once'));
     await tester.pumpAndSettle();
     expect(h.signer.events.length, 1);
     rpc(token, 'disconnect');
@@ -97,10 +113,155 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(
+      'transport Always allow is scoped to identity origin endpoint peer and purpose',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    rpc(token, 'connect', {
+      'endpoint': endpoint,
+      'peerNpub': Uri.parse(endpoint).host.replaceFirst('.fips', ''),
+      'purpose': 'autopilot',
+    });
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Purpose: autopilot'), findsOneWidget);
+    await tester.tap(find.text('Always allow'));
+    await tester.pumpAndSettle();
+    rpc(token, 'disconnect');
+    await tester.pumpAndSettle();
+
+    rpc(token, 'connect', {
+      'endpoint': endpoint,
+      'peerNpub': Uri.parse(endpoint).host.replaceFirst('.fips', ''),
+      'purpose': 'autopilot',
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsNothing);
+    rpc(token, 'disconnect');
+    await tester.pumpAndSettle();
+
+    rpc(token, 'connect', {
+      'endpoint': endpoint,
+      'peerNpub': Uri.parse(endpoint).host.replaceFirst('.fips', ''),
+      'purpose': 'tower',
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to private FIPS service?'), findsOneWidget);
+    await tester.tap(find.text('Deny'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+      'Flight Deck remembers exact Autopilot auth policy but signs every request',
+      (tester) async {
+    final h = Harness();
+    await h.start(tester);
+    await submitFakeNavigationRequest(
+      controllerIndex: 0,
+      url: 'https://flightdeck.example/agents',
+      isMainFrame: true,
+    );
+    submitFakePageFinished(
+      controllerIndex: 0,
+      url: 'https://flightdeck.example/agents',
+    );
+    await tester.pumpAndSettle();
+    final signerScript = fakeExecutedJavaScripts.lastWhere(
+      (script) => script.contains('const signerDocumentToken ='),
+    );
+    h.token = jsonDecode(
+      RegExp(r'const signerDocumentToken = (.*);')
+          .firstMatch(signerScript)!
+          .group(1)!,
+    );
+    final bridgeScript = fakeExecutedJavaScripts.lastWhere(
+      (script) => script.contains("'fipsTransport'"),
+    );
+    final bridgeToken = RegExp(
+      r'const token = "([^"]+)"',
+    ).firstMatch(bridgeScript)!.group(1)!;
+    await connectForPurpose(bridgeToken, tester, 'autopilot');
+
+    h.sign(
+      'overview',
+      method: 'signNip98',
+      event: {
+        'url': '$endpoint/api/agents/overview',
+        'httpMethod': 'GET',
+      },
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Approve private app authentication?'), findsOneWidget);
+    await tester.tap(find.text('Always allow'));
+    await tester.pumpAndSettle();
+    expect(h.signer.events, [
+      {'url': '$endpoint/api/agents/overview', 'method': 'GET'},
+    ]);
+
+    h.sign(
+      'pipelines',
+      method: 'signNip98',
+      event: {
+        'url': '$endpoint/api/pipelines',
+        'httpMethod': 'GET',
+      },
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Approve private app authentication?'), findsNothing);
+    expect(h.signer.events, [
+      {'url': '$endpoint/api/agents/overview', 'method': 'GET'},
+      {'url': '$endpoint/api/pipelines', 'method': 'GET'},
+    ]);
+
+    h.sign(
+      'post',
+      method: 'signNip98',
+      event: {
+        'url': '$endpoint/api/pipelines',
+        'httpMethod': 'POST',
+        'body': '{}',
+      },
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Approve private app authentication?'), findsOneWidget);
+    await tester.tap(find.text('Deny'));
+    await tester.pumpAndSettle();
+
+    rpc(bridgeToken, 'disconnect');
+    await tester.pumpAndSettle();
+    await connectForPurpose(bridgeToken, tester, 'tower');
+    h.sign(
+      'wrong-purpose',
+      method: 'signNip98',
+      event: {
+        'url': '$endpoint/api/agents/overview',
+        'httpMethod': 'GET',
+      },
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Approve private app authentication?'), findsOneWidget);
+    await tester.tap(find.text('Deny'));
+    await tester.pumpAndSettle();
+
+    rpc(bridgeToken, 'disconnect');
+    await tester.pumpAndSettle();
+    h.sign(
+      'revoked',
+      method: 'signNip98',
+      event: {
+        'url': '$endpoint/api/agents/overview',
+        'httpMethod': 'GET',
+      },
+    );
+    await tester.pumpAndSettle();
+    expect(h.signer.events.length, 2);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
       'public HTTPS auth still uses existing signer policy with GRASP injected',
       (tester) async {
     final h = Harness();
     await start(h, tester);
+    h.store.allow = true;
     h.sign('public', event: auth('https://public.example/repo.git'));
     await tester.pumpAndSettle();
     expect(h.signer.events.length, 1);
@@ -133,7 +294,7 @@ void main() {
     driveRpc(token, 'drive-after-spa-route');
     await tester.pumpAndSettle();
     expect(find.text('Connect to private FIPS service?'), findsOneWidget);
-    await tester.tap(find.text('Connect'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Once').last);
     await tester.pumpAndSettle();
     expect(find.text('Connect to private FIPS service?'), findsNothing);
     await tester.pumpWidget(const SizedBox());
@@ -208,7 +369,7 @@ void main() {
         // Reconnect's native dialog stacks above the old signature dialog.
         await connect(token, tester);
       }
-      await tester.tap(find.text('Approve signature'));
+      await tester.tap(find.text('Once'));
       await tester.pumpAndSettle();
       expect(h.signer.events, isEmpty);
       await tester.pumpWidget(const SizedBox());

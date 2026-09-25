@@ -19,7 +19,7 @@ import 'mesh_auth_request_test.dart'
 
 const appPage = 'http://$node.fips:41023/';
 const exactError =
-    'An active exact Tower pairing is required for mesh signing.';
+    'fips_signing_scope_required: An active exact FIPS service grant is required for signing.';
 
 class AuthSigner extends NativeCoreBridge {
   final events = <Map<String, dynamic>>[];
@@ -55,23 +55,33 @@ class AuthSigner extends NativeCoreBridge {
 
 class AuthStore extends SignerStore {
   bool deny = false;
+  bool allow = false;
   @override
   Future<SignerPolicyRule?> findPolicyRule({
     required String pageOrigin,
     required String operation,
     required String target,
     required String deviceNpub,
-  }) async =>
-      SignerPolicyRule(
+  }) async {
+    if (!deny && !allow) {
+      return super.findPolicyRule(
         pageOrigin: pageOrigin,
         operation: operation,
         target: target,
         deviceNpub: deviceNpub,
-        decision: deny
-            ? SignerPolicyRuleDecision.deny
-            : SignerPolicyRuleDecision.allow,
-        createdAt: DateTime.now(),
       );
+    }
+    return SignerPolicyRule(
+      pageOrigin: pageOrigin,
+      operation: operation,
+      target: target,
+      deviceNpub: deviceNpub,
+      decision:
+          deny ? SignerPolicyRuleDecision.deny : SignerPolicyRuleDecision.allow,
+      createdAt: DateTime.now(),
+    );
+  }
+
   @override
   Future<void> appendAudit(SignerAuditEntry entry) async {}
 }
@@ -204,7 +214,7 @@ void main() {
           findsOneWidget,
         );
         expect(find.byType(TextField), findsNothing);
-        await tester.tap(find.text('Approve signature'));
+        await tester.tap(find.text('Once'));
         await tester.pumpAndSettle();
         expect(h.signer.events.length, relay ? 2 : 1);
         expect(h.signer.events.last, authEvent(relay: relay));
@@ -238,7 +248,7 @@ void main() {
       event: {'url': httpTarget, 'httpMethod': 'GET'},
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Approve signature'));
+    await tester.tap(find.text('Once'));
     await tester.pumpAndSettle();
     expect(h.signer.events.single, {'url': httpTarget, 'method': 'GET'});
     await tester.pumpWidget(const SizedBox());
@@ -255,6 +265,7 @@ void main() {
         devicePublicKeyHex: identity.publicKeyHex,
         deviceSecret: identity.nsec,
       );
+    h.store.allow = true;
     await h.start(tester);
     expect(vault.unlockCalls, 0);
 
@@ -302,7 +313,7 @@ void main() {
                 : h.config.copyWith(towerUrl: 'https://other-tower.example');
         await tester.pumpWidget(h.widget());
       }
-      await tester.tap(find.text('Approve signature'));
+      await tester.tap(find.text('Once'));
       await tester.pumpAndSettle();
       expect(h.signer.events, isEmpty);
       await tester.pumpWidget(const SizedBox());
@@ -316,7 +327,7 @@ void main() {
     h.signer.gate = Completer<void>();
     h.sign('native-pending');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Approve signature'));
+    await tester.tap(find.text('Once'));
     await tester.pumpAndSettle();
     expect(h.signer.events.length, 1);
     await submitFakeNavigationRequest(
@@ -370,7 +381,7 @@ void main() {
       event: {'url': 'https://other.example'},
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Approve signature'));
+    await tester.tap(find.text('Once'));
     await tester.pumpAndSettle();
     expect(h.signer.events, isEmpty);
     h.sign('background');
@@ -387,7 +398,7 @@ void main() {
       h.signer.gate = Completer<void>();
       h.sign('native-pending');
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Approve signature'));
+      await tester.tap(find.text('Once'));
       await tester.pumpAndSettle();
       expect(h.signer.events.length, 1);
       h.config = h.config.copyWith(deviceNpub: 'other-identity');
@@ -415,7 +426,7 @@ void main() {
         final event = authEvent(relay: relay);
         h.sign('real', event: event);
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Approve signature'));
+        await tester.tap(find.text('Once'));
         await tester.pumpAndSettle();
         final reply = fakeExecutedJavaScripts.lastWhere(
           (s) => s.startsWith(

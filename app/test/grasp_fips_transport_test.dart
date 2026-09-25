@@ -219,6 +219,53 @@ void main() {
       bridge.close();
     },
   );
+  test('Autopilot NIP-98 auth is bound to its exact active grant', () async {
+    final bridge = GraspFipsBrowserBridge(
+      pageOrigin: 'https://flightdeck.example',
+      approve: (_) async => GraspFipsConsentResult.approved,
+      prepare: (_) async => null,
+      transportFactory: (_) => transport,
+      reply: (_) async {},
+    );
+    final token = RegExp(
+      r'const token = "([^"]+)"',
+    ).firstMatch(bridge.script)!.group(1);
+    Future<void> rpc(String method, Map<String, dynamic> params) =>
+        bridge.receive(
+          jsonEncode({
+            'token': token,
+            'id': method,
+            'method': method,
+            'params': params,
+          }),
+        );
+    final request = {
+      'url': '$endpoint/api/agents/overview',
+      'httpMethod': 'GET',
+    };
+
+    expect(bridge.authenticationGrant('signNip98', request), isNull);
+    await rpc('connect', {
+      'endpoint': endpoint,
+      'peerNpub': node,
+      'purpose': 'autopilot',
+    });
+    final grant = bridge.authenticationGrant('signNip98', request);
+    expect(grant?.endpoint, endpoint);
+    expect(grant?.peerNpub, node);
+    expect(grant?.purpose, 'autopilot');
+    expect(grant?.operation, 'GET');
+    expect(
+      bridge.authenticationGrant('signNip98', {
+        ...request,
+        'url': 'http://$node.fips:8788/api/agents/overview',
+      }),
+      isNull,
+    );
+    await rpc('disconnect', {});
+    expect(bridge.authenticationGrant('signNip98', request), isNull);
+    bridge.close();
+  });
   test('native request failures return sanitized bridge diagnostics', () async {
     final replies = <String>[];
     final bridge = GraspFipsBrowserBridge(
@@ -407,8 +454,9 @@ void main() {
     final replies = <String, Map<String, dynamic>>{};
     final bridge = GraspFipsBrowserBridge(
       pageOrigin: 'https://app.example',
-      approve: (value) =>
-          (gates[value] ??= Completer<GraspFipsConsentResult>()).future,
+      approve: (value) => (gates[value.endpoint] ??=
+              Completer<GraspFipsConsentResult>())
+          .future,
       prepare: (_) async => null,
       transportFactory: (value) =>
           transports[value] = _RecordingTransport(value),
@@ -483,7 +531,6 @@ class _FailingOpenTransport extends GraspFipsTransport {
     throw const SocketException('private mesh address unavailable');
   }
 }
-
 
 class _RecordingTransport extends GraspFipsTransport {
   _RecordingTransport(super.endpoint);

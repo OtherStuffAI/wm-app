@@ -10,6 +10,13 @@ Authentication and protocol verification stay above the transport. See
 [`fips-browser-transport.md`](fips-browser-transport.md) for the normative
 contract, compatibility window and platform status.
 
+Native transport and authentication consent are distinct, versioned capability
+classes scoped to the verified browser origin, device identity, exact service
+peer/endpoint/port, and handle purpose. Authentication policy additionally
+includes the protocol and operation. A remembered allow is a revocable policy
+only; NIP-98 and NIP-42 signatures are freshly generated from each exact request
+and cannot outlive or widen the active transport handle.
+
 Status: design draft
 Date: 2026-06-30
 
