@@ -11,7 +11,8 @@ import 'grasp_fips_bridge_script.dart';
 import 'mesh_auth_request.dart';
 import '../drive/drive_native_save.dart';
 
-/// Ephemeral transport grant for one native-verified top-level document.
+/// Ephemeral endpoint-scoped transport grants for one native-verified top-level
+/// document. Authentication remains a separate signer concern.
 enum GraspFipsConsentResult { approved, denied, unavailable }
 
 class GraspFipsBrowserBridge {
@@ -30,21 +31,30 @@ class GraspFipsBrowserBridge {
   final Map<String, GraspHttpRequest> _requests = {};
   final Map<String, GraspSocket> _sockets = {};
   final Set<String> _denied = {};
-  final Map<String, GraspFipsTransport> _drive = {};
+  final Map<String, GraspFipsTransport> _grants = {};
+  final Map<String, String> _grantPurposes = {};
+  final Map<String, String> _requestGrants = {};
+  final Map<String, String> _socketGrants = {};
   final Map<String, DriveNativeSave> _saves = {};
-  bool get hasDrive => _drive.isNotEmpty;
-  GraspFipsTransport? _transport;
-  bool _closed = false, _connecting = false;
+  bool get hasDrive => _grantPurposes.values.contains('drive');
+  bool _closed = false;
+  final Set<String> _connectingEndpoints = {};
   int _epoch = 0, _opening = 0;
   String get script => graspFipsBridgeScript(_token, pageOrigin);
   int get grantEpoch => _epoch;
-  String? get endpoint => _transport?.endpoint;
+  String? get endpoint =>
+      _grants.isEmpty ? null : _grants.values.first.endpoint;
+  String get signingDocumentToken => _token;
+
+  bool permitsMeshSigning(String? documentToken, String targetUrl) {
+    if (_closed || documentToken != _token) return false;
+    return _grants.entries.any((entry) =>
+        _grantPurposes[entry.key] == 'tower' && entry.value.accepts(targetUrl));
+  }
 
   bool permitsAuthentication(String method, Map<String, dynamic> params) {
-    final transport = _transport;
     if (_closed || method != 'signEvent') return false;
     if (permitsDriveAuthentication(params)) return true;
-    if (transport == null) return false;
     final auth = MeshAuthRequest.parse(method, params);
     if (auth == null ||
         (DateTime.now().millisecondsSinceEpoch ~/ 1000 -
@@ -58,7 +68,7 @@ class GraspFipsBrowserBridge {
       final uri = Uri.parse(auth.target);
       return auth.operation == 'GET' &&
           tags.length == 2 &&
-          transport.accepts(auth.target) &&
+          _grants.values.any((transport) => transport.accepts(auth.target)) &&
           !uri.hasQuery &&
           RegExp(r'^/[^/]+/[^/]+\.git$').hasMatch(uri.path);
     }
@@ -66,7 +76,8 @@ class GraspFipsBrowserBridge {
       final tags = params['tags'] as List;
       final challenge =
           tags.firstWhere((t) => t[0] == 'challenge')[1] as String;
-      return transport.hasChallenge(auth.target, challenge);
+      return _grants.values
+          .any((transport) => transport.hasChallenge(auth.target, challenge));
     }
     return false;
   }
@@ -97,7 +108,9 @@ class GraspFipsBrowserBridge {
       }
       final url = tags[0][1] as String;
       final u = Uri.parse(url);
-      return _drive[u.origin]?.accepts(url) == true &&
+      return _grants.entries.any((entry) =>
+              _grantPurposes[entry.key] == 'drive' &&
+              entry.value.accepts(url)) &&
           u.path == '/drive/v1/${tags[3][1]}/${u.pathSegments.last}' &&
           ['list', 'read', 'status'].contains(u.pathSegments.last) &&
           RegExp(r'^[a-zA-Z0-9_-]{32,128}$').hasMatch(tags[4][1]);
@@ -128,10 +141,11 @@ class GraspFipsBrowserBridge {
       }
     } catch (error) {
       if (!_closed && id != null) {
+        final errorText = error.toString().toLowerCase();
         final errorMessage = operation == 'connectDrive'
-            ? (error is StateError && error.message == 'denied'
+            ? (errorText.contains('denied')
                 ? 'consent-denied'
-                : error is StateError && error.message == 'unavailable'
+                : errorText.contains('unavailable')
                     ? 'unavailable'
                     : 'offline')
             : operation?.startsWith('save') == true
@@ -200,38 +214,10 @@ class GraspFipsBrowserBridge {
 
   Future<dynamic> _call(String method, Map<String, dynamic> p) async {
     if (method == 'connectDrive') {
-      final endpoint = p['endpoint'] as String;
-      TowerFipsProxy.validateEndpoint(endpoint);
-      if (_drive.containsKey(endpoint)) {
-        return {'version': 1, 'endpoint': endpoint};
-      }
-      if (_denied.contains(endpoint)) {
-        throw StateError('denied');
-      }
-      if (_connecting || _drive.length >= 8) throw StateError('unavailable');
-      _connecting = true;
-      final epoch = _epoch;
-      try {
-        final consent = await approve(endpoint);
-        if (consent == GraspFipsConsentResult.denied) {
-          _denied.add(endpoint);
-          throw StateError('denied');
-        }
-        if (consent != GraspFipsConsentResult.approved) {
-          throw StateError('unavailable');
-        }
-        if (_closed || epoch != _epoch) throw StateError('revoked');
-        if (await prepare('$endpoint/') != null) throw StateError('offline');
-        if (_closed || epoch != _epoch) throw StateError('revoked');
-        _drive[endpoint] =
-            transportFactory?.call(endpoint) ?? GraspFipsTransport(endpoint);
-        return {'version': 1, 'endpoint': endpoint};
-      } finally {
-        _connecting = false;
-      }
+      return _connect({...p, 'purpose': 'drive'});
     }
     if (method == 'saveBegin') {
-      if (_saves.length >= 4 || _drive.isEmpty) {
+      if (_saves.length >= 4 || !hasDrive) {
         throw StateError('save_unavailable');
       }
       final epoch = _epoch;
@@ -304,52 +290,29 @@ class GraspFipsBrowserBridge {
       }
     }
     if (method == 'connect') {
-      final endpoint = p['endpoint'] as String;
-      TowerFipsProxy.validateEndpoint(endpoint);
-      if (_denied.contains(endpoint)) {
-        throw StateError('Connection denied.');
-      }
-      if (_connecting) throw StateError('Connection unavailable.');
-      if (_transport?.endpoint == endpoint) {
-        return {'version': 1, 'endpoint': endpoint};
-      }
-      // A different service requires a fresh document, avoiding replacement races.
-      if (_transport != null) {
-        throw StateError('Disconnect before changing service.');
-      }
-      _connecting = true;
-      final epoch = _epoch;
-      try {
-        final consent = await approve(endpoint);
-        if (consent == GraspFipsConsentResult.denied) {
-          _denied.add(endpoint);
-          throw StateError('Denied.');
-        }
-        if (consent != GraspFipsConsentResult.approved) {
-          throw StateError('Connection unavailable.');
-        }
-        if (_closed || epoch != _epoch) throw StateError('Revoked.');
-        final failure = await prepare('$endpoint/');
-        if (failure != null || _closed || epoch != _epoch) {
-          throw StateError('FIPS unavailable.');
-        }
-        _transport =
-            transportFactory?.call(endpoint) ?? GraspFipsTransport(endpoint);
-        return {'version': 1, 'endpoint': endpoint};
-      } finally {
-        _connecting = false;
-      }
+      return _connect(p);
     }
     if (method == 'disconnect') {
-      _disconnect();
+      final grantId = p['grantId'] as String?;
+      if (grantId == null) {
+        _disconnect();
+      } else {
+        _revokeGrant(grantId);
+      }
       return null;
     }
     final requestedUrl = p['url'] as String?;
-    final driveTransport = requestedUrl == null || method != 'open'
-        ? null
-        : _drive[Uri.parse(requestedUrl).origin];
-    final transport = driveTransport ?? _transport;
-    if (driveTransport != null &&
+    var grantId = p['grantId'] as String?;
+    if (grantId == null && requestedUrl != null) {
+      final matches = _grants.entries
+          .where((entry) =>
+              entry.value.accepts(requestedUrl, websocket: method == 'wsOpen'))
+          .toList();
+      if (matches.length == 1) grantId = matches.single.key;
+    }
+    final transport = grantId == null ? null : _grants[grantId];
+    if (transport != null &&
+        _grantPurposes[grantId] == 'drive' &&
         (method != 'open' ||
             p['method'] != 'GET' ||
             !RegExp(r'^/drive/v1/[^/]+/(list|read|status)$')
@@ -379,6 +342,7 @@ class GraspFipsBrowserBridge {
             throw StateError('Revoked.');
           }
           _requests[id] = request;
+          _requestGrants[id] = grantId!;
         } else {
           final socket = await transport!.socket(p['url'] as String);
           if (_closed || epoch != _epoch) {
@@ -386,6 +350,7 @@ class GraspFipsBrowserBridge {
             throw StateError('Revoked.');
           }
           _sockets[id] = socket;
+          _socketGrants[id] = grantId!;
         }
         return id;
       } finally {
@@ -395,6 +360,7 @@ class GraspFipsBrowserBridge {
     final id = p['requestId'] as String;
     if (method == 'cancel') {
       _requests.remove(id)?.close();
+      _requestGrants.remove(id);
       return null;
     }
     if (method == 'wsClose') {
@@ -405,6 +371,7 @@ class GraspFipsBrowserBridge {
         throw StateError('Invalid close.');
       }
       _sockets.remove(id)?.close(code, reason);
+      _socketGrants.remove(id);
       return null;
     }
     if (method == 'wsNext' || method == 'wsSend') {
@@ -416,10 +383,14 @@ class GraspFipsBrowserBridge {
           return null;
         }
         final result = await socket.next();
-        if (result['done'] == true) _sockets.remove(id);
+        if (result['done'] == true) {
+          _sockets.remove(id);
+          _socketGrants.remove(id);
+        }
         return result;
       } catch (_) {
         _sockets.remove(id)?.close();
+        _socketGrants.remove(id);
         rethrow;
       }
     }
@@ -434,31 +405,106 @@ class GraspFipsBrowserBridge {
           return await request.finish();
         case 'pull':
           final result = await request.pull();
-          if (result['done'] == true) _requests.remove(id);
+          if (result['done'] == true) {
+            _requests.remove(id);
+            _requestGrants.remove(id);
+          }
           return result;
         default:
           throw StateError('Unknown operation.');
       }
     } catch (_) {
       _requests.remove(id)?.close();
+      _requestGrants.remove(id);
       rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _connect(Map<String, dynamic> p) async {
+    final endpoint = p['endpoint'] as String;
+    TowerFipsProxy.validateEndpoint(endpoint);
+    final nodeNpub =
+        Uri.parse(endpoint).host.replaceFirst(RegExp(r'\.fips$'), '');
+    final peerNpub = p['peerNpub'] as String? ?? p['serviceNpub'] as String?;
+    if (peerNpub != null && peerNpub != nodeNpub) {
+      throw const FormatException('Pinned peer does not match endpoint.');
+    }
+    final purpose = p['purpose'] is String ? p['purpose'] as String : 'service';
+    if (!{'service', 'tower', 'drive', 'git', 'autopilot'}.contains(purpose)) {
+      throw const FormatException('Unsupported transport purpose.');
+    }
+    if (_denied.contains(endpoint)) throw StateError('Connection denied.');
+    if (_connectingEndpoints.contains(endpoint) ||
+        _grants.length + _connectingEndpoints.length >= 8) {
+      throw StateError('Connection unavailable.');
+    }
+    _connectingEndpoints.add(endpoint);
+    final epoch = _epoch;
+    try {
+      final consent = await approve(endpoint);
+      if (consent == GraspFipsConsentResult.denied) {
+        _denied.add(endpoint);
+        throw StateError('Denied.');
+      }
+      if (consent != GraspFipsConsentResult.approved) {
+        throw StateError('Connection unavailable.');
+      }
+      if (_closed || epoch != _epoch) throw StateError('Revoked.');
+      final failure = await prepare('$endpoint/');
+      if (failure != null || _closed || epoch != _epoch) {
+        throw StateError('FIPS unavailable.');
+      }
+      final grantId = TowerFipsProxy.capability();
+      _grants[grantId] =
+          transportFactory?.call(endpoint) ?? GraspFipsTransport(endpoint);
+      _grantPurposes[grantId] = purpose;
+      return {
+        'version': 2,
+        'grantId': grantId,
+        'endpoint': endpoint,
+        'peerNpub': nodeNpub,
+        'purpose': purpose,
+      };
+    } finally {
+      _connectingEndpoints.remove(endpoint);
+    }
+  }
+
+  void _revokeGrant(String grantId) {
+    _grants.remove(grantId)?.close();
+    _grantPurposes.remove(grantId);
+    for (final id in _requestGrants.entries
+        .where((entry) => entry.value == grantId)
+        .map((entry) => entry.key)
+        .toList()) {
+      _requests.remove(id)?.close();
+      _requestGrants.remove(id);
+    }
+    for (final id in _socketGrants.entries
+        .where((entry) => entry.value == grantId)
+        .map((entry) => entry.key)
+        .toList()) {
+      _sockets.remove(id)?.close();
+      _socketGrants.remove(id);
     }
   }
 
   void _disconnect() {
     _epoch++;
-    _transport?.close();
-    _transport = null;
-    for (final t in _drive.values) {
+    for (final t in _grants.values) {
       t.close();
     }
-    _drive.clear();
+    _grants.clear();
+    _grantPurposes.clear();
+    _connectingEndpoints.clear();
     for (final s in _saves.values) {
       unawaited(s.cancel().catchError((Object _) {}));
     }
     _saves.clear();
     _requests.clear();
+    _requestGrants.clear();
     _sockets.clear();
+    _socketGrants.clear();
   }
 
   void close() {

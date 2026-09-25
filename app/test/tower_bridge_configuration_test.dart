@@ -9,7 +9,7 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
-import 'package:wingman_app/src/features/browser/tower_fips_bridge_script.dart';
+import 'package:wingman_app/src/features/browser/grasp_fips_bridge_script.dart';
 
 import 'fake_webview_platform.dart';
 
@@ -40,7 +40,7 @@ void main() {
 
   for (final page in [local, 'https://deck.example/workspace']) {
     testWidgets(
-        'blank native Tower injects production bridge at eligible $page',
+        'universal FIPS provider includes the Tower adapter at eligible $page',
         (tester) async {
       final config =
           AppConfig.defaults().copyWith(flightDeckUrl: 'https://deck.example');
@@ -56,7 +56,8 @@ void main() {
       final token = jsonDecode(
               RegExp(r'const token = (.*);').firstMatch(script)!.group(1)!)
           as String;
-      expect(script, towerFipsBridgeScript(token, Uri.parse(page).origin));
+      expect(script, graspFipsBridgeScript(token, Uri.parse(page).origin));
+      expect(script, contains("'wingmanTowerTransport'"));
       expect(fakeClearCookieCalls, 0);
       expect(fakeReloadCalls, 0);
     });
@@ -68,7 +69,8 @@ void main() {
     'https://deck.example:8443',
     'http://localhost:47832'
   ]) {
-    testWidgets('configured Tower does not inject into unapproved origin $page',
+    testWidgets(
+        'provider origin policy applies independently of Tower at $page',
         (tester) async {
       await tester.pumpWidget(app(AppConfig.defaults()));
       await tester.pumpAndSettle();
@@ -88,8 +90,10 @@ void main() {
       fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
-      expect(scripts(), isEmpty,
-          reason: 'General signer trust must not grant Tower transport');
+      final supported = Uri.parse(page).scheme == 'https';
+      expect(scripts(), supported ? hasLength(1) : isEmpty,
+          reason:
+              'HTTPS pages receive only a consent-gated generic provider; insecure non-local origins fail closed');
     });
   }
 }

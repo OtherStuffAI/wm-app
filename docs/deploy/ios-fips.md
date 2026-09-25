@@ -130,7 +130,8 @@ encrypted FIPS mesh; it does not disable ATS globally or trust a signer origin.
 Existing exact-origin `window.nostr` approval remains mandatory. There is no
 wildcard signing approval. Embedded Flight Deck retains its existing origin,
 secure context, Dexie cache and TowerSyncService ownership. This runtime does
-not establish that the separately implemented Tower bridge works on iPhone.
+does not establish live consumer acceptance for the universal browser FIPS
+transport on iPhone; that requires a separately evidenced iOS WebView pass.
 
 The pinned public `test-us01` bootstrap (`217.77.8.91:2121`) is a PoC dependency,
 not production availability. This mobile leaf uses bootstrap routing; LAN and

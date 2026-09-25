@@ -6,8 +6,8 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
 (() => {
   if (window !== window.top || location.origin !== ${jsonEncode(pageOrigin)}) return;
   const token = ${jsonEncode(documentToken)};
-  let seq = 0, pair = null, revoked = false, generation = 0;
-  const drivePairs = new Map();
+  let seq = 0, revoked = false, generation = 0, towerHandle = null;
+  const pairs = new Map();
   const sockets = new Set();
   const activeStreams = new Set();
   const pending = new Map();
@@ -30,7 +30,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
   };
   window.__wingmanGraspRevoke = secret => {
     if (secret !== token) return;
-    revoked = true; pair = null; drivePairs.clear(); generation++;
+    revoked = true; pairs.clear(); towerHandle = null; generation++;
     for (const socket of [...sockets]) socket._end(1006, '', false);
     for (const stop of [...activeStreams]) stop();
     for (const cleanup of [...portCleanups]) cleanup();
@@ -42,17 +42,19 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     return btoa(s);
   };
   const decode = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-  const nativeFetch = async (input, init = {}) => {
-    if (!pair && drivePairs.size===0) throw new Error('Connect to a service first.');
+  const nativeFetch = async (input, init = {}, selectedGrant = null) => {
+    if (pairs.size===0) throw new Error('Connect to a service first.');
     const request = new Request(input, init);
-    const approvedPair = drivePairs.get(new URL(request.url).origin) || pair;
+    const approvedPair = selectedGrant
+      ? pairs.get(selectedGrant)
+      : [...pairs.values()].find(grant => request.url.startsWith(grant.endpoint + '/'));
     if (!approvedPair || !request.url.startsWith(approvedPair.endpoint + '/'))
-      throw new Error('Request must target the approved GRASP service.');
+      throw new Error('Request must target an approved FIPS service.');
     if (request.signal.aborted) throw request.signal.reason || new DOMException('Aborted', 'AbortError');
     const headers = Object.fromEntries(request.headers.entries());
     // Native transport must deliver compressed representation consistently.
     // A page cannot set accept-encoding; native backend handles decompression.
-    const opening = rpc('open', {url: request.url, method: request.method, headers});
+    const opening = rpc('open', {grantId:approvedPair.grantId,url: request.url, method: request.method, headers});
     let earlyAbort, id;
     const interrupted = new Promise((_, reject) => {
       earlyAbort = () => reject(request.signal.reason || new DOMException('Aborted', 'AbortError'));
@@ -127,13 +129,16 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     readyState=0; bufferedAmount=0; protocol=''; extensions=''; binaryType='blob';
     onopen=null; onmessage=null; onerror=null; onclose=null;
     _id=null; _queue=Promise.resolve();
-    constructor(url, protocols=[]) {
+    constructor(url, protocols=[], selectedGrant=null) {
       super();
       this.url = new URL(url).href;
-      if (!pair || !this.url.startsWith(pair.endpoint.replace('http:', 'ws:')+'/')) throw new DOMException('Unapproved relay', 'SecurityError');
+      const approvedPair = selectedGrant
+        ? pairs.get(selectedGrant)
+        : [...pairs.values()].find(grant => this.url.startsWith(grant.endpoint.replace('http:', 'ws:')+'/'));
+      if (!approvedPair) throw new DOMException('Unapproved relay', 'SecurityError');
       if ((typeof protocols==='string' && protocols) || (Array.isArray(protocols) && protocols.length)) throw new DOMException('Relay subprotocols unsupported', 'NotSupportedError');
       sockets.add(this);
-      rpc('wsOpen',{url:this.url}).then(async id=> {
+      rpc('wsOpen',{grantId:approvedPair.grantId,url:this.url}).then(async id=> {
         this._id=id;
         if (this.readyState!==0 || revoked) { rpc('wsClose',{requestId:id}).catch(()=>{}); return; }
         this.readyState=1; this._emit(new Event('open'));
@@ -183,10 +188,20 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         .then(()=>this._end(code,reason,false),()=>this._end(1006,'',false));
     }
   }
+  const makeHandle = result => {
+    const handle = {
+      version:2, grantId:result.grantId, endpoint:result.endpoint,
+      peerNpub:result.peerNpub, purpose:result.purpose,
+      fetch:(input,init)=>nativeFetch(input,init,result.grantId),
+      WebSocket:class extends NativeWebSocket { constructor(url,protocols=[]) { super(url,protocols,result.grantId); } },
+      disconnect:()=>transport.disconnect(result.grantId),
+    };
+    return Object.freeze(handle);
+  };
   const transport = Object.freeze({
-    version:1, available:true,
-    capabilities:Object.freeze({connect:true, connectDrive:true, fetch:true, save:true, WebSocket:true}),
-    async connectDrive(options) { const g=generation; const result=await rpc('connectDrive',{endpoint:options.endpoint}); if(revoked||g!==generation)throw new Error('Revoked'); drivePairs.set(result.endpoint,result); return result; },
+    version:2, available:true,
+    capabilities:Object.freeze({multiEndpoint:true, connect:true, connectDrive:true, fetch:true, save:true, WebSocket:true, workers:true, streaming:true}),
+    async connectDrive(options) { return this.connect({...options,purpose:'drive'}, 'connectDrive'); },
     async save(response, {name, signal, onProgress, open=false}={}) {
       let id, reader, done=false, total=0;
       const abort=()=>{reader?.cancel().catch(()=>{});if(id)rpc('saveCancel',{saveId:id}).catch(()=>{});};
@@ -207,11 +222,11 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         const result=await rpc('saveFinish',{saveId:id,open});if(signal?.aborted&&!result?.committed)throw new DOMException('Cancelled','AbortError');done=true;return result||{saved:true};
       }finally{signal?.removeEventListener('abort',abort);await reader?.cancel().catch(()=>{});if(!reader)await response.body?.cancel().catch(()=>{});if(!done&&id)await rpc('saveCancel',{saveId:id}).catch(()=>{});}
     },
-    async connect(options) {
+    async connect(options, method='connect') {
       const current = generation;
-      const result = await rpc('connect', options);
+      const result = await rpc(method, options);
       if (revoked || current !== generation) throw new Error('Connection revoked.');
-      pair = result; return pair;
+      const handle=makeHandle(result);pairs.set(result.grantId,handle);return handle;
     },
     fetch:nativeFetch,
     WebSocket:NativeWebSocket,
@@ -267,11 +282,29 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
         }
       };
       channel.port1.start();
-      worker.postMessage({type:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
+      worker.postMessage({type:'wingman-fips-transport-port',legacyType:'wingman-grasp-transport-port',port:channel.port2},[channel.port2]);
     },
-    async disconnect() { pair=null; drivePairs.clear(); generation++; for (const socket of [...sockets]) socket._end(1006, '', false); for (const stop of [...activeStreams]) stop(); for (const cleanup of [...portCleanups]) cleanup(false); await rpc('disconnect'); },
+    async disconnect(handleOrId) {
+      const grantId=typeof handleOrId==='string'?handleOrId:handleOrId?.grantId;
+      if(grantId){pairs.delete(grantId);if(towerHandle?.grantId===grantId)towerHandle=null;await rpc('disconnect',{grantId});return;}
+      pairs.clear();towerHandle=null;generation++;for(const socket of [...sockets])socket._end(1006,'',false);for(const stop of [...activeStreams])stop();for(const cleanup of [...portCleanups])cleanup(false);await rpc('disconnect');
+    },
   });
   Object.defineProperty(window, 'fipsTransport', {configurable:true, value:transport});
+  // Compatibility only. Remove after Flight Deck no longer references it.
+  Object.defineProperty(window,'wingmanTowerTransport',{configurable:true,value:Object.freeze({
+    version:2,available:true,pairingIdentity:'service-npub',
+    async connect(options){
+      if(!options?.serviceNpub)throw new Error('A Tower transport identity is required.');
+      towerHandle=await transport.connect({...options,peerNpub:options.serviceNpub,purpose:'tower'});
+      return {version:2,endpoint:towerHandle.endpoint,serviceNpub:options.serviceNpub,transport:'native'};
+    },
+    fetch:(input,init)=>{if(!towerHandle)throw new Error('Connect first.');return towerHandle.fetch(input,init);},
+    attachWorker:transport.attachWorker,detachWorker:transport.detachWorker,
+    async disconnect(){if(towerHandle)await transport.disconnect(towerHandle);towerHandle=null;}
+  })});
+  window.dispatchEvent(new Event('wingman-fips-transport-ready'));
   window.dispatchEvent(new Event('wingman-grasp-transport-ready'));
+  window.dispatchEvent(new Event('wingman-tower-transport-ready'));
 })();
 ''';

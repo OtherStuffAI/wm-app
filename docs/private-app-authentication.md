@@ -1,5 +1,10 @@
 # Private app authentication in WMapp
 
+Transport consent is provided only by endpoint-scoped
+[`window.fipsTransport`](fips-browser-transport.md) grants. This document covers
+the separate authentication/signing layer; approval here never creates or
+widens a transport grant.
+
 Open a private app using its link in Flight Deck or Autopilot, then choose the
 app's connect/sign-in action. For a directly loaded FIPS app, WMapp derives the
 HTTP or relay authentication address from the actual signing request. No FIPS

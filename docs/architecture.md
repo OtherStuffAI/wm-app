@@ -1,5 +1,15 @@
 # Wingman App Architecture
 
+## Universal browser FIPS transport invariant
+
+Every HTTPS/local browser application reaches approved FIPS HTTP, streaming,
+SSE and WebSocket services through endpoint-scoped `window.fipsTransport`
+handles. Tower, Autopilot, Drive and GRASP/Git do not receive service-specific
+browser bridges. Direct `.fips` navigation remains a distinct routing path.
+Authentication and protocol verification stay above the transport. See
+[`fips-browser-transport.md`](fips-browser-transport.md) for the normative
+contract, compatibility window and platform status.
+
 Status: design draft
 Date: 2026-06-30
 

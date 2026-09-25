@@ -6,7 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'tower_fips_proxy.dart';
 
 /// An explicitly approved mesh node + port. No DNS, proxy listener, redirect,
-/// cookies, Tower identity lookup, or signing authority is involved.
+/// cookies, service identity lookup, or signing authority is involved.
 class GraspFipsTransport {
   GraspFipsTransport(this.endpoint, {this.clientFactory}) {
     TowerFipsProxy.validateEndpoint(endpoint);
@@ -56,8 +56,9 @@ class GraspFipsTransport {
 
   Future<GraspHttpRequest> open(
       String url, String method, Map<String, dynamic> headers) async {
-    if (!accepts(url) || !{'GET', 'HEAD', 'POST'}.contains(method)) {
-      throw const FormatException('Unapproved GRASP request.');
+    if (!accepts(url) ||
+        !{'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'}.contains(method)) {
+      throw const FormatException('Unapproved FIPS request.');
     }
     final client = _client();
     try {
@@ -76,8 +77,14 @@ class GraspFipsTransport {
           'content-type',
           'git-protocol',
           'range',
+          'if-range',
+          'if-match',
           'if-none-match',
-          'if-modified-since'
+          'if-modified-since',
+          'if-unmodified-since',
+          'last-event-id',
+          'x-flightdeck-pg-app-npub',
+          'x-request-id'
         }.contains(entry.key.toLowerCase())) {
           continue;
         }

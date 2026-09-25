@@ -23,7 +23,7 @@ function host({ frame = false, origin = 'https://example.com', timer = setTimeou
     WingmanGrasp: { postMessage(message) {
       const call = JSON.parse(message); calls.push(call);
       let result;
-      if (call.method === 'connect') result = { version: 1, endpoint };
+      if (call.method === 'connect') result = { version: 2, grantId: `grant-${call.id}`, endpoint:call.params.endpoint, peerNpub:'synthetic', purpose:call.params.purpose||'service' };
       if (call.method === 'open') result = 'request';
       if (call.method === 'finish') result = { status: 201, headers: { 'Content-Type': 'application/octet-stream' } };
       if (call.method === 'pull') {
@@ -39,7 +39,7 @@ function host({ frame = false, origin = 'https://example.com', timer = setTimeou
 test('FIPS capability preserves readiness, binary transport, revocation and separate signing', async () => {
   const h = host(); const signer = h.window.nostr;
   let ready = 0;
-  h.window.addEventListener('wingman-grasp-transport-ready', () => {
+  h.window.addEventListener('wingman-fips-transport-ready', () => {
     ready++;
     assert.ok(Object.isFrozen(h.window.fipsTransport));
   });
@@ -73,7 +73,7 @@ test('Drive multiple host grants coexist with Git and revoke together', async ()
   const original=h.window.__wingmanGraspReply;
   h.window.__wingmanGraspReply=(secret,id,result,error)=>{
     const call=h.calls.find(c=>c.id===id);
-    return original(secret,id,call?.method==='connectDrive'?{version:1,endpoint:call.params.endpoint}:result,error);
+    return original(secret,id,call?.method==='connectDrive'?{version:2,grantId:`grant-${id}`,endpoint:call.params.endpoint,peerNpub:'synthetic',purpose:'drive'}:result,error);
   };
   await t.connect({endpoint:h.endpoint});
   await t.connectDrive({endpoint:'http://first.fips:7345'});
@@ -84,6 +84,45 @@ test('Drive multiple host grants coexist with Git and revoke together', async ()
   await assert.rejects(t.fetch('http://unapproved.fips:7345/drive/v1/share/list'),/approved/);
   h.window.__wingmanGraspRevoke('test-token');
   await assert.rejects(t.fetch('http://first.fips:7345/drive/v1/share/list'),/Connect|revoked/);
+});
+
+test('Flight Deck session/Agents and GitWorkshop use independent Autopilot/GRASP handles', async () => {
+  const h=host();h.run();const t=h.window.fipsTransport;
+  const original=h.window.__wingmanGraspReply;
+  h.window.__wingmanGraspReply=(secret,id,result,error)=>{
+    const call=h.calls.find(c=>c.id===id);
+    if(call?.method==='connect') result={version:2,grantId:`grant-${id}`,endpoint:call.params.endpoint,peerNpub:'synthetic',purpose:call.params.purpose||'service'};
+    return original(secret,id,result,error);
+  };
+  const first=await t.connect({endpoint:h.endpoint,purpose:'tower'});
+  const secondEndpoint='http://second.fips:7345';
+  const second=await t.connect({endpoint:secondEndpoint,purpose:'autopilot'});
+  const gitEndpoint='http://git.fips:9418';
+  const git=await t.connect({endpoint:gitEndpoint,purpose:'git'});
+  assert.notEqual(first.grantId,second.grantId);
+  assert.notEqual(second.grantId,git.grantId);
+  assert.equal(Object.isFrozen(first),true);
+  await (await first.fetch(h.endpoint+'/events')).body.cancel();
+  await (await second.fetch(secondEndpoint+'/sessions/live-thinking')).body.cancel();
+  await (await second.fetch(secondEndpoint+'/pipelines')).body.cancel();
+  await (await git.fetch(gitEndpoint+'/owner/repository.git/info/refs')).body.cancel();
+  assert.deepEqual(h.calls.filter(c=>c.method==='connect').map(c=>c.params.purpose),['tower','autopilot','git']);
+  await first.disconnect();
+  await assert.rejects(first.fetch(h.endpoint+'/events'),/approved/);
+  await (await second.fetch(secondEndpoint+'/sessions')).body.cancel();
+  await (await git.fetch(gitEndpoint+'/owner/repository.git/git-upload-pack')).body.cancel();
+});
+
+test('legacy Tower surface delegates connect, fetch and disconnect to fipsTransport', async () => {
+  const h=host();h.run();
+  const tower=h.window.wingmanTowerTransport;
+  assert.equal(tower.available,true);
+  await tower.connect({endpoint:h.endpoint,serviceNpub:'synthetic'});
+  await (await tower.fetch(h.endpoint+'/api')).body.cancel();
+  assert.equal(h.calls.find(c=>c.method==='connect').params.purpose,'tower');
+  assert.equal(h.calls.find(c=>c.method==='connect').params.peerNpub,'synthetic');
+  await tower.disconnect();
+  await assert.rejects(Promise.resolve().then(()=>tower.fetch(h.endpoint+'/api')),/Connect/);
 });
 
 test('native save splits a large response into bounded chunks and cancels partial output', async () => {

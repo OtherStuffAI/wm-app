@@ -252,7 +252,9 @@ void main() {
     }
 
     final connected = await rpc('connect', 'connect', {'endpoint': endpoint});
-    expect(connected[2], {'version': 1, 'endpoint': endpoint});
+    expect(connected[2], containsPair('version', 2));
+    expect(connected[2], containsPair('endpoint', endpoint));
+    expect(connected[2], containsPair('purpose', 'service'));
     final failed = await rpc('open', 'open', {
       'url': '$endpoint/drive/v1/share/list?path=',
       'method': 'GET',
@@ -395,6 +397,62 @@ void main() {
     expect(bridge.hasDrive, isTrue);
     bridge.close();
   });
+  test('multiple endpoint grants connect concurrently and revoke independently',
+      () async {
+    const otherNode =
+        'npub109684nue495hq240u3dqzyf2kltk23u3mqkk9l44ga6szed4jcysramf74';
+    const otherEndpoint = 'http://$otherNode.fips:43100';
+    final gates = <String, Completer<GraspFipsConsentResult>>{};
+    final transports = <String, _RecordingTransport>{};
+    final replies = <String, Map<String, dynamic>>{};
+    final bridge = GraspFipsBrowserBridge(
+      pageOrigin: 'https://app.example',
+      approve: (value) =>
+          (gates[value] ??= Completer<GraspFipsConsentResult>()).future,
+      prepare: (_) async => null,
+      transportFactory: (value) =>
+          transports[value] = _RecordingTransport(value),
+      reply: (script) async {
+        final values = jsonDecode(
+          '[${script.substring(script.indexOf('(') + 1, script.length - 1)}]',
+        ) as List<dynamic>;
+        if (values[2] is Map) {
+          replies[values[1] as String] =
+              (values[2] as Map).cast<String, dynamic>();
+        }
+      },
+    );
+    final token =
+        RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+    Future<void> connect(String id, String value, String purpose) =>
+        bridge.receive(jsonEncode({
+          'token': token,
+          'id': id,
+          'method': 'connect',
+          'params': {'endpoint': value, 'purpose': purpose},
+        }));
+
+    final first = connect('autopilot', endpoint, 'autopilot');
+    final second = connect('git', otherEndpoint, 'git');
+    await Future<void>.delayed(Duration.zero);
+    expect(gates.keys, containsAll(<String>{endpoint, otherEndpoint}));
+    gates[endpoint]!.complete(GraspFipsConsentResult.approved);
+    gates[otherEndpoint]!.complete(GraspFipsConsentResult.approved);
+    await Future.wait([first, second]);
+    expect(replies['autopilot']?['purpose'], 'autopilot');
+    expect(replies['git']?['purpose'], 'git');
+
+    await bridge.receive(jsonEncode({
+      'token': token,
+      'id': 'disconnect-autopilot',
+      'method': 'disconnect',
+      'params': {'grantId': replies['autopilot']!['grantId']},
+    }));
+    expect(transports[endpoint]!.wasClosed, isTrue);
+    expect(transports[otherEndpoint]!.wasClosed, isFalse);
+    bridge.close();
+    expect(transports[otherEndpoint]!.wasClosed, isTrue);
+  });
   test('connectDrive waits for native consent instead of timing out', () {
     expect(
       bridgeTimerGuard(
@@ -423,5 +481,18 @@ class _FailingOpenTransport extends GraspFipsTransport {
   Future<GraspHttpRequest> open(
       String url, String method, Map<String, dynamic> headers) {
     throw const SocketException('private mesh address unavailable');
+  }
+}
+
+
+class _RecordingTransport extends GraspFipsTransport {
+  _RecordingTransport(super.endpoint);
+
+  bool wasClosed = false;
+
+  @override
+  void close() {
+    wasClosed = true;
+    super.close();
   }
 }

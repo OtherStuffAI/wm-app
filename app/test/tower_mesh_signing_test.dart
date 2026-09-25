@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'package:wingman_app/src/core/tower_fips_proxy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,15 +9,12 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
-import 'package:wingman_app/src/features/browser/tower_pairing_store.dart';
 import 'fake_webview_platform.dart';
 
 const endpoint =
     'http://npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98.fips:8787';
 const page = 'https://flightdeck.example',
     tower = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
-
-class RealSockets extends HttpOverrides {}
 
 class CountingSigner extends NativeCoreBridge {
   int calls = 0;
@@ -71,18 +66,6 @@ void main() {
       await SharedPreferencesAsync()
           .setString('wingman.browser.last_signer_npub.v1', 'test-identity');
       installFakeWebViewPlatform();
-      await TowerPairingStore().grant(page, tower, endpoint, 'test-identity');
-      late HttpServer server;
-      await tester.runAsync(() async {
-        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        server.listen((r) async {
-          expect(r.uri.path, '/health');
-          r.response.headers.contentType = ContentType.json;
-          r.response.write(jsonEncode({'service_npub': tower}));
-          await r.response.close();
-        });
-      });
-      addTearDown(() => server.close(force: true));
       final signer = CountingSigner(), store = RememberedKind();
       final config = AppConfig.defaults().copyWith(
           towerUrl: '',
@@ -93,17 +76,6 @@ void main() {
           home: Scaffold(
               body: BrowserScreen(
                   config: currentConfig,
-                  towerProxyFactory: (endpoint, origin) => TowerFipsProxy.bind(
-                      endpoint: endpoint,
-                      pageOrigin: origin,
-                      clientFactory: () => HttpClient()
-                        ..connectionFactory = (url, host, port) {
-                          if (!url.host.endsWith('.fips')) {
-                            throw StateError('Public HTTPS unavailable');
-                          }
-                          return Socket.startConnect(
-                              InternetAddress.loopbackIPv4, server.port);
-                        }),
                   localFlightDeckUrl: page,
                   bridge: signer,
                   signerStore: store,
@@ -149,25 +121,21 @@ void main() {
       sign('before', proof: token);
       await tester.pumpAndSettle();
       expect(signer.calls, 0);
-      await tester.runAsync(() => HttpOverrides.runZoned(() async {
-            submitFakeJavaScriptMessage(
-                controllerIndex: 0,
-                channel: 'WingmanTower',
-                message: jsonEncode({
-                  'id': 'connect',
-                  'token': token,
-                  'method': 'connect',
-                  'params': {'endpoint': endpoint, 'serviceNpub': tower}
-                }));
-            final deadline = DateTime.now().add(const Duration(seconds: 5));
-            while (!fakeExecutedJavaScripts.any((s) =>
-                s.contains('__wingmanTowerReply') && s.contains('"connect"'))) {
-              if (DateTime.now().isAfter(deadline)) {
-                throw StateError('Pairing did not finish');
-              }
-              await Future<void>.delayed(const Duration(milliseconds: 10));
+      submitFakeJavaScriptMessage(
+          controllerIndex: 0,
+          channel: 'WingmanGrasp',
+          message: jsonEncode({
+            'id': 'connect',
+            'token': token,
+            'method': 'connect',
+            'params': {
+              'endpoint': endpoint,
+              'peerNpub': tower,
+              'purpose': 'tower'
             }
-          }, createHttpClient: RealSockets().createHttpClient));
+          }));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
       sign('forged', proof: 'wrong');
       await tester.pumpAndSettle();
@@ -206,7 +174,7 @@ void main() {
         await tester.runAsync(() async {
           submitFakeJavaScriptMessage(
               controllerIndex: 0,
-              channel: 'WingmanTower',
+              channel: 'WingmanGrasp',
               message: jsonEncode({
                 'id': 'unpair',
                 'token': token,

@@ -1,21 +1,28 @@
-# Native GRASP transport v1
+# GRASP/Git profile for the universal FIPS transport
+
+> The provider is now service-neutral. GRASP/Git is one protocol layered over
+> the universal [`window.fipsTransport`](fips-browser-transport.md) version-2
+> contract, not a distinct browser bridge. Historical `GRASP` names in native
+> implementation files and error codes are compatibility identifiers and must
+> not be copied into new public contracts.
 
 WMapp iOS, macOS and supported Android WebViews expose `window.fipsTransport` to HTTPS top-level documents after
-page load. Register `fips-transport-ready` before checking availability and
+page load. Register `wingman-fips-transport-ready` before checking availability and
 retry initial private-service admission on readiness. Keep the full application UI.
 
 ```js
 const transport = window.fipsTransport;
 const endpoint = 'http://<node-npub>.fips:<port>';
-await transport.connect({endpoint}); // returns {version:1, endpoint}
-const info = await transport.fetch(endpoint + '/', {
+const connection = await transport.connect({endpoint, peerNpub: '<node-npub>', purpose: 'git'});
+const info = await connection.fetch(endpoint + '/', {
   headers: {Accept: 'application/nostr+json'}, signal
 });
-const relay = new transport.WebSocket(endpoint.replace('http:', 'ws:') + '/');
+const relay = new connection.WebSocket(endpoint.replace('http:', 'ws:') + '/');
 relay.onmessage = ({data}) => handleRelayFrame(JSON.parse(data));
 ```
 
-Connect requires native consent for one exact FIPS identity and port. No slash suffix,
+Each connection requires native consent for one exact FIPS identity and port. Multiple
+endpoint-scoped handles may coexist. No slash suffix,
 path, query, credentials or fragment is accepted. Native consent displays the page,
 node identity, port and user identity. Announcements propose destinations; they do
 not grant authority. The node identity authenticates the mesh peer, not the GRASP

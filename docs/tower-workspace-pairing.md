@@ -1,5 +1,12 @@
 # Tower workspace identity pairing
 
+> Compatibility note: `window.wingmanTowerTransport` is no longer a native
+> provider. It is a temporary adapter over the universal version-2
+> `window.fipsTransport` handle contract in
+> [`fips-browser-transport.md`](fips-browser-transport.md). New Flight Deck code
+> must call `window.fipsTransport.connect()` and retain its endpoint-scoped
+> handle. The legacy example below exists only for consumers awaiting migration.
+
 The current native contract supersedes the earlier HTTPS logical-Tower pairing.
 Built-in Flight Deck and the explicitly configured external Flight Deck origin
 receive the production bridge even when native `towerUrl` is empty. General
@@ -33,12 +40,10 @@ Both clients must support this contract: an older native v2 bridge lacks the
 `pairingIdentity` capability and prompts an update; an older Flight Deck caller
 supplying only `logicalTower` receives an instruction to update Flight Deck.
 
-Validation uses blank-config BrowserScreen injection/signing tests with real
-socket health responses, native probe cancellation/identity tests, and
-`python3 tools/test_tower_bridge_wkwebview.py`. The WK fixture bundles the actual
-Flight Deck transport consumer (sibling checkout, or `FLIGHT_DECK_DIR`) and runs
-production native JS/Dart through stock HTTPS WKWebView. Public Tower fetches
-are forced unavailable while reconnect, target mapping, binary/auth transport,
-SSE and worker cancellation run. Fixture authorization and the counting signer
-are test doubles; live cryptographic authentication and Tower ACL validation
-remain separate deployment checks.
+Validation uses the universal provider tests in
+`app/test/grasp_fips_transport_test.dart`, browser lifecycle/signing tests, and
+`node --test tools/grasp_bridge/bridge.test.mjs`. The JavaScript suite proves
+that the compatibility surface delegates connect, fetch and disconnect through
+`window.fipsTransport`; there is no dedicated Tower WK channel or native bridge.
+Live cryptographic authentication and Tower ACL validation remain separate
+deployment checks.

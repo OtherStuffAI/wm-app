@@ -1,5 +1,24 @@
 # Repository guidance
 
+## Universal browser FIPS transport invariant
+
+`window.fipsTransport` is the only WMapp browser capability for an HTTPS or
+approved local application to reach FIPS services. Do not add Tower-,
+Autopilot-, Drive-, GRASP-, Git-, HTTP-, SSE-, worker-, download-, or
+WebSocket-specific browser network bridges. Direct navigation to a `.fips`
+WApp remains a separate WMapp routing path.
+
+The provider must fail closed and preserve explicit top-level-origin consent,
+exact FIPS endpoint and peer pinning, endpoint-scoped concurrent grants,
+streaming/cancellation, and navigation/identity/lock/tab lifecycle revocation.
+Authentication, request signing, and service protocol verification stay above
+the transport. Native callers must reuse the same generic FIPS socket transport
+and security semantics; they must not grow service-specific network stacks.
+
+`window.wingmanTowerTransport` is compatibility-only and must be implemented as
+an adapter over `window.fipsTransport`. New consumers must not use it. Remove
+the adapter after the tracked Flight Deck migration is complete.
+
 Store operational agent handoffs, worker briefs, installation results, screenshots,
 and run-specific validation evidence only under ignored `tmp/docs/handoffs/`.
 Do not create tracked handoff directories elsewhere or force-add ignored files.

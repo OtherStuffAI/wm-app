@@ -1,5 +1,12 @@
 # FIPS Drive v1
 
+> Drive uses the universal endpoint-scoped
+> [`window.fipsTransport`](fips-browser-transport.md). `connectDrive()` remains
+> a compatibility convenience implemented through `connect({purpose:'drive'})`;
+> new code should retain the returned handle. Drive signing/share verification
+> stays above the transport, while native save/export remains a generic provider
+> operation.
+
 Drive shares explicitly selected desktop folders, read-only, with the owner or
 members of one Tower workspace. Tower stores discovery and authorization records;
 it receives no host root paths, directory indexes, file bytes or download copies.
