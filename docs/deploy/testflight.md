@@ -14,6 +14,14 @@ the intended tester. Check its current members and automatic distribution
 settings before uploading. Do not create another group, invite testers, enable
 a public link, or distribute to other groups.
 
+Verify the app's App Information bundle identifier before interpreting an empty
+TestFlight page. If it shows **No Builds**, record that history before uploading.
+If **All Testers** shows zero testers and the Internal Testing sidebar has no
+groups, record the missing group as a distribution blocker. Continue authorized
+build validation and upload, but obtain a revised distribution instruction before
+creating a group or adding a tester. A group belonging to another app cannot
+establish this app's tester access.
+
 Choose a build number greater than the existing iOS builds and update
 `app/pubspec.yaml`. Runner and FipsPacketTunnel use Flutter's generated version
 and build settings. A local build number remains provisional until checked
@@ -130,6 +138,13 @@ Use the authorized Xcode account in Organizer: validate the archive, then
 distribute as **TestFlight Internal Only**. CLI upload can use the existing
 export plist copied to a private location with `destination=upload`, preserving
 `testFlightInternalTestingOnly=true`. Local export and upload are distinct steps.
+
+For the Custom App Store Connect upload flow, inspect the options again:
+**Upload** can default to different settings from a previous **Export**. Enable
+**TestFlight internal testing only**, disable **Manage version and build number**,
+and read back both selections before continuing. Record validation warnings with
+their effective dates; a future requirement is not evidence of a current upload
+failure. Keep account agreement notices distinct from the actual upload result.
 
 After upload:
 
