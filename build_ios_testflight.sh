@@ -6,10 +6,13 @@ APP_DIR="$REPO_DIR/app"
 
 # Release orchestration supplies explicit versions without editing pubspec.yaml.
 # Keep this helper export-only and reject unrelated Flutter options.
+EXPORT_OPTIONS="$REPO_DIR/docs/deploy/TestFlightExportOptions.plist"
+FLUTTER_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    --build-name=*|--build-number=*) ;;
-    *) echo "Supported options: --build-name=x.y.z --build-number=N" >&2; exit 1 ;;
+    --build-name=*|--build-number=*) FLUTTER_ARGS+=("$arg") ;;
+    --external) EXPORT_OPTIONS="$REPO_DIR/docs/deploy/TestFlightExternalExportOptions.plist" ;;
+    *) echo "Supported options: --build-name=x.y.z --build-number=N [--external]" >&2; exit 1 ;;
   esac
 done
 
@@ -34,7 +37,7 @@ trap 'rm -f "$MARKER"' EXIT
 (
   cd "$APP_DIR"
   flutter build ipa --release \
-    --export-options-plist="$REPO_DIR/docs/deploy/TestFlightExportOptions.plist" "$@"
+    --export-options-plist="$EXPORT_OPTIONS" ${FLUTTER_ARGS[@]+"${FLUTTER_ARGS[@]}"}
 )
 IPA="$(find "$APP_DIR/build/ios/ipa" -maxdepth 1 -name '*.ipa' -newer "$MARKER" -print -quit 2>/dev/null || true)"
 if [[ -z "$IPA" ]]; then

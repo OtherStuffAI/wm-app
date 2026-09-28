@@ -191,13 +191,13 @@ class ReleaseTests(unittest.TestCase):
                 os.utime(source, ns=(future, future))
                 raise ValueError('No Accounts')
             with patch.object(r, 'ROOT', root), patch.object(r, 'project_settings'), \
-                 patch.object(r, 'command'), patch.object(r, 'logged', side_effect=build_failed):
+                 patch.object(r, 'command', return_value=b'fixture'), patch.object(r, 'logged', side_effect=build_failed):
                 with self.assertRaisesRegex(ValueError, 'No Accounts'):
                     r.execute(argparse.Namespace(action='run', dry_run=False), run)
             self.assertEqual(r.read(run / 'state.json')['stage'], 'archived')
             self.assertEqual((run / 'Runner.xcarchive/record').read_bytes(), b'archive')
             with patch.object(r, 'ROOT', root), patch.object(r, 'project_settings'), \
-                 patch.object(r, 'command'), patch.object(r, 'signed_app'), \
+                 patch.object(r, 'command', return_value=b'fixture'), patch.object(r, 'signed_app'), \
                  patch.object(r, 'validate_artifacts', return_value={'sha256': 'new'}), \
                  patch.object(r, 'logged') as logged:
                 r.execute(argparse.Namespace(action='run', dry_run=False), run)
@@ -292,12 +292,220 @@ class ReleaseTests(unittest.TestCase):
                 future = time.time_ns() + 1000000
                 os.utime(archive, ns=(future, future))
             with patch.object(r, 'ROOT', root), patch.object(r, 'project_settings'), \
-                 patch.object(r, 'command'), patch.object(r, 'logged', side_effect=build) as logged, \
+                 patch.object(r, 'command', return_value=b'fixture'), patch.object(r, 'logged', side_effect=build) as logged, \
                  patch.object(r, 'validate_artifacts', return_value={'sha256': 'fresh'}):
                 r.execute(argparse.Namespace(action='run', dry_run=False), run)
                 logged.assert_called_once()
             self.assertEqual((run / 'export/fresh.ipa').read_bytes(), b'new signed fixture')
             self.assertEqual(r.read(run / 'state.json')['stage'], 'exported')
+
+    def external_fixtures(self):
+        state = dict(self.s, audience='external', group='WMAPP Public')
+        observation = dict(self.o, group='WMAPP Public', internal=False, external_group_id='group-id',
+                           private_group={'group': r.GROUP, 'internal': True, 'tester_count': 1,
+                                          'sole_tester_is_pete': True, 'settings_unchanged': True})
+        build = dict(self.b, **{key: observation[key] for key in
+                              ('group', 'internal', 'external_group_id', 'private_group')},
+                     internal_only=False, beta_review_status='approved', review_submission_id='review-id',
+                     test_metadata_complete=True, build_testing_status='Testing', public_link=True,
+                     invitation_access='Open to Anyone', tester_criteria=[], custom_tester_limit=None,
+                     public_link_url='https://testflight.apple.com/join/Example1', public_landing_accepting=True)
+        return state, observation, build
+
+    def test_external_init_requires_distinct_group_and_keeps_private_default(self):
+        for mode, group in [('external', None), ('external', r.GROUP), ('external', '  '),
+                            ('internal', 'WMAPP Public')]:
+            with tempfile.TemporaryDirectory() as tmp:
+                run = Path(tmp) / 'run'
+                with self.subTest(mode=mode, group=group), self.assertRaises(ValueError):
+                    r.execute(argparse.Namespace(action='init', version='0.1.7', build=9,
+                                                 audience=mode, group=group), run)
+                self.assertFalse(run.exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / 'run'
+            r.execute(argparse.Namespace(action='init', version='0.1.7', build=9), run)
+            self.assertEqual(r.read(run / 'state.json')['audience'], 'internal')
+            self.assertEqual(r.read(run / 'preflight.json')['group'], r.GROUP)
+            external = Path(tmp) / 'external'
+            r.execute(argparse.Namespace(action='init', version='0.1.7', build=9,
+                                         audience='external', group='WMAPP Public'), external)
+            self.assertEqual(r.read(external / 'state.json')['audience'], 'external')
+            self.assertNotIn('tester_count', r.read(external / 'preflight.json'))
+
+    def test_external_preflight_preserves_private_and_requires_new_version(self):
+        state, observation, _ = self.external_fixtures()
+        r.preflight(observation, state)
+        for changes in [dict(group=r.GROUP), dict(internal=True), dict(public_link=True),
+                        dict(other_distribution_groups=['Unexpected']), dict(latest_version='0.1.7')]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                r.preflight(dict(observation, **changes), state)
+        for changes in [dict(tester_count=2), dict(sole_tester_is_pete=False),
+                        dict(settings_unchanged=False), dict(group='Wrong')]:
+            with self.subTest(private_changes=changes), self.assertRaises(ValueError):
+                r.preflight(dict(observation, private_group=dict(observation['private_group'], **changes)), state)
+
+    def test_external_export_policy_is_separate_and_fails_closed(self):
+        self.assertEqual(r.options(), r.OPTIONS)
+        self.assertEqual(r.options('external'), r.EXTERNAL_OPTIONS)
+        internal = r.plistlib.loads(r.OPTIONS.read_bytes())
+        external = r.plistlib.loads(r.EXTERNAL_OPTIONS.read_bytes())
+        self.assertIs(internal['testFlightInternalTestingOnly'], True)
+        self.assertIs(external['testFlightInternalTestingOnly'], False)
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / 'bad.plist'
+            bad.write_bytes(r.plistlib.dumps(internal))
+            with patch.object(r, 'EXTERNAL_OPTIONS', bad), self.assertRaisesRegex(ValueError, 'Unsafe'):
+                r.options('external')
+        with self.assertRaises(ValueError):
+            r.options('unknown')
+
+    def test_external_readback_distinguishes_each_milestone(self):
+        state, _, build = self.external_fixtures()
+        for changes, stage in [
+            (dict(processing='processing', public_link=False), 'uploaded_processing'),
+            (dict(encryption_compliance='pending', public_link=False), 'uploaded_action_required'),
+            (dict(beta_review_status='not_submitted', public_link=False), 'processed_awaiting_review'),
+            (dict(beta_review_status='waiting_for_review', public_link=False), 'beta_review_pending'),
+            (dict(beta_review_status='in_review', public_link=False), 'beta_review_pending'),
+            (dict(beta_review_status='rejected', public_link=False), 'beta_review_action_required'),
+            (dict(public_link=False), 'approved_awaiting_public_link'),
+            (dict(build_testing_status='Ready to Test'), 'approved_awaiting_public_link'),
+            (dict(public_landing_accepting=False), 'approved_awaiting_public_link'),
+            ({}, 'ready_for_external_testing'),
+        ]:
+            with self.subTest(changes=changes):
+                self.assertEqual(r.readback(dict(build, **changes), state), stage)
+
+    def test_external_readiness_rejects_internal_build_and_invalid_access(self):
+        state, _, build = self.external_fixtures()
+        for changes in [dict(internal_only=True), dict(assigned_to_group=False),
+                        dict(external_group_id=None), dict(receipt_or_build_id=None),
+                        dict(review_submission_id=None), dict(test_metadata_complete=False),
+                        dict(beta_review_status='unknown'), dict(invitation_access='Filter by Criteria'),
+                        dict(tester_criteria=['iPhone']), dict(custom_tester_limit=10),
+                        dict(public_link_url='https://example.com/join/Example1'),
+                        dict(build=8), dict(group='Wrong')]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                r.readback(dict(build, **changes), state)
+        with self.assertRaisesRegex(ValueError, 'before approval'):
+            r.readback(dict(build, beta_review_status='waiting_for_review'), state)
+        with self.assertRaisesRegex(ValueError, 'group ID changed'):
+            r.readback(build, dict(state, external_group_id='different-id'))
+
+    def test_external_cli_upload_uses_external_policy_and_pending_barrier(self):
+        state, observation, _ = self.external_fixtures()
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            state.update(stage='exported', artifact={'sha256': 'exact-external-ipa'})
+            r.write(run / 'state.json', state)
+            r.write(run / 'preflight.json', observation)
+            def upload(args, observed_run, label):
+                self.assertEqual(r.read(run / 'state.json')['stage'], 'upload_pending')
+                policy = r.plistlib.loads((run / 'UploadOptions.plist').read_bytes())
+                self.assertIs(policy['testFlightInternalTestingOnly'], False)
+                self.assertEqual(policy['destination'], 'upload')
+                self.assertEqual(policy['teamID'], r.TEAM)
+                self.assertIs(policy['manageAppVersionAndBuildNumber'], False)
+            with patch.object(r, 'validate_artifacts', return_value=state['artifact']), \
+                 patch.object(r, 'logged', side_effect=upload):
+                r.execute(argparse.Namespace(action='upload', via='cli'), run)
+            self.assertEqual(r.read(run / 'state.json')['stage'], 'upload_pending')
+            self.assertIsNone(r.read(run / 'readback.json')['beta_review_status'])
+            with self.assertRaisesRegex(ValueError, 'pending or performed'):
+                r.execute(argparse.Namespace(action='upload', via='cli'), run)
+
+    def test_external_build_passes_explicit_flag_and_keeps_artifact_hashes(self):
+        state, observation, _ = self.external_fixtures()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = root / 'run'
+            run.mkdir()
+            r.write(run / 'state.json', state)
+            r.write(run / 'preflight.json', observation)
+            def build(args, observed_run, label):
+                self.assertIn('--external', args)
+                archive = root / 'app/build/ios/archive/Runner.xcarchive'
+                archive.mkdir(parents=True)
+                (archive / 'record').write_bytes(b'external archive')
+                ipa_dir = root / 'app/build/ios/ipa'
+                ipa_dir.mkdir()
+                (ipa_dir / 'external.ipa').write_bytes(b'external signed fixture')
+                future = time.time_ns() + 1000000
+                os.utime(archive, ns=(future, future))
+            with patch.object(r, 'ROOT', root), patch.object(r, 'project_settings'), \
+                 patch.object(r, 'command', return_value=b'fixture'), \
+                 patch.object(r, 'logged', side_effect=build), \
+                 patch.object(r, 'validate_artifacts', return_value={'sha256': 'external'}):
+                r.execute(argparse.Namespace(action='run', dry_run=False), run)
+            result = r.read(run / 'state.json')
+            self.assertEqual(result['stage'], 'exported')
+            self.assertEqual(result['external_group_id'], 'group-id')
+            self.assertEqual(result['export_policy_sha256'], r.digest(r.EXTERNAL_OPTIONS))
+            self.assertEqual(result['archive_hashes'], r.tree_hash(run / 'Runner.xcarchive'))
+            self.assertIn('source_commit', result)
+
+    def test_external_readback_pins_group_and_status_hides_pending_link(self):
+        state, _, build = self.external_fixtures()
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            r.write(run / 'state.json', dict(state, stage='upload_pending'))
+            r.write(run / 'readback.json', dict(build, public_landing_accepting=False))
+            r.execute(argparse.Namespace(action='readback'), run)
+            result = r.read(run / 'state.json')
+            self.assertEqual(result['stage'], 'approved_awaiting_public_link')
+            self.assertEqual(result['external_group_id'], 'group-id')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                r.execute(argparse.Namespace(action='status'), run)
+            self.assertNotIn(build['public_link_url'], output.getvalue())
+            r.write(run / 'readback.json', build)
+            r.execute(argparse.Namespace(action='readback'), run)
+            self.assertEqual(r.read(run / 'state.json')['stage'], 'ready_for_external_testing')
+
+    def test_changed_policy_blocks_artifact_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, 'Export policy changed'):
+                r.validate_artifacts(Path(tmp), dict(self.s, export_policy_sha256='wrong'))
+
+    def test_shell_helper_preserves_default_and_selects_external_export(self):
+        # Execute the real argument handling with stubbed build tools; no signing/network.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = root / 'build_ios_testflight.sh'
+            helper.write_bytes((r.ROOT / helper.name).read_bytes())
+            (root / 'tools/ios').mkdir(parents=True)
+            (root / 'app').mkdir()
+            for file in ('tools/ios/build_core.sh', 'tools/update_flightdeck_bundle.sh'):
+                path = root / file
+                path.write_text('#!/bin/bash\nexit 0\n')
+                path.chmod(0o700)
+            bin_dir = root / 'bin'
+            bin_dir.mkdir()
+            (bin_dir / 'uname').write_text('#!/bin/bash\necho Darwin\n')
+            flutter = bin_dir / 'flutter'
+            flutter.write_text('#!' + r.sys.executable + '\nimport json, pathlib, sys\n'
+                               'pathlib.Path("args.json").write_text(json.dumps(sys.argv[1:]))\n'
+                               'pathlib.Path("build/ios/ipa").mkdir(parents=True, exist_ok=True)\n'
+                               'pathlib.Path("build/ios/ipa/fixture.ipa").write_bytes(b"fixture")\n')
+            for path in bin_dir.iterdir():
+                path.chmod(0o700)
+            env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+            for args, expected in [([], 'TestFlightExportOptions.plist'),
+                                   (['--external'], 'TestFlightExternalExportOptions.plist'),
+                                   (['--build-name=0.1.7', '--build-number=9', '--external'],
+                                    'TestFlightExternalExportOptions.plist')]:
+                with self.subTest(args=args):
+                    result = subprocess.run(['/bin/bash', str(helper), *args], env=env,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    forwarded = r.read(root / 'app/args.json')
+                    self.assertIn('--export-options-plist=' + str(root.resolve() / 'docs/deploy' / expected), forwarded)
+                    self.assertNotIn('--external', forwarded)
+                    for arg in args:
+                        if arg.startswith('--build-'):
+                            self.assertIn(arg, forwarded)
+            result = subprocess.run(['/bin/bash', str(helper), '--publish'], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
 
     def test_repository_options_and_settings(self):
         r.options()

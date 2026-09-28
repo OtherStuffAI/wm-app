@@ -1,9 +1,122 @@
-# Private iOS TestFlight release checks
+# iOS TestFlight release checks
 
 Use the existing Apple team `N5DRUM6S94` and these identifiers:
 
 - Runner: `com.wingmanbefree.wingmanApp`
 - Packet Tunnel: `com.wingmanbefree.wingmanApp.FipsPacketTunnel`
+
+## External TestFlight with an Open to Anyone link
+
+Use this path only with explicit authorization for external testers and a public
+invitation link. The default command and existing schema-1 runs remain private.
+Choose `--audience external` and a distinct `--group` at **init**; those choices
+are fixed for the run. External export uses
+`TestFlightExternalExportOptions.plist` with
+`testFlightInternalTestingOnly=false`. The standalone helper accepts
+`--external`; it still only builds/exports. Preserve Pete Private, its existing
+builds, members and automatic distribution settings.
+
+First read App Store Connect's complete iOS version/build history, including
+processing uploads, and verify the bundle identifier and existing audience.
+Confirm the existing Xcode GUI account/team separately. A browser login page is
+a browser authentication gate; CLI `No Accounts` does not establish Xcode
+sign-out. Handle actual human Apple gates in their visible UI and report the
+exact blocker. Never request credentials, extract keys or revoke certificates.
+
+After observing history, select a **version newer than Apple's latest version**
+and a **build greater than every observed build**. The variables below represent
+those verified choices and a unique run name; they are not preset numbers:
+
+```sh
+python3 tools/ios/testflight_release.py init --run "$RUN" \
+  --audience external --group 'WMAPP Public' \
+  --version "$NEXT_VERSION" --build "$NEXT_BUILD"
+```
+
+Fill the generated preflight with fresh observations as in the private workflow,
+with these external fields:
+
+- `group` is the exact intended external group name, `internal=false`, and
+  `public_link=false` until review approval. `external_group_id` is its observed
+  ID if the group exists; otherwise leave it `null` until created/read back.
+- `private_group` separately verifies `group="Pete Private"`, `internal=true`,
+  `tester_count=1`, `sole_tester_is_pete=true`, `settings_unchanged=true`. The
+  last field includes the group's builds and automatic distribution settings.
+- `other_distribution_groups=[]` means no unexpected audience beyond the
+  preserved private group and the intended external group. Review all groups'
+  automatic distribution settings. Stop and report drift; do not delete testers
+  or adjust settings to manufacture a passing observation.
+- There is no external named-tester count or cap requirement.
+
+Run the focused tests below and sequential Flutter analysis/tests before the
+actual release. Commit tested source before building and keep source stable.
+Then use `run --run "$RUN" --dry-run`, followed by `run --run "$RUN"`.
+The run records source commit/diff and export-policy SHA-256, archive file
+hashes, IPA SHA-256 and both signed executable hashes. Build logs record the
+fetched Flight Deck commit/bundle version and pinned native core revision.
+Both targets retain the same signing/profile/entitlement checks as private
+releases. A policy change invalidates artifact validation.
+
+If CLI export cannot resolve the existing account, export the retained archive
+in Organizer with **TestFlight internal testing only disabled** and **Manage
+version and build number disabled**, using team `N5DRUM6S94` and automatic
+signing. Export into this run's directory and use `verify`. Internal Only build
+8 cannot be converted to an external build by changing its group.
+
+For upload, use `upload --run "$RUN" --via organizer` for intent/instructions
+and the actual Organizer flow, or `--via cli` for a real network upload using
+the existing Xcode account. Both pin external eligibility and preserve the
+uncertain-delivery barrier. Never repeat an upload to discover whether it
+succeeded. Read Apple's receipt and exact build record, then wait for processing.
+Neither export nor a successful upload command proves external availability.
+
+Use the encryption inventory below for the new build's actual compliance
+questions. Do not reuse an old build's answer as a classification, claim only
+OS encryption, invent an exemption/code, or set `ITSAppUsesNonExemptEncryption`
+without determining the applicable classification and territories.
+
+Once processed and compliant, create/read back the intended external group and
+assign the exact build. Complete TestFlight test information and submit **Beta
+App Review**. Do not submit a production App Store version. Verify required
+feedback/review contact details from authorized existing records; do not invent
+contacts. Describe the app, what to test and reproducible reviewer access.
+Current onboarding supports **Create identity** and a local 4–12 digit PIN,
+or importing an existing Nostr key. Basic identity creation requires no Tower
+account; connected workspaces/services may need separate access. Confirm those
+flows and provide authorized reviewer access where needed before submission.
+
+Readback uses the same receipt/build, processing and compliance fields as the
+private path, with `internal_only=false`, plus:
+
+| Field | Required observation |
+| --- | --- |
+| `external_group_id`, `assigned_to_group` | Exact external group ID and this build's assignment; once observed, the run pins the ID. |
+| `test_metadata_complete`, `review_submission_id` | Saved complete test metadata and Apple's submission reference. If no distinct submission ID is exposed, use the exact Apple build record ID with visible review status as the reference and explain this in the task evidence. |
+| `beta_review_status` | Normalize the visible status to `not_submitted`, `waiting_for_review`, `in_review`, `approved`, `rejected`, or `action_required`. |
+| `build_testing_status` | The visible status for this exact build; readiness requires `Testing`. |
+| `public_link`, `invitation_access` | Enabled link and `Open to Anyone`, after approval. |
+| `tester_criteria`, `custom_tester_limit` | `[]`, `null`: no added criteria or custom cap; retain Apple's normal behavior. |
+| `public_link_url`, `public_landing_accepting` | Observed `https://testflight.apple.com/join/...` and its public landing page accepting testers, verified without App Store Connect access. |
+
+Refresh `observed_at` and run `readback --run "$RUN"` after each milestone.
+External states distinguish `processed_awaiting_review`, `beta_review_pending`,
+`beta_review_action_required`, `approved_awaiting_public_link` and
+`ready_for_external_testing`. The last state requires approval, completed
+processing/compliance, exact external assignment, **Testing**, Open to Anyone
+and verified public access. `status` suppresses any pending public URL.
+These are explicit Apple UI observations, not independent API verification.
+
+For a pending review, leave a task continuation with app/version/build/receipt,
+source and IPA hashes, group ID, submission reference, observation time and the
+exact next check. Keep all operational evidence ignored. After approval, start
+testing if required and create the public link with **Open to Anyone** selected
+and **Set Limit** unchecked. Read back the saved settings, exact build/group
+and public landing before sharing the active link. Rejection, agreements,
+compliance, Keychain prompts and review waits remain truthful task blockers.
+
+The sections below describe the **private workflow**; their Pete-only audience
+rules apply to private runs. Shared account, signing, artifact validation and
+encryption guidance also applies to the external path above.
 
 ## Resumable private release command
 
@@ -347,5 +460,7 @@ accepts the release evidence.
 - [Flutter iOS release guide](https://docs.flutter.dev/deployment/ios)
 - [Apple upload and processing](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds)
 - [Apple beta distribution](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases)
+- [Apple external testing and public invitations](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers)
+- [Apple TestFlight test information](https://developer.apple.com/help/app-store-connect/test-a-beta-version/provide-test-information)
 - [Apple internal tester groups](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
 - [Apple encryption documentation workflow](https://developer.apple.com/help/app-store-connect/manage-app-information/determine-and-upload-app-encryption-documentation/)

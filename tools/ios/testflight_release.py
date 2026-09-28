@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resumable local automation with explicit, private Apple UI observations."""
+"""Resumable local automation with explicit Apple UI observations and separate internal/external policies."""
 import argparse
 import datetime as dt
 import fcntl
@@ -21,10 +21,12 @@ TEAM = 'N5DRUM6S94'
 BUNDLE = 'com.wingmanbefree.wingmanApp'
 GROUP = 'Pete Private'
 OPTIONS = ROOT / 'docs/deploy/TestFlightExportOptions.plist'
+EXTERNAL_OPTIONS = ROOT / 'docs/deploy/TestFlightExternalExportOptions.plist'
 ACCOUNT_HELP = ('CLI No Accounts does not mean Xcode is signed out. Check Xcode → Settings → '
                 'Apple Accounts for the existing account and team N5DRUM6S94. If present, open '
                 'this run’s Runner.xcarchive in Organizer → Distribute App → Custom → '
-                'App Store Connect → Export; enable TestFlight internal testing only, disable '
+                'App Store Connect → Export; use this run’s audience (internal: enable TestFlight internal '
+                'testing only; external: disable it), disable '
                 'Manage version and build number, use automatic signing, export into this run’s '
                 'export directory. Only reauthenticate if Apple’s UI explicitly requires it. '
                 'If Keychain prompts for codesign, enter the password in that visible dialog '
@@ -73,17 +75,43 @@ def audience(o):
             'Audience mismatch: verify Pete Private, only Pete, no public link or other distribution groups.')
 
 
+def release_audience(s):
+    mode = s.get('audience', 'internal')  # Existing schema-1 private runs stay private.
+    require(mode in ('internal', 'external'), 'Unknown release audience.')
+    return mode
+
+
+def external_audience(o, s, before_upload=False):
+    require(o['group'] == s['group'] and o['internal'] is False,
+            'External group must match this run and must not be internal.')
+    # Preserve the private group independently of the authorized external audience.
+    private = o['private_group']
+    require(private['group'] == GROUP and private['internal'] is True and
+            private['tester_count'] == 1 and private['sole_tester_is_pete'] is True and
+            private['settings_unchanged'] is True, 'Pete Private membership/settings changed.')
+    require(o['other_distribution_groups'] == [], 'Unexpected additional distribution groups.')
+    if s.get('external_group_id'):
+        require(o['external_group_id'] == s['external_group_id'], 'External group ID changed.')
+    if before_upload:
+        require(o['public_link'] is False, 'Keep the public link disabled until the build is approved.')
+
+
 def preflight(o, s):
     fresh(o)
     require(o['xcode_gui_account_present'] is True, 'Verify the existing account in Xcode Apple Accounts.')
     require(o['team'] == TEAM, 'Wrong Apple team.')
     require(o['bundle'] == BUNDLE and str(o['app_id']).isdigit(), 'Wrong bundle or missing App Store Connect app ID.')
-    audience(o)
+    if release_audience(s) == 'external':
+        external_audience(o, s, before_upload=True)
+    else:
+        audience(o)
     require(o['history_complete'] is True, 'Read all iOS build history, including processing uploads.')
     builds = o['existing_builds']
     require(isinstance(builds, list) and all(type(b) is int and b > 0 for b in builds), 'Invalid build history.')
     require(s['build'] > max(builds, default=0), 'Duplicate/non-increasing build number; choose a higher build and rebuild.')
     require(o['latest_version'] and version(s['version']) >= version(o['latest_version']), 'Version is older than Apple history.')
+    if release_audience(s) == 'external':
+        require(version(s['version']) > version(o['latest_version']), 'External release needs a newer version than Apple history.')
     require(o['automatic_distribution_reviewed'] is True, 'Review all groups’ automatic distribution settings before upload.')
 
 
@@ -93,12 +121,15 @@ def version(value):
     return tuple(map(int, value.split('.')))
 
 
-def options():
-    p = plistlib.loads(OPTIONS.read_bytes())
+def options(mode='internal'):
+    require(mode in ('internal', 'external'), 'Unknown export audience.')
+    path = EXTERNAL_OPTIONS if mode == 'external' else OPTIONS
+    p = plistlib.loads(path.read_bytes())
     require(p.get('teamID') == TEAM and p.get('destination') == 'export' and
             p.get('method') == 'app-store-connect' and p.get('signingStyle') == 'automatic' and
-            p.get('testFlightInternalTestingOnly') is True and
+            p.get('testFlightInternalTestingOnly') is (mode == 'internal') and
             p.get('manageAppVersionAndBuildNumber') is False, 'Unsafe TestFlight export options.')
+    return path
 
 
 def project_settings():
@@ -153,6 +184,9 @@ def tree_hash(path):
 
 
 def validate_artifacts(run, s):
+    policy = options(release_audience(s))
+    if s.get('export_policy_sha256'):
+        require(digest(policy) == s['export_policy_sha256'], 'Export policy changed since build.')
     archive = run / 'Runner.xcarchive'
     require(archive.is_dir(), 'No run archive; build first.')
     require(tree_hash(archive) == s.get('archive_hashes'), 'Archive changed; preserve evidence and start a new run.')
@@ -205,17 +239,53 @@ def readback(o, s):
         return 'uploaded_processing' if o['processing'] == 'processing' else 'uploaded_action_required'
     if o['encryption_compliance'] != 'complete':
         return 'uploaded_action_required'
+    if release_audience(s) == 'external':
+        require(o['internal_only'] is False, 'Apple build is Internal Only; rebuild for external testing.')
+        external_audience(o, s)
+        review = o['beta_review_status']
+        require(review in ('not_submitted', 'waiting_for_review', 'in_review', 'approved', 'rejected',
+                           'action_required'), 'Unknown Beta App Review status.')
+        require(o['public_link'] is False or review == 'approved', 'Do not enable the public link before approval.')
+        if review == 'not_submitted':
+            return 'processed_awaiting_review'
+        require(o['assigned_to_group'] is True and o['external_group_id'],
+                'Submitted build must be assigned to the exact external group.')
+        require(o['review_submission_id'] and o['test_metadata_complete'] is True,
+                'Record the Beta App Review submission and complete test metadata.')
+        if review in ('waiting_for_review', 'in_review'):
+            return 'beta_review_pending'
+        if review in ('rejected', 'action_required'):
+            return 'beta_review_action_required'
+        if o['public_link'] is not True:
+            return 'approved_awaiting_public_link'
+        require(o['assigned_to_group'] is True and o['external_group_id'],
+                'Read back the exact build assignment to the external group.')
+        require(o['invitation_access'] == 'Open to Anyone' and o['tester_criteria'] == [] and
+                o['custom_tester_limit'] is None, 'Public link must be Open to Anyone with Apple defaults.')
+        require(isinstance(o['public_link_url'], str) and
+                re.fullmatch(r'https://testflight\.apple\.com/join/[A-Za-z0-9]+', o['public_link_url']),
+                'Invalid TestFlight public invitation URL.')
+        if o['build_testing_status'] != 'Testing' or o['public_landing_accepting'] is not True:
+            return 'approved_awaiting_public_link'
+        return 'ready_for_external_testing'
     audience(o)
     require(o['assigned_to_group'] is True and o['internal_only'] is True, 'Exact build must be assigned to the private internal group.')
     return 'ready_to_test' if o['pete_sees_exact_build'] is True else 'processed_awaiting_tester'
 
 
-def template():
-    return {'observed_at': None, 'xcode_gui_account_present': None, 'team': TEAM,
+def template(s=None):
+    result = {'observed_at': None, 'xcode_gui_account_present': None, 'team': TEAM,
             'bundle': BUNDLE, 'app_id': None, 'latest_version': None, 'existing_builds': None,
             'history_complete': None, 'group': GROUP, 'internal': None, 'tester_count': None,
             'sole_tester_is_pete': None, 'public_link': None, 'other_distribution_groups': None,
             'automatic_distribution_reviewed': None}
+    if s and release_audience(s) == 'external':
+        for field in ('tester_count', 'sole_tester_is_pete'):
+            result.pop(field)
+        result.update(group=s['group'], internal=False, external_group_id=None,
+                      private_group={'group': GROUP, 'internal': True, 'tester_count': None,
+                                     'sole_tester_is_pete': None, 'settings_unchanged': None})
+    return result
 
 
 def no_other_delivery(run, s):
@@ -234,18 +304,29 @@ def execute(a, run):
         require(not run.exists(), 'Run exists; resume it rather than overwriting.')
         version(a.version)
         require(a.build and a.build > 0, 'Build must be a positive integer.')
+        mode = getattr(a, 'audience', 'internal')
+        require(mode in ('internal', 'external'), 'Unknown release audience.')
+        group = getattr(a, 'group', None)
+        require((mode == 'internal' and group is None) or
+                (mode == 'external' and isinstance(group, str) and group.strip() == group and
+                 bool(group) and group != GROUP), 'External init requires a distinct --group; internal uses Pete Private.')
+        s = {'schema': 1, 'version': a.version, 'build': a.build, 'stage': 'initialized',
+             'audience': mode, 'group': group if mode == 'external' else GROUP}
         run.mkdir(mode=0o700)
-        s = {'schema': 1, 'version': a.version, 'build': a.build, 'stage': 'initialized'}
         write(state, s)
-        write(run / 'preflight.json', template())
+        write(run / 'preflight.json', template(s))
         print('Fill preflight.json with fresh human observations; see docs/deploy/testflight.md.')
         return
     s = read(state)
     require(s['schema'] == 1, 'Unsupported release state schema.')
     if a.action == 'status':
-        print(json.dumps(s, indent=2))
+        display = json.loads(json.dumps(s))
+        if release_audience(s) == 'external' and s['stage'] != 'ready_for_external_testing':
+            if display.get('apple_readback'):
+                display['apple_readback']['public_link_url'] = None
+        print(json.dumps(display, indent=2))
         return
-    options()
+    policy = options(release_audience(s))
     project_settings()
     if a.action == 'run':
         o = read(run / 'preflight.json')
@@ -260,17 +341,25 @@ def execute(a, run):
         require(sys.platform == 'darwin' and shutil.which('flutter'), 'macOS, Xcode and Flutter are required.')
         command(['xcodebuild', '-version'])
         s['app_id'] = o['app_id']
+        if release_audience(s) == 'external' and o.get('external_group_id'):
+            s['external_group_id'] = o['external_group_id']
         if s['stage'] == 'initialized':
             require(not (run / 'previous-archive').exists() and not (run / 'Runner.xcarchive').exists(),
                     'Interrupted build: preserve outputs; start a new run to rebuild.')
             # Persist barrier before overwriting the shared Flutter output location.
+            s['source_commit'] = command(['git', '-C', ROOT, 'rev-parse', 'HEAD']).decode().strip()
+            s['source_diff_sha256'] = hashlib.sha256(command(['git', '-C', ROOT, 'diff', 'HEAD', '--binary'])).hexdigest()
+            s['export_policy_sha256'] = digest(policy)
             s['stage'] = 'building'
             s['build_started_ns'] = time.time_ns()
             write(state, s)
             preserve_outputs(run)
             try:
-                logged([ROOT / 'build_ios_testflight.sh', '--build-name=' + s['version'],
-                        '--build-number=' + str(s['build'])], run, 'build')
+                args = [ROOT / 'build_ios_testflight.sh', '--build-name=' + s['version'],
+                        '--build-number=' + str(s['build'])]
+                if release_audience(s) == 'external':
+                    args.append('--external')
+                logged(args, run, 'build')
             finally:
                 source = ROOT / 'app/build/ios/archive/Runner.xcarchive'
                 if source.exists() and source.stat().st_mtime_ns >= s['build_started_ns']:
@@ -303,7 +392,7 @@ def execute(a, run):
             s['export_started_ns'] = time.time_ns()
             write(state, s)
             logged(['xcodebuild', '-exportArchive', '-archivePath', archive, '-exportPath', output,
-                    '-exportOptionsPlist', OPTIONS, '-allowProvisioningUpdates'], run, 'export')
+                    '-exportOptionsPlist', policy, '-allowProvisioningUpdates'], run, 'export')
         s['artifact'] = validate_artifacts(run, s)
         s['stage'] = 'exported'
         write(state, s)
@@ -320,15 +409,20 @@ def execute(a, run):
         preflight(read(run / 'preflight.json'), s)
         require(read(run / 'preflight.json')['app_id'] == s['app_id'], 'App ID changed.')
         require(validate_artifacts(run, s) == s['artifact'], 'IPA changed since validation.')
-        o = template()
+        o = template(s)
         o.update({'version': s['version'], 'build': s['build'], 'app_id': s['app_id'],
                   'receipt_or_build_id': None, 'processing': None, 'encryption_compliance': None,
                   'assigned_to_group': None, 'internal_only': None, 'pete_sees_exact_build': None})
+        if release_audience(s) == 'external':
+            o.update(external_group_id=s.get('external_group_id'), beta_review_status=None,
+                     review_submission_id=None, test_metadata_complete=None, build_testing_status=None,
+                     invitation_access=None, tester_criteria=None, custom_tester_limit=None,
+                     public_link_url=None, public_landing_accepting=None)
         write(run / 'readback.json', o)
         s['stage'] = 'upload_pending'
         write(state, s)
         if getattr(a, 'via', 'organizer') == 'cli':
-            upload_options = plistlib.loads(OPTIONS.read_bytes())
+            upload_options = plistlib.loads(policy.read_bytes())
             upload_options['destination'] = 'upload'
             plist = run / 'UploadOptions.plist'
             plist.write_bytes(plistlib.dumps(upload_options))
@@ -343,6 +437,14 @@ def execute(a, run):
                   'Fill readback.json from Apple and run readback. Do not repeat upload.')
             return
         print('Upload pending; Organizer mode does not upload. In Organizer open:', run / 'Runner.xcarchive')
+        if release_audience(s) == 'external':
+            print('Validate App, then Custom → App Store Connect → Upload. Disable TestFlight internal testing only '
+                  'and Manage version and build number. Use the existing account. Record Apple receipt/processing '
+                  'and resolve encryption accurately. Preserve Pete Private; assign to the exact external group '
+                  + s['group'] + ', complete test metadata and submit Beta App Review. After approval start testing, '
+                  'enable Open to Anyone with Apple defaults and read back exact Testing status, group, '
+                  'active link and public landing access. Never share a pending link. Do not retry uncertain upload.')
+            return
         print('Validate App, then Distribute App → Custom → App Store Connect → Upload.\n'
               'Enable TestFlight internal testing only; disable Manage version and build number.\n'
               'Read back both settings and exact version/build before uploading. Use existing Xcode account.\n'
@@ -352,9 +454,13 @@ def execute(a, run):
               'Refresh observed_at, then run readback. Keychain action, if required: ' + ACCOUNT_HELP)
     elif a.action == 'readback':
         require(s['stage'] in ('upload_pending', 'uploaded_processing', 'uploaded_action_required',
-                               'processed_awaiting_tester', 'ready_to_test'), 'Record upload intent first; an IPA is not evidence.')
+                               'processed_awaiting_tester', 'ready_to_test', 'processed_awaiting_review',
+                               'beta_review_pending', 'beta_review_action_required',
+                               'approved_awaiting_public_link', 'ready_for_external_testing'), 'Record upload intent first; an IPA is not evidence.')
         o = read(run / 'readback.json')
         s['stage'] = readback(o, s)
+        if release_audience(s) == 'external' and o.get('external_group_id'):
+            s['external_group_id'] = o['external_group_id']
         s['apple_readback'] = o
         write(state, s)
         print('Human Apple UI readback:', s['stage'], '(not an API-verified observation).')
@@ -364,6 +470,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['init', 'run', 'verify', 'upload', 'readback', 'status'])
     p.add_argument('--run', required=True, help='Unique name under ignored tmp/docs/handoffs/testflight')
+    p.add_argument('--audience', choices=['internal', 'external'], default='internal',
+                   help='Init only: private by default; external requires explicit audience authorization.')
+    p.add_argument('--group', help='Init only: exact external group name, distinct from Pete Private.')
     p.add_argument('--version')
     p.add_argument('--build', type=int)
     p.add_argument('--dry-run', action='store_true')
@@ -371,6 +480,8 @@ def main():
                    help='Upload route: organizer prints instructions; cli sends a real upload using the existing Xcode account.')
     a = p.parse_args()
     require(bool(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]*', a.run)), 'Use a simple unique run name.')
+    require(a.action == 'init' or (a.audience == 'internal' and a.group is None),
+            'Audience/group are immutable and can only be selected at init.')
     require(not a.dry_run or a.action == 'run', '--dry-run applies only to run.')
     require(a.via != 'cli' or a.action == 'upload', '--via cli applies only to upload.')
     require(not PRIVATE.is_symlink(), 'Private evidence root cannot be a symlink.')
