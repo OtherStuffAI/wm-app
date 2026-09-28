@@ -165,7 +165,7 @@ IPA because Flutter can exit 0 after a successful archive but failed export.
 automatic signing for the existing team, internal testing only, and no automatic
 version rewriting. Local export does not upload or select a tester group.
 
-To retry export of an existing archive after restoring Xcode account access:
+To retry export of an existing archive after repairing distribution signing:
 
 ```bash
 xcodebuild -exportArchive \
@@ -180,6 +180,11 @@ Store Connect app record for the existing bundle, and working Xcode account or
 App Store Connect API authentication. A development signing identity by itself
 does not establish distribution eligibility. Do not replace the bundle/team to
 work around an account failure.
+
+`No Accounts` from CLI export does not prove Xcode is signed out. Check the
+account/team in Xcode Settings, then use Organizer if its account access works.
+See [TestFlight release checks](testflight.md) for certificate creation, profile
+repair without upload, and handling a local Keychain approval prompt.
 
 For upload using the signed-in Xcode account, open the archive in Xcode Organizer,
 validate it, then distribute using **TestFlight Internal Only**. A CLI upload can

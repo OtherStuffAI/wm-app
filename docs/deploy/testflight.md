@@ -19,17 +19,38 @@ Choose a build number greater than the existing iOS builds and update
 and build settings. A local build number remains provisional until checked
 against App Store Connect.
 
-For account recovery on the build Mac, use **Xcode → Settings → Accounts**.
-Sign in or reauthenticate the existing authorized Apple account and verify
-that the intended team appears. Complete Apple's two-factor challenge directly
-in Apple's UI. Also sign in to App Store Connect in the browser so build history,
-compliance and tester access can be inspected. Never put credentials in chat,
-source files or build logs.
+Inspect **Xcode → Settings → Apple Accounts** on the build Mac and verify the
+account's team and role. An export error saying `No Accounts` does not establish
+that the account is signed out: CLI export and the Xcode GUI can resolve accounts
+differently. Request reauthentication only when Apple's UI or an explicit
+authentication error requires it. Browser App Store Connect authentication is
+separate from Xcode account access. Never put credentials in chat, source files
+or build logs.
 
 Both App IDs require the Network Extensions `packet-tunnel-provider`
 capability. Automatic distribution export needs Apple Developer Program access
 and suitable distribution profiles for both targets. A development certificate
 or a macOS Developer ID certificate does not establish iOS distribution access.
+
+If no usable distribution identity exists, use the intended team's **Manage
+Certificates → + → Apple Distribution** in Xcode. Let Xcode generate and store
+the signing key; do not extract it. Verify the resulting certificate's team and
+validity, and check `security find-identity -v -p codesigning` for a usable
+identity. Do not revoke existing certificates to work around an export failure.
+
+When CLI account resolution fails despite verified GUI access, open the archive
+in Organizer. To repair signing assets without uploading, choose **Distribute
+App → Custom → App Store Connect → Export**, enable **TestFlight internal testing
+only**, disable **Manage version and build number**, and choose **Automatically
+manage signing**. Verify both generated profiles as described below. Profile
+creation alone does not establish a signed IPA or a completed upload.
+
+macOS may ask for the login keychain password when `codesign` first uses a new
+distribution key. The human must enter that password directly into the visible
+Keychain dialog and choose **Allow**, or **Always Allow** if they want to remember
+access for `codesign`. This is local signing-key access, separate from Apple
+account authentication. Leave the prompt for the human; never obtain the
+password or bypass the keychain access controls.
 
 ## Build and inspect
 
@@ -66,7 +87,7 @@ IPA separately after extraction: its distribution profiles should not contain
 `ProvisionedDevices`, and `get-task-allow` should be false. Verify the app icon
 and record SHA-256 checksums for the IPA and signed executables.
 
-After restoring account access, retry an existing archive without rebuilding:
+After repairing signing access, retry an existing archive without rebuilding:
 
 ```sh
 xcodebuild -exportArchive \
