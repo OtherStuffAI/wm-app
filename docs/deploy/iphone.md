@@ -104,11 +104,9 @@ The current bundle identifier is:
 com.wingmanbefree.wingmanApp
 ```
 
-If Xcode says that identifier is already taken for your team, change it to something unique, for example:
-
-```text
-com.yourname.wingmanApp
-```
+Keep the existing bundle identifier and team. If Xcode reports that the
+identifier is unavailable, restore access to the authorized team and its App ID;
+changing the identifier creates a different app and breaks the release path.
 
 ## First Launch
 
@@ -194,6 +192,9 @@ build only to Pete's existing private/internal testing group. Do not infer that
 upload acceptance means the build is available to Pete. Do not create a public
 link or invite additional people. Record the Apple receipt/build ID, processing
 state and tester availability in the release handoff.
+
+See [TestFlight release checks](testflight.md) for the encryption inventory,
+account recovery, artifact verification, and private tester acceptance checks.
 
 Official references: [Flutter iOS release guide](https://docs.flutter.dev/deployment/ios),
 [Apple distribution workflow](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases),
