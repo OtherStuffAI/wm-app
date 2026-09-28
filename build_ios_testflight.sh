@@ -4,6 +4,15 @@ set -euo pipefail
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 APP_DIR="$REPO_DIR/app"
 
+# Release orchestration supplies explicit versions without editing pubspec.yaml.
+# Keep this helper export-only and reject unrelated Flutter options.
+for arg in "$@"; do
+  case "$arg" in
+    --build-name=*|--build-number=*) ;;
+    *) echo "Supported options: --build-name=x.y.z --build-number=N" >&2; exit 1 ;;
+  esac
+done
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "iOS archives require macOS and Xcode." >&2
   exit 1
@@ -25,12 +34,14 @@ trap 'rm -f "$MARKER"' EXIT
 (
   cd "$APP_DIR"
   flutter build ipa --release \
-    --export-options-plist="$REPO_DIR/docs/deploy/TestFlightExportOptions.plist"
+    --export-options-plist="$REPO_DIR/docs/deploy/TestFlightExportOptions.plist" "$@"
 )
 IPA="$(find "$APP_DIR/build/ios/ipa" -maxdepth 1 -name '*.ipa' -newer "$MARKER" -print -quit 2>/dev/null || true)"
 if [[ -z "$IPA" ]]; then
   echo "No new TestFlight IPA was exported. Inspect the signing errors above." >&2
   echo "Any archive in $APP_DIR/build/ios/archive still requires distribution export." >&2
+  echo "CLI No Accounts does not establish GUI sign-out. Check Xcode Settings → Apple Accounts for team N5DRUM6S94; use Organizer Export with the existing account if CLI resolution fails." >&2
+  echo "For a visible codesign Keychain prompt, enter the password only in that dialog and choose Allow; see docs/deploy/testflight.md." >&2
   exit 1
 fi
 echo "Exported IPA: $IPA"
