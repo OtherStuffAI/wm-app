@@ -11,15 +11,18 @@ Open [App Store Connect](https://appstoreconnect.apple.com/apps) using the
 authorized Apple account. Verify the app by bundle identifier, inspect its
 TestFlight build history, and record the existing internal group that contains
 the intended tester. Check its current members and automatic distribution
-settings before uploading. Do not create another group, invite testers, enable
-a public link, or distribute to other groups.
+settings before uploading. Group creation or adding the intended tester requires
+release instructions that authorize it. Never enable a public link, invite other
+testers, or distribute to other groups for a private release.
 
 Verify the app's App Information bundle identifier before interpreting an empty
 TestFlight page. If it shows **No Builds**, record that history before uploading.
 If **All Testers** shows zero testers and the Internal Testing sidebar has no
-groups, record the missing group as a distribution blocker. Continue authorized
-build validation and upload, but obtain a revised distribution instruction before
-creating a group or adding a tester. A group belonging to another app cannot
+groups, check the latest release instructions before creating a group or adding
+a tester. Continue authorized build validation and upload while resolving that
+scope. When creation is authorized, verify the intended existing account in
+**Users and Access**, create a private internal group with automatic distribution
+disabled, and add only that account. A group belonging to another app cannot
 establish this app's tester access.
 
 Choose a build number greater than the existing iOS builds and update
