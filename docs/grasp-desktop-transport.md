@@ -122,6 +122,19 @@ must validate version and required methods, handle delayed readiness, and presen
 unavailable/denied/error separately from an empty repository result. A grant covers
 one service; selecting another requires explicit disconnect or a fresh document.
 
+For a GitWorkshop page reporting an incompatible native transport, check the
+**installed WMapp build** before diagnosing mesh reachability. GitWorkshop's v2
+admission requires `window.fipsTransport.version === 2`, `available === true`,
+and a `connect` function. WMapp Setup showing FIPS running checks the local node,
+not the WebView bridge contract. An old WMapp build can expose a v1 object and
+trigger this error before any service connection is attempted. Install a current
+WMapp build, fully quit and reopen it, then reload the GitWorkshop tab. Confirm
+that the FIPS consent prompt names the expected HTTPS page and exact private
+endpoint and that repository refs, a file, and history load through the approved
+connection. A FIPS node inside the server that serves GitWorkshop's static HTTPS
+frontend cannot inject `window.fipsTransport` into WMapp or supply the user's
+local private peer connection.
+
 ## Platform and validation boundary
 
 WebKit's [public registration API](https://developer.apple.com/documentation/webkit/wkwebviewconfiguration/seturlschemehandler(_:forurlscheme:))

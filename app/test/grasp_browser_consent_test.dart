@@ -33,6 +33,10 @@ Future<String> start(Harness h, WidgetTester tester) async {
       .group(1)!);
   final script =
       fakeExecutedJavaScripts.lastWhere((s) => s.contains("'fipsTransport'"));
+  expect(script, contains('location.origin !== "https://gitworkshop.example"'));
+  expect(script, contains('version:2, available:true'));
+  expect(script, contains('async connect(options'));
+  expect(script, contains("window.dispatchEvent(new Event('wingman-fips-transport-ready'))"));
   return RegExp(r'const token = "([^"]+)"').firstMatch(script)!.group(1)!;
 }
 
