@@ -304,6 +304,13 @@ For a physical-device A/B investigation:
    extension and WebKit processes as available. Record CPU, wakeups and Network
    traffic through foreground → background → lock → unlock. Instrumented/USB
    runs explain execution but are separate from unplugged battery comparisons.
+   Use the Instruments device identifier from `xcrun xctrace list devices`;
+   it can differ from the CoreDevice identifier used by `devicectl`. Keep both
+   identifiers in private evidence. An attached process may have lifecycle
+   `Unknown` until a transition occurs: record the actual screen/app state before
+   labeling a capture background or idle. Keep Runner and WebKit attribution
+   separate. For traffic, prefer connection/byte metadata; device-wide plaintext
+   HTTP capture is not needed to measure background byte counts.
    Correlate provider start/stop/reassertion, path updates and bootstrap connection
    with bursts; the current app-only diagnostic export cannot prove path counts.
 4. Compare idle with a repeatable active `.fips` WApp load, verify authenticated
