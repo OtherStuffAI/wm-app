@@ -18,6 +18,9 @@ import 'macos_menu_bridge.dart';
 class ShellHome extends StatefulWidget {
   const ShellHome({
     required this.config,
+    this.relayDiagnosticsSaved = false,
+    this.relayDiagnosticsAtLaunch = false,
+    this.onRelayDiagnosticsChanged,
     this.localFlightDeckUrl = '',
     this.flightDeckUpdates,
     this.profileRelayClient,
@@ -32,6 +35,9 @@ class ShellHome extends StatefulWidget {
   });
 
   final AppConfig config;
+  final bool relayDiagnosticsSaved;
+  final bool relayDiagnosticsAtLaunch;
+  final Future<void> Function(bool)? onRelayDiagnosticsChanged;
   final String localFlightDeckUrl;
   final FlightDeckUpdateController? flightDeckUpdates;
   final NostrProfileRelayClient? profileRelayClient;
@@ -122,6 +128,9 @@ class _ShellHomeState extends State<ShellHome> {
             title: 'Setup',
             child: SetupScreen(
               config: widget.config,
+              relayDiagnosticsSaved: widget.relayDiagnosticsSaved,
+              relayDiagnosticsAtLaunch: widget.relayDiagnosticsAtLaunch,
+              onRelayDiagnosticsChanged: widget.onRelayDiagnosticsChanged,
               localFlightDeckUrl: widget.localFlightDeckUrl,
               bridge: widget.bridge,
               fipsRuntime: _fipsRuntime,

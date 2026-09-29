@@ -5,10 +5,14 @@ import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
 import '../browser/signer_policy.dart';
+import '../browser/relay_diagnostics.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     required this.config,
+    this.relayDiagnosticsSaved = false,
+    this.relayDiagnosticsAtLaunch = false,
+    this.onRelayDiagnosticsChanged,
     required this.bridge,
     required this.fipsRuntime,
     required this.onConfigChanged,
@@ -19,6 +23,9 @@ class SetupScreen extends StatefulWidget {
   });
 
   final AppConfig config;
+  final bool relayDiagnosticsSaved;
+  final bool relayDiagnosticsAtLaunch;
+  final Future<void> Function(bool)? onRelayDiagnosticsChanged;
   final NativeCoreBridge bridge;
   final FipsRuntimeService fipsRuntime;
   final ValueChanged<AppConfig> onConfigChanged;
@@ -47,6 +54,7 @@ class _SetupScreenState extends State<SetupScreen> {
   String? _fipsMessage;
   bool _busy = false;
   bool _exportBusy = false;
+  bool _relayBusy = false;
   FipsRuntimeStatus? _fipsStatus;
 
   @override
@@ -242,6 +250,42 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
           controlAffinity: ListTileControlAffinity.leading,
         ),
+        const SizedBox(height: 14),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  key: const ValueKey('private-relay-diagnostics'),
+                  contentPadding: EdgeInsets.zero,
+                  value: widget.relayDiagnosticsSaved,
+                  onChanged:
+                      _relayBusy || widget.onRelayDiagnosticsChanged == null
+                          ? null
+                          : _setRelayDiagnostics,
+                  title: const Text('Private relay diagnostics'),
+                  subtitle: const Text(
+                    'Off by default. Saves a local, bounded trace of relay stages with random IDs. No URLs, content, keys, or identities are recorded.',
+                  ),
+                ),
+                if (widget.relayDiagnosticsSaved !=
+                    widget.relayDiagnosticsAtLaunch)
+                  const Text('Restart WMapp to apply'),
+                const Text(
+                  'Turning this off stops new records after restart. Existing trace files remain until cleared.',
+                ),
+                TextButton(
+                  key: const ValueKey('clear-relay-diagnostics'),
+                  onPressed: _relayBusy ? null : _clearRelayDiagnostics,
+                  child: const Text('Clear relay diagnostics'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
       ],
     );
   }
@@ -716,6 +760,33 @@ class _SetupScreenState extends State<SetupScreen> {
       _message = 'Configuration saved. For Tower FIPS sync, reload your '
           'existing Flight Deck tab, then select FIPS and approve pairing.';
     });
+  }
+
+  Future<void> _setRelayDiagnostics(bool enabled) async {
+    setState(() => _relayBusy = true);
+    try {
+      await widget.onRelayDiagnosticsChanged!(enabled);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message = 'Could not save relay diagnostics setting.');
+      }
+    } finally {
+      if (mounted) setState(() => _relayBusy = false);
+    }
+  }
+
+  Future<void> _clearRelayDiagnostics() async {
+    setState(() => _relayBusy = true);
+    try {
+      await RelayDiagnostics.clear();
+      if (mounted) setState(() => _message = 'Relay diagnostics cleared.');
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message = 'Could not clear relay diagnostics.');
+      }
+    } finally {
+      if (mounted) setState(() => _relayBusy = false);
+    }
   }
 
   AppConfig _currentConfig() {

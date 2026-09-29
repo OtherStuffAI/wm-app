@@ -139,7 +139,13 @@ local private peer connection.
 
 ### Relay diagnosis in an installed macOS app
 
-The browser bridge writes a bounded, local `wmapp-relay-diagnostics.jsonl` file
+In **Setup**, explicitly enable **Private relay diagnostics**, then fully quit
+and restart WMapp. The switch is off by default; changing it in either direction
+does not change recording until the next launch. Setup shows **Restart WMapp to
+apply** while the saved setting differs from the setting loaded at launch.
+
+When enabled, the browser bridge writes a bounded, local
+`wmapp-relay-diagnostics.jsonl` file
 under the app's Application Support directory. For the macOS bundle
 `com.wingmanbefree.wmapp`, use Finder's **Go to Folder** with
 `~/Library/Application Support/com.wingmanbefree.wmapp/`. The file rotates at
@@ -148,6 +154,11 @@ fixed stage names only. It does not contain origins, endpoints, challenges,
 signed events, identities, repository data, or frame bodies. Treat the file as
 private operational evidence; copy it only to an ignored handoff directory or an
 authorized task attachment.
+
+Disabling the switch and restarting prevents new records. Existing trace files
+remain until **Clear relay diagnostics** is selected in Setup; this removes both
+the current and rotated files. Clearing while recording is enabled may be followed
+by new records, so disable and restart first if the goal is to leave no trace.
 
 To diagnose one private relay attempt, fully quit and reopen a build containing
 this trace, open the repository once, and collect the file immediately after the

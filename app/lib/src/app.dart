@@ -9,6 +9,8 @@ import 'core/flight_deck_update_manager.dart';
 import 'core/native_core_bridge.dart';
 import 'core/signer_vault.dart';
 import 'features/browser/nostr_profile_relay_client.dart';
+import 'features/browser/relay_diagnostic_settings.dart';
+import 'features/browser/relay_diagnostics.dart';
 import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 import 'features/onboarding/signer_onboarding_screen.dart';
@@ -41,6 +43,8 @@ class _WingmanAppState extends State<WingmanApp> {
   late final SignerStore _signerStore = SignerStore();
   late final SignerVault _signerVault = widget.signerVault ?? SignerVault();
   bool _checkingVault = true;
+  bool _launchRelayDiagnostics = false;
+  bool _savedRelayDiagnostics = false;
   SignerVaultRecord? _startupVault;
 
   @override
@@ -57,7 +61,10 @@ class _WingmanAppState extends State<WingmanApp> {
   }
 
   Future<void> _loadInitialState() async {
+    final relayDiagnosticsLoad = RelayDiagnosticSettings().load();
     final savedConfig = await _loadAppConfig();
+    final relayDiagnostics = await relayDiagnosticsLoad;
+    RelayDiagnostics.enabled = relayDiagnostics;
     SignerVaultRecord? record;
     if (widget.useSignerVault) {
       record = await _signerVault.loadRecord();
@@ -70,8 +77,16 @@ class _WingmanAppState extends State<WingmanApp> {
         devicePublicKeyHex: record?.publicKeyHex ?? _config.devicePublicKeyHex,
       );
       _startupVault = record;
+      _launchRelayDiagnostics = relayDiagnostics;
+      _savedRelayDiagnostics = relayDiagnostics;
       _checkingVault = false;
     });
+  }
+
+  Future<void> _setRelayDiagnostics(bool enabled) async {
+    await RelayDiagnosticSettings().save(enabled);
+    if (!mounted) return;
+    setState(() => _savedRelayDiagnostics = enabled);
   }
 
   Future<AppConfig> _loadAppConfig() async {
@@ -188,6 +203,9 @@ class _WingmanAppState extends State<WingmanApp> {
     }
     return ShellHome(
       config: _config,
+      relayDiagnosticsSaved: _savedRelayDiagnostics,
+      relayDiagnosticsAtLaunch: _launchRelayDiagnostics,
+      onRelayDiagnosticsChanged: _setRelayDiagnostics,
       localFlightDeckUrl: widget.localFlightDeckUrl,
       flightDeckUpdates: widget.flightDeckUpdates,
       profileRelayClient: widget.profileRelayClient,

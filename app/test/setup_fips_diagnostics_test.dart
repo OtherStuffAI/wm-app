@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
+import 'package:wingman_app/src/features/browser/relay_diagnostics.dart';
 import 'package:wingman_app/src/features/setup/setup_screen.dart';
 
 class DiagnosticsAndroidRuntime implements FipsAndroidRuntimeChannel {
@@ -205,5 +206,49 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('fips-export-diagnostics')), findsNothing);
+  });
+
+  testWidgets('relay switch shows saved choice and restart boundary',
+      (tester) async {
+    var saved = false;
+    RelayDiagnostics.enabled = false;
+    addTearDown(() => RelayDiagnostics.enabled = false);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(builder: (context, update) {
+          return SetupScreen(
+            config: AppConfig.defaults(),
+            bridge: NativeCoreBridge(),
+            fipsRuntime: runtime(DiagnosticsAndroidRuntime()),
+            relayDiagnosticsSaved: saved,
+            relayDiagnosticsAtLaunch: false,
+            onRelayDiagnosticsChanged: (enabled) async {
+              update(() => saved = enabled);
+            },
+            onConfigChanged: (_) {},
+            onClearBrowserData: () async {},
+            onOpenFipsApp: (_) {},
+          );
+        }),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final switchFinder =
+        find.byKey(const ValueKey('private-relay-diagnostics'));
+    await tester.scrollUntilVisible(switchFinder, 300,
+        scrollable: find.byType(Scrollable).first);
+    await tester.drag(find.byType(ListView), const Offset(0, -250));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(switchFinder).value, isFalse);
+    expect(find.text('Restart WMapp to apply'), findsNothing);
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(switchFinder).value, isTrue);
+    expect(find.text('Restart WMapp to apply'), findsOneWidget);
+    expect(RelayDiagnostics.enabled, isFalse);
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(switchFinder).value, isFalse);
+    expect(find.text('Restart WMapp to apply'), findsNothing);
   });
 }
