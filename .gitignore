@@ -6,6 +6,7 @@ __pycache__/
 .flutter-plugins-dependencies
 .packages
 build/
+/dist/
 target/
 app/macos/.fips-cache/
 app/android/app/src/main/jniLibs/
