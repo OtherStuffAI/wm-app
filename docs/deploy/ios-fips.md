@@ -134,9 +134,12 @@ does not establish live consumer acceptance for the universal browser FIPS
 transport on iPhone; that requires a separately evidenced iOS WebView pass.
 
 The pinned public `test-us01` bootstrap (`217.77.8.91:2121`) is a PoC dependency,
-not production availability. This mobile leaf uses bootstrap routing; LAN and
-Nostr rendezvous are disabled to avoid desktop discovery services and extra
-background subscriptions in the extension.
+not production availability. This mobile leaf uses bootstrap routing. LAN and
+Nostr rendezvous, UDP advertisement and local candidate sharing are also enabled
+in the `wingman-fips-poc-v1` scope for peer reachability. They were enabled after
+the initial event-driven refinement; its earlier discovery-disabled measurements
+are not a baseline for the current configuration. Relay subscriptions, discovery,
+heartbeats and reconnection can continue while the tunnel is connected.
 
 ## Diagnostics and repeatable validation
 
@@ -220,3 +223,95 @@ local REFUSED packet DNS and terminal readiness, and does not open/alter a VPN
 or claim iPhone battery/underlay evidence. The separate ignored Rust network test
 checks authenticated bootstrap and `.fips` AAAA resolution. Do not run source
 preparation concurrently with either a host or cross-architecture Cargo build.
+
+### Background CPU and traffic investigation
+
+The iOS Battery app's percentage is an attribution of battery use during the
+selected period, not percentage points of battery capacity. Background duration
+does not identify Runner, WebKit or the packet extension, establish tunnel
+connectivity, or identify a timer as the cause. Record the installed app version
+and build and whether Setup reports FIPS connected before comparing runs.
+
+For repeatable **macOS host** evidence, first finish source preparation and any
+other native builds, then run:
+
+```sh
+python3 tools/ios/prepare_core.py
+./tools/ios/measure_native.sh
+# Repeat with health-check phase order reversed to expose startup/order effects.
+WM_FIPS_HEALTH_FIRST=1 ./tools/ios/measure_native.sh
+```
+
+Run one measurement harness at a time: LAN discovery can cause simultaneous
+ephemeral nodes to discover each other. Avoid unrelated heavy host workloads
+and compare the actual elapsed duration and delivered packet rate.
+
+This builds the production Rust core with the release profile and links the
+production Swift output pump. Each run uses a fresh ephemeral identity and
+temporary working directory, contacts the configured bootstrap/discovery
+services, and removes the temporary directory after stopping. It does not open
+a VPN, use a stored device key or run Runner/WebKit. Default measurement phases
+are 30 seconds each (`WM_FIPS_MEASURE_SECONDS`, 10–300): stopped before start,
+idle with health checks disabled/enabled, local REFUSED DNS at approximately
+20 requests/second, and stopped after shutdown. A ten-second warmup precedes
+idle phases. The normal 272-packet burst and terminal EOF/descriptor smoke also
+run. The measured health timer reproduces the provider's five-second interval
+and one-second leeway. Timer-disabled mode is limited to the host experiment.
+
+Phase JSON records elapsed monotonic time, process CPU user+system seconds,
+CPU percentage of one core, Darwin interrupt/package-idle wakeup counters,
+output reads, health-check count, delivery count and failures. These wakeup
+counters are specific kernel accounting categories, **not total wakeups**;
+zero does not mean the process never ran. Bootstrap connectivity is sampled
+outside each idle window and reported separately; `running` alone is not an
+authenticated connection. Do not call a disconnected run a connected-idle test.
+
+The wrapper samples `nettop` process TCP/UDP socket byte totals once per second.
+Check
+`traffic-errors.log` and actual rows before claiming network evidence. Correlate
+wall-clock CSV sample times with JSON phase boundaries; use differences between
+interior samples. Collection timestamps are not packet timestamps. A closed or
+replaced socket can decrease totals; report such a window as unstable rather
+than inventing a traffic delta. These include loopback and discovery,
+exclude packetFlow attribution, and do not measure radio energy or air-interface
+bytes. Output uses a new Git-ignored evidence directory; an optional first
+argument selects another new ignored directory. Do not overwrite prior records.
+
+Keep phase logs, traffic, device exports, screenshots and traces private and
+ignored. Host CPU/network measurements cannot establish iPhone battery savings
+or reproduce physical `NWPathMonitor`, iOS suspension or cellular radio behavior.
+Changing discovery, maintenance/retry/heartbeat deadlines, or stopping the
+tunnel automatically may break intended reachability; require evidence and
+architecture review before making that tradeoff.
+
+For immediate mitigation when `.fips` access is not needed, use Setup → FIPS
+transport → Stop FIPS and confirm it is stopped in iOS VPN settings. Start FIPS
+again when needed. This deliberately suspends `.fips` connectivity. Force-quitting
+Runner alone is not a reliable way to stop its independent VPN extension.
+
+For a physical-device A/B investigation:
+
+1. Record generic device model, iOS version, installed WMAPP version/build,
+   start/end time, charge level, charging state, network and tunnel state. Export
+   current diagnostics before changing state. Ask whether the tunnel was connected
+   during the originally reported interval; a later check cannot prove that.
+2. On the same installed build, compare equal 60-minute locked-screen windows
+   with FIPS stopped versus connected and idle. Use the same stable Wi-Fi,
+   brightness, charge range and other activity; disconnect the charger for battery
+   comparisons. Repeat in reverse order. Record Battery activity and charge drop,
+   not only relative app percentages. Do not describe this as an old/new fix A/B.
+3. With a connected development build, attach Instruments to Runner, the packet
+   extension and WebKit processes as available. Record CPU, wakeups and Network
+   traffic through foreground → background → lock → unlock. Instrumented/USB
+   runs explain execution but are separate from unplugged battery comparisons.
+   Correlate provider start/stop/reassertion, path updates and bootstrap connection
+   with bursts; the current app-only diagnostic export cannot prove path counts.
+4. Compare idle with a repeatable active `.fips` WApp load, verify authenticated
+   peer connectivity and packet delivery, then repeat on cellular and across
+   Wi-Fi/cellular/offline transitions. Confirm ordinary HTTPS/DNS, stop/restart,
+   identity continuity and exact-origin approvals. Include an empty browser tab
+   versus embedded Flight Deck comparison if Runner/WebKit remains active.
+5. If activity persists with the VPN confirmed stopped, investigate Runner/WebKit
+   and the browser consumer rather than altering tunnel timers. If extension
+   activity dominates, use its traces to separate discovery/retry, heartbeat,
+   path-restart and packet load before testing any proposed correction.
