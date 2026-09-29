@@ -137,6 +137,28 @@ local private peer connection.
 
 ## Platform and validation boundary
 
+### Relay diagnosis in an installed macOS app
+
+The browser bridge writes a bounded, local `wmapp-relay-diagnostics.jsonl` file
+under the app's Application Support directory. For the macOS bundle
+`com.wingmanbefree.wmapp`, use Finder's **Go to Folder** with
+`~/Library/Application Support/com.wingmanbefree.wmapp/`. The file rotates at
+64 KiB to `.previous`. It records UTC time, random document and socket IDs, and
+fixed stage names only. It does not contain origins, endpoints, challenges,
+signed events, identities, repository data, or frame bodies. Treat the file as
+private operational evidence; copy it only to an ignored handoff directory or an
+authorized task attachment.
+
+To diagnose one private relay attempt, fully quit and reopen a build containing
+this trace, open the repository once, and collect the file immediately after the
+result. The ordered stages distinguish native socket open, relay challenge,
+NIP-42 signer request/approval/result, AUTH send/OK, retried REQ, EVENT/EOSE,
+socket failure/close, and bridge revocation. An absent signer stage after
+`auth_challenge` points to the page or signer routing; a missing `auth_ok` after
+`auth_sent` points to relay authentication; EVENT plus EOSE means the browser
+transport delivered a complete relay snapshot to page code. This trace alone
+does not establish that repository refs, a file, and history rendered.
+
 WebKit's [public registration API](https://developer.apple.com/documentation/webkit/wkwebviewconfiguration/seturlschemehandler(_:forurlscheme:))
 cannot register handlers for schemes WebKit owns. Post-load JavaScript replacement
 also misses earlier requests and workers. This API needs narrow integration in full

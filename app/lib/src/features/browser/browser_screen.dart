@@ -2100,6 +2100,16 @@ class BrowserScreenState extends State<BrowserScreen> {
         graspDocument?.permitsDriveAuthentication(signingParams) == true;
     final serviceAuthGrant =
         graspDocument?.authenticationGrant(method, signingParams);
+    final nip42Grant = method == 'signEvent' && signingParams['kind'] == 22242
+        ? serviceAuthGrant
+        : null;
+    void traceNip42(String stage) {
+      if (method == 'signEvent' && signingParams['kind'] == 22242) {
+        graspDocument?.recordAuthentication(nip42Grant?.grantId, stage);
+      }
+    }
+
+    traceNip42('signer_request');
     final graspAuth = driveAuth || serviceAuthGrant != null;
     final directAuth = graspAuth ||
         ((meshTarget != null ||
@@ -2176,6 +2186,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
     if (directAuth) {
       if (nativeAuth == null || !nativeContextValid() || tab.meshAuthPending) {
+        traceNip42('signer_scope_denied');
         await _resolveSignerRequest(tab, requestId, {
           'error': 'fips_signing_scope_required: An active exact FIPS service '
               'grant is required for signing.'
@@ -2196,6 +2207,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       );
       if (!nativeContextValid()) return;
       if (rule != null && !rule.allows) {
+        traceNip42('signer_policy_denied');
         await auditNativeDenial('policy_denied');
         if (!nativeContextValid()) return;
         await _resolveSignerRequest(
@@ -2225,6 +2237,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         }
       }
       nativeApproved = nativeApproval.approved;
+      traceNip42(nativeApproved ? 'signer_approved' : 'signer_denied');
       if (!nativeContextValid()) return;
       if (!nativeApproved) {
         await auditNativeDenial('user_denied');
@@ -2338,6 +2351,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       );
       if (!signingContextValid()) return;
       if (!result.ok) {
+        traceNip42('signer_failed');
         await _recordNip07Audit(
           pageOrigin: pageOrigin,
           targetUrl: nativeApproved ? nativeAuth!.target : pageUrl,
@@ -2365,6 +2379,7 @@ class BrowserScreenState extends State<BrowserScreen> {
             !nativeApproved && (remembered || approval.remember),
       );
       if (!signingContextValid()) return;
+      traceNip42('signer_signed');
       await _resolveSignerRequest(tab, requestId, {
         'result': result.json,
       });

@@ -9,6 +9,7 @@ import '../../core/grasp_fips_transport.dart';
 import '../../core/tower_fips_proxy.dart';
 import 'grasp_fips_bridge_script.dart';
 import 'mesh_auth_request.dart';
+import 'relay_diagnostics.dart';
 import '../drive/drive_native_save.dart';
 
 /// Ephemeral endpoint-scoped transport grants for one native-verified top-level
@@ -57,13 +58,15 @@ class GraspFipsBrowserBridge {
       required this.approve,
       required this.prepare,
       required this.reply,
-      this.transportFactory});
+      this.transportFactory,
+      this.onDiagnostic});
   final String pageOrigin;
   final Future<GraspFipsConsentResult> Function(
       FipsTransportConsentRequest request) approve;
   final Future<String?> Function(String endpoint) prepare;
   final Future<void> Function(String script) reply;
   final GraspFipsTransport Function(String endpoint)? transportFactory;
+  final void Function(String tab, String relay, String stage)? onDiagnostic;
   final String _token = TowerFipsProxy.capability();
   final Map<String, GraspHttpRequest> _requests = {};
   final Map<String, GraspSocket> _sockets = {};
@@ -72,6 +75,10 @@ class GraspFipsBrowserBridge {
   final Map<String, String> _grantPurposes = {};
   final Map<String, String> _requestGrants = {};
   final Map<String, String> _socketGrants = {};
+  final Map<String, String> _socketTraces = {};
+  final Map<String, String> _grantTraces = {};
+  final Map<String, String> _authEventIds = {};
+  final String _diagnosticTab = TowerFipsProxy.capability().substring(0, 8);
   final Map<String, DriveNativeSave> _saves = {};
   bool get hasDrive => _grantPurposes.values.contains('drive');
   bool _closed = false;
@@ -82,6 +89,50 @@ class GraspFipsBrowserBridge {
   String? get endpoint =>
       _grants.isEmpty ? null : _grants.values.first.endpoint;
   String get signingDocumentToken => _token;
+
+  void _diagnose(String tab, String relay, String stage) {
+    try {
+      (onDiagnostic ?? RelayDiagnostics.record)(tab, relay, stage);
+    } catch (_) {
+      // A diagnostic sink cannot change transport or signing behavior.
+    }
+  }
+
+  void recordAuthentication(String? grantId, String stage) {
+    final trace = grantId == null
+        ? (_socketTraces.length == 1 ? _socketTraces.values.single : null)
+        : _grantTraces[grantId];
+    if (trace != null) _diagnose(_diagnosticTab, trace, stage);
+  }
+
+  void _recordSocket(String id, String stage) {
+    final trace = _socketTraces[id];
+    if (trace != null) _diagnose(_diagnosticTab, trace, stage);
+  }
+
+  String? _relayStage(String data, {required bool outbound}) {
+    try {
+      final frame = jsonDecode(data);
+      if (frame is! List || frame.isEmpty || frame.first is! String) {
+        return null;
+      }
+      switch (frame.first) {
+        case 'AUTH':
+          return outbound ? 'auth_sent' : 'auth_challenge';
+        case 'OK':
+          return null;
+        case 'REQ':
+          return outbound ? 'req_sent' : null;
+        case 'EVENT':
+          return 'event_received';
+        case 'EOSE':
+          return 'eose_received';
+        case 'CLOSED':
+          return 'subscription_closed';
+      }
+    } catch (_) {}
+    return null;
+  }
 
   bool permitsMeshSigning(String? documentToken, String targetUrl) {
     if (_closed || documentToken != _token) return false;
@@ -420,13 +471,25 @@ class GraspFipsBrowserBridge {
           _requests[id] = request;
           _requestGrants[id] = grantId!;
         } else {
-          final socket = await transport!.socket(p['url'] as String);
+          final trace = TowerFipsProxy.capability().substring(0, 8);
+          _diagnose(_diagnosticTab, trace, 'ws_open_start');
+          late final GraspSocket socket;
+          try {
+            socket = await transport!.socket(p['url'] as String);
+          } catch (_) {
+            _diagnose(_diagnosticTab, trace, 'ws_open_failed');
+            rethrow;
+          }
           if (_closed || epoch != _epoch) {
             socket.close();
+            _diagnose(_diagnosticTab, trace, 'bridge_revoked');
             throw StateError('Revoked.');
           }
           _sockets[id] = socket;
           _socketGrants[id] = grantId!;
+          _socketTraces[id] = trace;
+          _grantTraces[grantId] = trace;
+          _diagnose(_diagnosticTab, trace, 'ws_open_ok');
         }
         return id;
       } finally {
@@ -440,6 +503,7 @@ class GraspFipsBrowserBridge {
       return null;
     }
     if (method == 'wsClose') {
+      _recordSocket(id, 'ws_close_requested');
       final code = p['code'] as int? ?? 1000;
       final reason = p['reason'] as String? ?? '';
       if ((code != 1000 && (code < 3000 || code > 4999)) ||
@@ -448,6 +512,8 @@ class GraspFipsBrowserBridge {
       }
       _sockets.remove(id)?.close(code, reason);
       _socketGrants.remove(id);
+      _socketTraces.remove(id);
+      _authEventIds.remove(id);
       return null;
     }
     if (method == 'wsNext' || method == 'wsSend') {
@@ -456,17 +522,49 @@ class GraspFipsBrowserBridge {
       try {
         if (method == 'wsSend') {
           await socket.send(p['data'] as String, p['text'] as bool);
+          if (p['text'] == true) {
+            final stage = _relayStage(p['data'] as String, outbound: true);
+            if (stage == 'auth_sent') {
+              try {
+                final frame = jsonDecode(p['data'] as String) as List;
+                final event = frame[1] as Map;
+                if (event['id'] is String) {
+                  _authEventIds[id] = event['id'] as String;
+                }
+              } catch (_) {}
+            }
+            if (stage != null) _recordSocket(id, stage);
+          }
           return null;
         }
         final result = await socket.next();
+        if (result['done'] != true && result['text'] == true) {
+          final stage = _relayStage(result['data'] as String, outbound: false);
+          if (stage != null) _recordSocket(id, stage);
+          try {
+            final frame = jsonDecode(result['data'] as String) as List;
+            if (frame.length >= 3 &&
+                frame[0] == 'OK' &&
+                frame[1] == _authEventIds[id]) {
+              _recordSocket(id, frame[2] == true ? 'auth_ok' : 'auth_rejected');
+              _authEventIds.remove(id);
+            }
+          } catch (_) {}
+        }
         if (result['done'] == true) {
+          _recordSocket(id, 'ws_next_closed');
           _sockets.remove(id);
           _socketGrants.remove(id);
+          _socketTraces.remove(id);
+          _authEventIds.remove(id);
         }
         return result;
       } catch (_) {
+        _recordSocket(id, 'ws_next_or_send_failed');
         _sockets.remove(id)?.close();
         _socketGrants.remove(id);
+        _socketTraces.remove(id);
+        _authEventIds.remove(id);
         rethrow;
       }
     }
@@ -553,6 +651,7 @@ class GraspFipsBrowserBridge {
   }
 
   void _revokeGrant(String grantId) {
+    recordAuthentication(grantId, 'bridge_revoked');
     _grants.remove(grantId)?.close();
     _grantPurposes.remove(grantId);
     for (final id in _requestGrants.entries
@@ -568,10 +667,16 @@ class GraspFipsBrowserBridge {
         .toList()) {
       _sockets.remove(id)?.close();
       _socketGrants.remove(id);
+      _socketTraces.remove(id);
+      _authEventIds.remove(id);
     }
+    _grantTraces.remove(grantId);
   }
 
   void _disconnect() {
+    for (final trace in _socketTraces.values) {
+      _diagnose(_diagnosticTab, trace, 'bridge_revoked');
+    }
     _epoch++;
     for (final t in _grants.values) {
       t.close();
@@ -587,6 +692,9 @@ class GraspFipsBrowserBridge {
     _requestGrants.clear();
     _sockets.clear();
     _socketGrants.clear();
+    _socketTraces.clear();
+    _grantTraces.clear();
+    _authEventIds.clear();
   }
 
   void close() {

@@ -105,6 +105,94 @@ void main() {
     await expectLater(ws.send('no', true), throwsStateError);
   });
   test(
+      'relay diagnostics correlate AUTH, retry, EOSE and revocation without payloads',
+      () async {
+    server.listen((r) async {
+      final ws = await WebSocketTransformer.upgrade(r);
+      ws.add('["AUTH","private-challenge"]');
+      ws.listen((message) {
+        final frame = jsonDecode(message as String) as List;
+        if (frame[0] == 'AUTH') {
+          ws.add('["OK","test-auth-id",true,""]');
+        } else if (frame[0] == 'REQ') {
+          ws.add('["EVENT","sub",{"kind":30617,"content":"private-content"}]');
+          ws.add('["EOSE","sub"]');
+        }
+      });
+    });
+    final stages = <String>[];
+    dynamic reply;
+    final bridge = GraspFipsBrowserBridge(
+      pageOrigin: 'https://app.example',
+      approve: (_) async => GraspFipsConsentResult.approved,
+      prepare: (_) async => null,
+      transportFactory: (_) => transport,
+      onDiagnostic: (tab, relay, stage) => stages.add('$tab/$relay/$stage'),
+      reply: (script) async {
+        reply = (jsonDecode(
+          '[${script.substring(script.indexOf('(') + 1, script.length - 1)}]',
+        ) as List)[2];
+      },
+    );
+    final token =
+        RegExp(r'const token = "([^"]+)"').firstMatch(bridge.script)!.group(1);
+    Future<dynamic> rpc(String method, Map<String, dynamic> params) async {
+      await bridge.receive(jsonEncode({
+        'token': token,
+        'id': method,
+        'method': method,
+        'params': params,
+      }));
+      return reply;
+    }
+
+    final grant = await rpc('connect', {'endpoint': endpoint});
+    final id = await rpc('wsOpen', {
+      'grantId': grant['grantId'],
+      'url': '${endpoint.replaceFirst('http:', 'ws:')}/',
+    });
+    await rpc('wsNext', {'requestId': id});
+    bridge.recordAuthentication(null, 'signer_scope_denied');
+    bridge.recordAuthentication(grant['grantId'] as String, 'signer_request');
+    bridge.recordAuthentication(grant['grantId'] as String, 'signer_signed');
+    await rpc('wsSend', {
+      'requestId': id,
+      'text': true,
+      'data': '["AUTH",{"id":"test-auth-id"}]',
+    });
+    await rpc('wsNext', {'requestId': id});
+    await rpc('wsSend', {
+      'requestId': id,
+      'text': true,
+      'data': '["REQ","sub",{}]',
+    });
+    await rpc('wsNext', {'requestId': id});
+    await rpc('wsNext', {'requestId': id});
+    await rpc('disconnect', {'grantId': grant['grantId']});
+    final labels = stages.map((s) => s.split('/').last).toList();
+    expect(
+        labels,
+        containsAllInOrder([
+          'ws_open_start',
+          'ws_open_ok',
+          'auth_challenge',
+          'signer_scope_denied',
+          'signer_request',
+          'signer_signed',
+          'auth_sent',
+          'auth_ok',
+          'req_sent',
+          'event_received',
+          'eose_received',
+          'bridge_revoked',
+        ]));
+    expect(stages.map((s) => s.split('/').take(2).join('/')).toSet(),
+        hasLength(1));
+    expect(stages.join(), isNot(contains('private-')));
+    expect(stages.join(), isNot(contains('test-auth-id')));
+    bridge.close();
+  });
+  test(
     'revocation safely destroys socket during queued and active sends',
     () async {
       server.listen((r) async {
