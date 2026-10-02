@@ -2,21 +2,28 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/app_config.dart';
+import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
 import 'drive_host.dart';
 
 class DriveScreen extends StatefulWidget {
   const DriveScreen(
-      {required this.config, required this.bridge, this.host, super.key});
+      {required this.config,
+      required this.bridge,
+      this.host,
+      this.fipsRuntime,
+      super.key});
   final AppConfig config;
   final NativeCoreBridge bridge;
   final DriveHost? host;
+  final FipsRuntimeService? fipsRuntime;
   @override
   State<DriveScreen> createState() => _DriveScreenState();
 }
 
 class _DriveScreenState extends State<DriveScreen> {
-  late final DriveHost host = widget.host ?? DriveHost();
+  late final DriveHost host =
+      widget.host ?? DriveHost(fipsRuntime: widget.fipsRuntime);
   @override
   void initState() {
     super.initState();

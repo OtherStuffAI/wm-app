@@ -1,12 +1,15 @@
 // Product wiring tests; these do not substitute for native WebView UX evidence.
 import 'dart:convert';
+import 'dart:async';
+import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'fake_webview_platform.dart';
-import 'mesh_auth_signing_test.dart' show Harness;
+import 'mesh_auth_signing_test.dart' show Harness, appPage;
 import 'grasp_fips_transport_test.dart' show endpoint;
 
 const page = 'https://gitworkshop.example/repository';
@@ -36,7 +39,10 @@ Future<String> start(Harness h, WidgetTester tester) async {
   expect(script, contains('location.origin !== "https://gitworkshop.example"'));
   expect(script, contains('version:2, available:true'));
   expect(script, contains('async connect(options'));
-  expect(script, contains("window.dispatchEvent(new Event('wingman-fips-transport-ready'))"));
+  expect(
+      script,
+      contains(
+          "window.dispatchEvent(new Event('wingman-fips-transport-ready'))"));
   return RegExp(r'const token = "([^"]+)"').firstMatch(script)!.group(1)!;
 }
 
@@ -89,6 +95,95 @@ void main() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
   });
+  testWidgets('off cancels a pending FIPS navigation readiness result',
+      (tester) async {
+    final runtime = _ToggleBrowserRuntime();
+    final pending = Completer<String?>();
+    var block = false;
+    final h = Harness(
+        fipsRuntime: runtime,
+        prepareFipsNavigation: (_) async => block ? pending.future : null);
+    await start(h, tester);
+    block = true;
+    final decision = submitFakeNavigationRequest(
+        controllerIndex: 0, url: appPage, isMainFrame: true);
+    await tester.pump();
+    runtime.change(false);
+    pending.complete(null);
+    expect(await decision, NavigationDecision.prevent);
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    await runtime.changes.close();
+  });
+
+  testWidgets(
+      'disabled startup does not programmatically load a FIPS destination',
+      (tester) async {
+    final runtime = _ToggleBrowserRuntime()..enabled = false;
+    final h = Harness(fipsRuntime: runtime, localFlightDeckUrl: appPage);
+    await h.start(tester);
+    expect(
+        fakeLoadedRequestUrls.where((url) => url.contains('.fips')), isEmpty);
+    runtime.change(true);
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls.last, appPage);
+    await tester.pumpWidget(const SizedBox());
+    await runtime.changes.close();
+  });
+
+  testWidgets('disabled direct FIPS tab preserves destination and recovers',
+      (tester) async {
+    final runtime = _ToggleBrowserRuntime();
+    final h = Harness(fipsRuntime: runtime);
+    await h.start(tester);
+    const destination = appPage;
+    runtime.change(false);
+    await tester.pumpAndSettle();
+    expect(fakeLoadedHtmlStrings.last, contains('FIPS disabled'));
+    runtime.change(true);
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls.last, destination);
+    await tester.pumpWidget(const SizedBox());
+    await runtime.changes.close();
+  });
+
+  testWidgets(
+      'HTTPS signer remains injected after disabling and re-enabling FIPS',
+      (tester) async {
+    final runtime = _ToggleBrowserRuntime();
+    final h = Harness(fipsRuntime: runtime);
+    await start(h, tester);
+    final oldScript = fakeExecutedJavaScripts
+        .lastWhere((s) => s.contains('const signerDocumentToken ='));
+    final count = fakeExecutedJavaScripts
+        .where((s) => s.contains("'fipsTransport'"))
+        .length;
+    runtime.change(false);
+    await tester.pumpAndSettle();
+    final disabledScript = fakeExecutedJavaScripts
+        .lastWhere((s) => s.contains('const signerDocumentToken ='));
+    expect(disabledScript, isNot(oldScript));
+    expect(
+        fakeExecutedJavaScripts
+            .where((s) => s.contains("'fipsTransport'"))
+            .length,
+        count);
+    expect(fakeLoadedHtmlStrings.where((s) => s.contains('FIPS disabled')),
+        isEmpty);
+    runtime.change(true);
+    await tester.pumpAndSettle();
+    expect(
+        fakeExecutedJavaScripts
+            .where((s) => s.contains("'fipsTransport'"))
+            .length,
+        greaterThan(count));
+    final enabledScript = fakeExecutedJavaScripts
+        .lastWhere((s) => s.contains('const signerDocumentToken ='));
+    expect(enabledScript, isNot(disabledScript));
+    await tester.pumpWidget(const SizedBox());
+    await runtime.changes.close();
+  });
+
   testWidgets(
       'native transport consent does not replace exact signature consent',
       (tester) async {
@@ -378,5 +473,18 @@ void main() {
       expect(h.signer.events, isEmpty);
       await tester.pumpWidget(const SizedBox());
     });
+  }
+}
+
+class _ToggleBrowserRuntime extends FipsRuntimeService {
+  bool enabled = true;
+  final changes = StreamController<bool>.broadcast(sync: true);
+  @override
+  Future<bool> get isEnabled async => enabled;
+  @override
+  Stream<bool> get enabledChanges => changes.stream;
+  void change(bool value) {
+    enabled = value;
+    changes.add(value);
   }
 }

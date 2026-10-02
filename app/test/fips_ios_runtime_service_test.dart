@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'fips_android_runtime_service_test.dart' show FakeAndroidFipsRuntime;
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   FipsRuntimeService service(FakeAndroidFipsRuntime native) =>
       FipsRuntimeService(
         isMacOS: false,
@@ -31,7 +33,10 @@ void main() {
     expect((await first).isRunning, isTrue);
     expect((await second).isRunning, isTrue);
     expect(native.peerCalls, 1);
-    expect((await runtime.stop()).state, FipsRuntimeState.notInstalled);
+    expect((await runtime.stop()).state, FipsRuntimeState.disabled);
+    expect((await runtime.ensureReadyForAppAccess()).state,
+        FipsRuntimeState.disabled);
+    await runtime.setEnabled(true);
     expect((await runtime.ensureReadyForAppAccess()).isRunning, isTrue);
     expect(native.startCalls, 2);
   });

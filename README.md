@@ -229,6 +229,10 @@ Mobile status:
 
 Desktop FIPS status:
 
+- Setup → FIPS transport includes a persisted WMapp FIPS on/off switch. Off
+  cancels app mesh retries and transport resources; the separately installed
+  desktop system daemon remains independently managed. See
+  [Desktop FIPS control and diagnosis](docs/desktop-fips-control.md).
 - macOS bundles the pinned upstream package and activates it through the normal
   administrator authorization dialog.
 - Linux bundles the pinned upstream systemd release for x86_64 or aarch64. On

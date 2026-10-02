@@ -66,6 +66,7 @@ class _ShellHomeState extends State<ShellHome> {
       widget.fipsRuntime ?? FipsRuntimeService();
   bool _fipsDiagnosticsExportBusy = false;
   String? _observedFlightDeckVersion;
+  String? _lastFipsFailure;
 
   @override
   void initState() {
@@ -106,6 +107,7 @@ class _ShellHomeState extends State<ShellHome> {
             child: DriveScreen(
               config: widget.config,
               bridge: widget.bridge,
+              fipsRuntime: _fipsRuntime,
             ),
           ),
           _surfaceScaffold(
@@ -284,6 +286,7 @@ class _ShellHomeState extends State<ShellHome> {
       onFocusModeChanged: (focused) => _browserFocusMode.value = focused,
       onBookmarkMenuStateChanged: (state) => _bookmarkMenuState.value = state,
       onPrepareFipsNavigation: _prepareFipsNavigation,
+      fipsRuntime: _fipsRuntime,
       profileRelayClient: widget.profileRelayClient,
       signerVault: widget.signerVault,
       onOpenIdentity: widget.signerVault == null ? null : _openIdentity,
@@ -317,9 +320,14 @@ class _ShellHomeState extends State<ShellHome> {
         detail: 'Embedded FIPS failed unexpectedly. Open Setup to retry.',
       );
     }
-    if (status.canAttemptAppAccess) return null;
+    if (status.canAttemptAppAccess) {
+      _lastFipsFailure = null;
+      return null;
+    }
     if (!mounted) return status.detail;
 
+    if (_lastFipsFailure == status.detail) return status.detail;
+    _lastFipsFailure = status.detail;
     final supportsExport = _fipsRuntime.supportsDiagnosticsExport;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

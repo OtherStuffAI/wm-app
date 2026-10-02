@@ -33,7 +33,10 @@ class DriveHost extends ChangeNotifier {
       : _fipsRuntime = fipsRuntime ?? FipsRuntimeService(),
         _socketConnector = socketConnector ?? Socket.startConnect,
         _hostSecretStore =
-            hostSecretStore ?? _SecureStorageDriveHostSecretStore();
+            hostSecretStore ?? _SecureStorageDriveHostSecretStore() {
+    _enabledSubscription =
+        _fipsRuntime.enabledChanges.listen(_onFipsEnabledChanged);
+  }
   final Future<NostrIdentity> Function()? identityLoader;
   final Future<String> Function()? endpointLoader;
   final Future<Map<String, dynamic>> Function(
@@ -64,6 +67,10 @@ class DriveHost extends ChangeNotifier {
   final DriveRequestVerifier _verifier = DriveRequestVerifier();
   HttpServer? _server;
   Timer? _timer;
+  StreamSubscription<bool>? _enabledSubscription;
+  final Set<HttpClient> _clients = {};
+  final Set<Process> _helpers = {};
+  bool _fipsEnabled = true;
   AppConfig? _config;
   NostrIdentity? _hostIdentity;
   String message = 'Choose a folder to share from this desktop.';
@@ -75,8 +82,37 @@ class DriveHost extends ChangeNotifier {
   bool get hasDiagnostics => _diagnostics.isNotEmpty;
   String get diagnosticsText => _diagnosticsText();
 
+  void _onFipsEnabledChanged(bool enabled) {
+    if (_disposed) return;
+    _fipsEnabled = enabled;
+    if (!enabled) {
+      unawaited(_disableFipsHosting());
+    } else if (_config != null) {
+      unawaited(configure(_config!));
+    }
+  }
+
+  Future<void> _disableFipsHosting() async {
+    ++_generation;
+    _fipsEnabled = false;
+    await stop();
+    if (_disposed || _fipsEnabled) return;
+    message = 'FIPS is disabled. Enable it in Setup to host shared folders.';
+    notifyListeners();
+  }
+
   Future<void> configure(AppConfig config, {bool repair = false}) async {
-    if (!supported) return;
+    if (!supported || _disposed) return;
+    final initialGeneration = _generation;
+    final enabled = await _fipsRuntime.isEnabled;
+    if (_disposed || initialGeneration != _generation) return;
+    if (!enabled) {
+      _config = config;
+      await _disableFipsHosting();
+      return;
+    }
+    if (_disposed) return;
+    _fipsEnabled = true;
     final contextChanged = _config == null ||
         _config?.deviceNpub != config.deviceNpub ||
         _config?.towerUrl != config.towerUrl ||
@@ -92,7 +128,8 @@ class DriveHost extends ChangeNotifier {
       return;
     }
     final generation = ++_generation;
-    await stop();
+    await _stopResources();
+    if (generation != _generation || _disposed || !_fipsEnabled) return;
     _config = config;
     final diagnosticsContext = _diagnosticsContext;
     if (config.deviceSecret.isEmpty) {
@@ -134,11 +171,12 @@ class DriveHost extends ChangeNotifier {
           }
         }
       }
-      endpoint = endpointLoader != null
+      final resolvedEndpoint = endpointLoader != null
           ? await endpointLoader!()
           : await _resolveLocalFipsEndpoint(
               repair: repair, diagnosticsContext: diagnosticsContext);
       if (generation != _generation) return;
+      endpoint = resolvedEndpoint;
       final server = await HttpServer.bind(
           listenAddress ?? TowerFipsProxy.meshAddress(endpoint!), listenPort);
       if (generation != _generation) {
@@ -264,6 +302,7 @@ class DriveHost extends ChangeNotifier {
 
   Future<Map<String, dynamic>> _tower(String url, String method, String secret,
       [Map<String, dynamic>? payload]) async {
+    if (!_fipsEnabled || _disposed) throw StateError('FIPS disabled');
     if (towerRequest != null) {
       return towerRequest!(url, method, secret, payload);
     }
@@ -273,6 +312,7 @@ class DriveHost extends ChangeNotifier {
         secret: secret, method: method, url: url, body: body);
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
+    _clients.add(client);
     client.findProxy = (_) => 'DIRECT';
     final uri = Uri.parse(url);
     final target = _diagnosticTarget(uri);
@@ -306,6 +346,8 @@ class DriveHost extends ChangeNotifier {
       } on FormatException {
         record('connect',
             error: StateError('invalid_fips_tower_url'), notify: false);
+        _clients.remove(client);
+        client.close(force: true);
         throw const DriveRegistrationException(
             'Invalid FIPS Tower URL. Use http://<node-npub>.fips:<port>.');
       }
@@ -359,6 +401,7 @@ class DriveHost extends ChangeNotifier {
       record(_transportStage(error, activeStage), error: error);
       rethrow;
     } finally {
+      _clients.remove(client);
       client.close(force: true);
     }
   }
@@ -483,7 +526,13 @@ class DriveHost extends ChangeNotifier {
   }
 
   Future<void> refreshPolicies() async {
-    if (_refreshing || _hostIdentity == null) return;
+    if (_refreshing ||
+        _hostIdentity == null ||
+        !_fipsEnabled ||
+        _disposed ||
+        _server == null) {
+      return;
+    }
     _refreshing = true;
     final generation = _generation;
     try {
@@ -504,6 +553,7 @@ class DriveHost extends ChangeNotifier {
           s['fetched_at'] = fetched.toIso8601String();
           await _persist();
         } on DrivePolicyDenied {
+          if (generation != _generation) return;
           _policies.remove(s['id']);
           s.remove('policy');
           s.remove('fetched_at');
@@ -529,25 +579,35 @@ class DriveHost extends ChangeNotifier {
             : bundled.existsSync()
                 ? bundled.path
                 : '${Directory.current.parent.path}/target/debug/wmapp-drive-fs');
+    final generation = _generation;
     final process = await Process.start(binary, []);
-    process.stdin.write(jsonEncode({
-      'root': s['root'],
-      'path': path,
-      'operation': operation,
-      'offset': offset,
-      'revision': revision
-    }));
-    await process.stdin.close();
-    final out = process.stdout.transform(utf8.decoder).join();
-    unawaited(process.stderr.drain());
-    final raw = await out.timeout(const Duration(seconds: 15), onTimeout: () {
+    if (generation != _generation || _disposed || !_fipsEnabled) {
       process.kill();
-      throw StateError('filesystem_timeout');
-    });
-    if (await process.exitCode != 0 || raw.length > 1024 * 1024) {
-      throw StateError('filesystem_unavailable');
+      throw StateError('revoked');
     }
-    return (jsonDecode(raw) as Map).cast<String, dynamic>();
+    _helpers.add(process);
+    try {
+      process.stdin.write(jsonEncode({
+        'root': s['root'],
+        'path': path,
+        'operation': operation,
+        'offset': offset,
+        'revision': revision
+      }));
+      await process.stdin.close();
+      final out = process.stdout.transform(utf8.decoder).join();
+      unawaited(process.stderr.drain());
+      final raw = await out.timeout(const Duration(seconds: 15), onTimeout: () {
+        process.kill();
+        throw StateError('filesystem_timeout');
+      });
+      if (await process.exitCode != 0 || raw.length > 1024 * 1024) {
+        throw StateError('filesystem_unavailable');
+      }
+      return (jsonDecode(raw) as Map).cast<String, dynamic>();
+    } finally {
+      _helpers.remove(process);
+    }
   }
 
   Future<void> _replayTail = Future.value();
@@ -683,19 +743,34 @@ class DriveHost extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    ++_generation;
+    await _stopResources();
+  }
+
+  Future<void> _stopResources() async {
     _timer?.cancel();
     _timer = null;
-    await _server?.close(force: true);
+    final server = _server;
     _server = null;
+    for (final client in _clients.toList()) {
+      client.close(force: true);
+    }
+    _clients.clear();
+    for (final helper in _helpers.toList()) {
+      helper.kill();
+    }
+    _helpers.clear();
     endpoint = null;
     _policies.clear();
     _active.clear();
+    await server?.close(force: true);
   }
 
   @override
   void dispose() {
     ++_generation;
     _disposed = true;
+    unawaited(_enabledSubscription?.cancel());
     clearDiagnostics(notify: false);
     unawaited(stop());
     super.dispose();

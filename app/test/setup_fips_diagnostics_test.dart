@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
@@ -61,6 +62,7 @@ class DiagnosticsAndroidRuntime implements FipsAndroidRuntimeChannel {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   FipsRuntimeService runtime(DiagnosticsAndroidRuntime channel) =>
       FipsRuntimeService(
         isMacOS: false,

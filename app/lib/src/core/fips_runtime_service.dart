@@ -4,6 +4,7 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 typedef FipsProcessRunner = Future<ProcessResult> Function(
   String executable,
@@ -11,6 +12,7 @@ typedef FipsProcessRunner = Future<ProcessResult> Function(
 );
 
 enum FipsRuntimeState {
+  disabled,
   notBundled,
   notInstalled,
   consentRequired,
@@ -140,6 +142,8 @@ class FipsRuntimeService {
     bool? isIOS,
     FipsAndroidRuntimeChannel? iosRuntime,
     FipsAndroidRuntimeChannel? androidRuntime,
+    Future<bool> Function()? readEnabled,
+    Future<void> Function(bool enabled)? writeEnabled,
     Future<bool> Function(String path)? fileExists,
     Future<String?> Function(String path)? readTextFile,
   })  : bundledPackagePath = bundledPackagePath ??
@@ -147,6 +151,8 @@ class FipsRuntimeService {
         fipsctlPath = fipsctlPath ?? '/usr/local/bin/fipsctl',
         attestationPath = attestationPath ??
             defaultAttestationPath(isMacOS: isMacOS, isLinux: isLinux),
+        _readEnabled = readEnabled ?? _readEnabledPreference,
+        _writeEnabled = writeEnabled ?? _writeEnabledPreference,
         _processRunner = processRunner ?? Process.run,
         _isMacOS = isMacOS ?? (isLinux == true ? false : Platform.isMacOS),
         _isLinux = isLinux ?? (isMacOS == true ? false : Platform.isLinux),
@@ -183,10 +189,117 @@ class FipsRuntimeService {
   final Future<bool> Function(String path) _fileExists;
   final Future<String?> Function(String path) _readTextFile;
   bool _operationInProgress = false;
+  Completer<void>? _mobileStartup;
   bool _diagnosticsExportInProgress = false;
   Future<FipsRuntimeStatus>? _ensureReadyOperation;
 
-  bool get supportsStop => _isMobile;
+  static const enabledPreferenceKey = 'wmapp.fips.enabled.v1';
+  final Future<bool> Function() _readEnabled;
+  final Future<void> Function(bool) _writeEnabled;
+  final _enabledChanges = StreamController<bool>.broadcast(sync: true);
+  bool? _enabled;
+  int _generation = 0;
+  final Set<Completer<void>> _retryWaits = {};
+  DateTime? _bootstrapRetryAfter;
+  FipsRuntimeStatus? _lastBootstrapFailure;
+
+  bool? get enabledSnapshot => _enabled;
+
+  Stream<bool> get enabledChanges => _enabledChanges.stream;
+  Future<bool> get isEnabled async {
+    if (_enabled != null) return _enabled!;
+    final generation = _generation;
+    try {
+      final stored = await _readEnabled();
+      if (_generation == generation && _enabled == null) _enabled = stored;
+    } catch (_) {
+      if (_generation == generation && _enabled == null) _enabled = false;
+    }
+    return _enabled ?? false;
+  }
+
+  Future<void> _settingOperation = Future<void>.value();
+
+  static Future<bool> _readEnabledPreference() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(enabledPreferenceKey) ?? true;
+  }
+
+  static Future<void> _writeEnabledPreference(bool enabled) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!await preferences.setBool(enabledPreferenceKey, enabled)) {
+      throw StateError('FIPS preference could not be saved.');
+    }
+  }
+
+  FipsRuntimeStatus get disabledStatus => FipsRuntimeStatus(
+        state: FipsRuntimeState.disabled,
+        detail:
+            'FIPS is disabled in WMAPP. Enable it in Setup to use FIPS-only '
+            'services. Ordinary HTTPS browsing remains available.'
+            '${_isMobile ? '' : ' An independently installed system FIPS service '
+                'is managed separately and is not stopped by this control.'}',
+      );
+
+  Future<FipsRuntimeStatus> setEnabled(bool enabled) {
+    final generation = ++_generation;
+    // Fail closed immediately, including while an enable waits for persistence.
+    _enabled = false;
+    for (final wait in _retryWaits) {
+      if (!wait.isCompleted) wait.complete();
+    }
+    _retryWaits.clear();
+    _ensureReadyOperation = null;
+    _bootstrapRetryAfter = null;
+    _lastBootstrapFailure = null;
+    _enabledChanges.add(false);
+    final result = _settingOperation.then((_) async {
+      var saved = true;
+      try {
+        await _writeEnabled(enabled);
+      } catch (_) {
+        saved = false;
+      }
+      // Stop remains required even if saving the preference failed.
+      if (_isMobile && (!enabled || !saved)) {
+        try {
+          await _androidRuntime.stop();
+        } catch (_) {
+          return const FipsRuntimeStatus(
+              state: FipsRuntimeState.failed,
+              detail:
+                  'FIPS access is disabled, but the mobile runtime could not stop. Retry disabling it in Setup.');
+        }
+      }
+      if (!saved) {
+        return const FipsRuntimeStatus(
+            state: FipsRuntimeState.failed,
+            detail:
+                'FIPS access is disabled, but its setting could not be saved. Retry in Setup before relaunching.');
+      }
+      if (enabled) await _mobileStartup?.future;
+      if (_generation != generation || !enabled) return disabledStatus;
+      _enabled = true;
+      _enabledChanges.add(true);
+      return inspect();
+    });
+    _settingOperation = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  Future<void> _waitForRetry(int generation) async {
+    if (_generation != generation || _enabled == false) return;
+    final wait = Completer<void>();
+    _retryWaits.add(wait);
+    final timer = Timer(const Duration(milliseconds: 500), () {
+      if (!wait.isCompleted) wait.complete();
+    });
+    await wait.future;
+    timer.cancel();
+    _retryWaits.remove(wait);
+  }
+
+  bool get supportsStop => _isMobile || _isMacOS || _isLinux;
 
   bool get supportsDiagnosticsExport => _isMobile;
 
@@ -328,13 +441,18 @@ end run
               : 'Waiting for macOS authorization…';
 
   Future<FipsRuntimeStatus> inspect() async {
+    if (!await isEnabled) return disabledStatus;
     if (_operationInProgress) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.starting,
         detail: 'FIPS installation or repair is in progress.',
       );
     }
-    return _inspectRuntime();
+    final generation = _generation;
+    final status = await _inspectRuntime();
+    return _generation == generation && await isEnabled
+        ? status
+        : disabledStatus;
   }
 
   Future<FipsRuntimeStatus> ensureReadyForAppAccess() {
@@ -354,7 +472,14 @@ end run
 
   Future<FipsRuntimeStatus> _ensureReadyForAppAccess() async {
     try {
+      final generation = _generation;
+      if (!await isEnabled) return disabledStatus;
+      final retryAfter = _bootstrapRetryAfter;
+      if (retryAfter != null && DateTime.now().isBefore(retryAfter)) {
+        return _lastBootstrapFailure!;
+      }
       var status = await inspect();
+      if (_generation != generation || !await isEnabled) return disabledStatus;
 
       if (!status.canAttemptAppAccess) {
         final canActivateBundledRuntime = switch (status.state) {
@@ -370,6 +495,7 @@ end run
         status = await installOrRepair();
       }
       if (!status.canAttemptAppAccess) return status;
+      if (_generation != generation || !await isEnabled) return disabledStatus;
       return _ensureBootstrapConnected(status);
     } catch (_) {
       return const FipsRuntimeStatus(
@@ -382,26 +508,42 @@ end run
   Future<FipsRuntimeStatus> _ensureBootstrapConnected(
     FipsRuntimeStatus readyStatus,
   ) async {
+    final generation = _generation;
+    if (!await isEnabled) return disabledStatus;
+    final retryAfter = _bootstrapRetryAfter;
+    if (retryAfter != null && DateTime.now().isBefore(retryAfter)) {
+      return _lastBootstrapFailure!;
+    }
     if (readyStatus.state == FipsRuntimeState.controlAccessPending) {
       return readyStatus;
     }
 
     if (_isMobile) {
       for (var attempt = 0; attempt < 20; attempt += 1) {
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         final peers = await _androidRuntime.peerStatus();
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         if (peers['connected'] == true) return readyStatus;
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+        await _waitForRetry(generation);
       }
-      return FipsRuntimeStatus(
+      if (_generation != generation || !await isEnabled) return disabledStatus;
+      return _rememberBootstrapFailure(FipsRuntimeStatus(
         state: FipsRuntimeState.degraded,
         detail: 'FIPS is running, but the authenticated bootstrap peer did not '
-            'connect. Check outbound UDP port 2121 and the active mobile VPN.',
+            'connect. Its cause is unknown; check peer availability, network '
+            'reachability (UDP port 2121) and the active mobile VPN.',
         nodeNpub: readyStatus.nodeNpub,
-      );
+      ));
     }
 
     for (var attempt = 0; attempt < 12; attempt += 1) {
+      if (_generation != generation || !await isEnabled) return disabledStatus;
       final peers = await _run(fipsctlPath, const ['show', 'peers']);
+      if (_generation != generation || !await isEnabled) return disabledStatus;
       if (peers.exitCode == 0 && _bootstrapIsConnected(peers.stdout)) {
         return readyStatus;
       }
@@ -412,23 +554,34 @@ end run
           bootstrapPeerAddress,
           'udp',
         ]);
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         if (connect.exitCode != 0) {
-          return FipsRuntimeStatus(
+          return _rememberBootstrapFailure(FipsRuntimeStatus(
             state: FipsRuntimeState.degraded,
             detail: 'FIPS is running, but its authenticated bootstrap link '
                 'could not start: ${_resultDetail(connect)}',
             nodeNpub: readyStatus.nodeNpub,
-          );
+          ));
         }
       }
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await _waitForRetry(generation);
     }
-    return FipsRuntimeStatus(
+    if (_generation != generation || !await isEnabled) return disabledStatus;
+    return _rememberBootstrapFailure(FipsRuntimeStatus(
       state: FipsRuntimeState.degraded,
-      detail: 'FIPS is running, but the authenticated bootstrap peer did not '
-          'connect. Check that outbound UDP port 2121 is allowed.',
+      detail: 'FIPS is running, but its authenticated bootstrap peer did not '
+          'connect. The cause is unknown; check peer availability and network '
+          'reachability (UDP port 2121).',
       nodeNpub: readyStatus.nodeNpub,
-    );
+    ));
+  }
+
+  FipsRuntimeStatus _rememberBootstrapFailure(FipsRuntimeStatus status) {
+    _bootstrapRetryAfter = DateTime.now().add(const Duration(seconds: 30));
+    _lastBootstrapFailure = status;
+    return status;
   }
 
   static bool _bootstrapIsConnected(Object output) {
@@ -592,23 +745,40 @@ end run
   }
 
   Future<FipsRuntimeStatus> installOrRepair() async {
+    if (!await isEnabled) return disabledStatus;
+    final generation = _generation;
+    _bootstrapRetryAfter = null;
+    _lastBootstrapFailure = null;
     if (_isMobile) {
       if (_operationInProgress) {
         return const FipsRuntimeStatus(
           state: FipsRuntimeState.starting,
-          detail:
-              'VPN consent or embedded FIPS startup is in progress.',
+          detail: 'VPN consent or embedded FIPS startup is in progress.',
         );
       }
       _operationInProgress = true;
+      final startup = Completer<void>();
+      _mobileStartup = startup;
       try {
         await _recordAndroidEvent('dart_start_requested');
         final current = await _androidRuntime.inspect();
         final repair = current['state'] == 'degraded' ||
             current['state'] == 'failed' ||
             current['state'] == 'running';
-        return _androidStatus(await _androidRuntime.start(repair: repair));
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
+        final result = await _androidRuntime.start(repair: repair);
+        if (_generation != generation || !await isEnabled) {
+          // A start already inside native code can finish after stop.
+          await _androidRuntime.stop();
+          return disabledStatus;
+        }
+        return _androidStatus(result);
       } catch (error) {
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         await _recordAndroidEvent('dart_start_failed');
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
@@ -619,6 +789,8 @@ end run
         );
       } finally {
         _operationInProgress = false;
+        startup.complete();
+        if (identical(_mobileStartup, startup)) _mobileStartup = null;
       }
     }
     if ((!_isMacOS && !_isLinux) || !await _fileExists(bundledPackagePath)) {
@@ -639,7 +811,9 @@ end run
       final command = _isLinux
           ? linuxInstallCommand(bundledPackagePath)
           : installCommand(bundledPackagePath);
+      if (_generation != generation || !await isEnabled) return disabledStatus;
       final result = await _run(command.executable, command.arguments);
+      if (_generation != generation || !await isEnabled) return disabledStatus;
       if (result.exitCode != 0) {
         return FipsRuntimeStatus(
           state: FipsRuntimeState.failed,
@@ -648,9 +822,15 @@ end run
         );
       }
       for (var attempt = 0; attempt < 10; attempt += 1) {
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         final status = await _inspectRuntime();
+        if (_generation != generation || !await isEnabled) {
+          return disabledStatus;
+        }
         if (status.state != FipsRuntimeState.starting) return status;
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+        await _waitForRetry(generation);
       }
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.starting,
@@ -662,6 +842,7 @@ end run
   }
 
   Future<FipsProbeResult> probe(String npub) async {
+    final generation = _generation;
     if (!RegExp(r'^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$')
         .hasMatch(npub)) {
       return const FipsProbeResult(
@@ -671,9 +852,15 @@ end run
     if (!status.isRunning) {
       return FipsProbeResult(ok: false, detail: status.detail);
     }
+    if (!await isEnabled) {
+      return FipsProbeResult(ok: false, detail: disabledStatus.detail);
+    }
     if (_isMobile) {
       try {
         final result = await _androidRuntime.probe(npub);
+        if (_generation != generation || !await isEnabled) {
+          return FipsProbeResult(ok: false, detail: disabledStatus.detail);
+        }
         return FipsProbeResult(
           ok: result['ok'] == true,
           detail: redactSecrets(
@@ -694,26 +881,16 @@ end run
       fipsctlPath,
       ['probe', npub, '--json', '--timeout', '15'],
     );
+    if (_generation != generation || !await isEnabled) {
+      return FipsProbeResult(ok: false, detail: disabledStatus.detail);
+    }
     return FipsProbeResult(
       ok: result.exitCode == 0,
       detail: _resultDetail(result),
     );
   }
 
-  Future<FipsRuntimeStatus> stop() async {
-    if (!_isMobile) return inspect();
-    try {
-      return _androidStatus(await _androidRuntime.stop());
-    } catch (error) {
-      return FipsRuntimeStatus(
-        state: FipsRuntimeState.failed,
-        detail: _androidBoundaryDetail(
-          error,
-          'Mobile FIPS stop failed. Please retry.',
-        ),
-      );
-    }
-  }
+  Future<FipsRuntimeStatus> stop() => setEnabled(false);
 
   static FipsRuntimeStatus _androidStatus(Map<String, dynamic> value) {
     final state = switch (value['state']?.toString()) {
@@ -744,6 +921,9 @@ end run
 
   Future<ProcessResult> _run(String executable, List<String> arguments) async {
     try {
+      if (!await isEnabled) {
+        return ProcessResult(0, 1, '', 'FIPS is disabled in WMAPP.');
+      }
       return await _processRunner(executable, arguments);
     } catch (error) {
       return ProcessResult(0, 127, '', redactSecrets(error.toString()));

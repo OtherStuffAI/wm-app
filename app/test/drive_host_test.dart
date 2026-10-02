@@ -20,6 +20,84 @@ import 'package:wingman_app/src/features/drive/drive_protocol.dart';
 import 'package:wingman_app/src/features/drive/drive_screen.dart';
 
 void main() {
+  test('FIPS off tears down hosting and on recovers', () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final runtime = _ToggleFipsRuntime();
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    var endpointLoads = 0;
+    final host = DriveHost(
+      fipsRuntime: runtime,
+      identityLoader: () async => owner,
+      endpointLoader: () async {
+        endpointLoads++;
+        return 'http://${service.npub}.fips:7345';
+      },
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final config = AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    );
+    try {
+      await host.configure(config);
+      expect(host.listeningPort, isNotNull);
+      runtime.change(false);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(host.listeningPort, isNull);
+      expect(host.endpoint, isNull);
+      expect(host.message, contains('FIPS is disabled'));
+      await host.configure(config);
+      await host.refreshPolicies();
+      expect(endpointLoads, 1);
+      runtime.change(true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(host.listeningPort, isNotNull, reason: host.message);
+      expect(endpointLoads, 2);
+    } finally {
+      host.dispose();
+      await runtime.changes.close();
+    }
+  });
+
+  test('disable cancels startup before an awaited endpoint can bind', () async {
+    SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
+    final runtime = _ToggleFipsRuntime();
+    final owner = NostrCrypto.generateIdentity();
+    final service = NostrCrypto.generateIdentity();
+    final pendingEndpoint = Completer<String>();
+    final endpointStarted = Completer<void>();
+    final host = DriveHost(
+      fipsRuntime: runtime,
+      identityLoader: () async => owner,
+      endpointLoader: () {
+        endpointStarted.complete();
+        return pendingEndpoint.future;
+      },
+      listenAddress: InternetAddress.loopbackIPv4,
+      listenPort: 0,
+    );
+    final configure = host.configure(AppConfig.defaults().copyWith(
+      deviceNpub: owner.npub,
+      deviceSecret: owner.nsec,
+      towerUrl: 'https://tower.example',
+      workspaceId: 'workspace',
+    ));
+    await endpointStarted.future;
+    runtime.change(false);
+    pendingEndpoint.complete('http://${service.npub}.fips:7345');
+    await configure;
+    await Future<void>.delayed(Duration.zero);
+    expect(host.listeningPort, isNull);
+    expect(host.endpoint, isNull);
+    expect(host.message, contains('FIPS is disabled'));
+    host.dispose();
+    await runtime.changes.close();
+  });
+
   test('default host identity storage uses non-data-protection macOS keychain',
       () async {
     SharedPreferences.setMockInitialValues({DriveHost.storageKey: '[]'});
@@ -596,11 +674,12 @@ void main() {
 
     try {
       await host.configure(config);
-      final pending = host.publish(share);
+      final pending =
+          expectLater(host.publish(share), throwsA(isA<HttpException>()));
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await host.configure(config.copyWith(workspaceId: 'workspace-b'));
       release.complete();
-      await expectLater(pending, throwsA(isA<DriveTowerException>()));
+      await pending;
 
       expect(host.diagnosticsText, isNot(contains('delayed_secret_code')));
       expect(host.diagnosticsText, isNot(contains('workspace-a')));
@@ -1034,5 +1113,18 @@ class _FakeFipsRuntimeService extends FipsRuntimeService {
   Future<FipsRuntimeStatus> ensureReadyForAppAccess() async {
     ensureReadyCount += 1;
     return _nextStatus();
+  }
+}
+
+class _ToggleFipsRuntime extends FipsRuntimeService {
+  bool enabled = true;
+  final changes = StreamController<bool>.broadcast(sync: true);
+  @override
+  Future<bool> get isEnabled async => enabled;
+  @override
+  Stream<bool> get enabledChanges => changes.stream;
+  void change(bool value) {
+    enabled = value;
+    changes.add(value);
   }
 }

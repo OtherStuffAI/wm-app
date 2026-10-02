@@ -13,6 +13,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../../core/app_config.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
+import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
@@ -43,6 +44,7 @@ class BrowserScreen extends StatefulWidget {
     this.onBookmarkMenuStateChanged,
     this.onFocusModeChanged,
     this.onPrepareFipsNavigation,
+    this.fipsRuntime,
     this.onLogOut,
     this.onOpenIdentity,
     this.profileRelayClient,
@@ -62,6 +64,7 @@ class BrowserScreen extends StatefulWidget {
   final ValueChanged<BrowserBookmarkMenuState>? onBookmarkMenuStateChanged;
   final ValueChanged<bool>? onFocusModeChanged;
   final Future<String?> Function(String url)? onPrepareFipsNavigation;
+  final FipsRuntimeService? fipsRuntime;
   final VoidCallback? onLogOut;
   final VoidCallback? onOpenIdentity;
   final NostrProfileRelayClient? profileRelayClient;
@@ -107,11 +110,17 @@ class BrowserScreenState extends State<BrowserScreen> {
   Timer? _persistTabsTimer;
   bool _clearingWebState = false;
   bool _restoringTabs = false;
+  StreamSubscription<bool>? _fipsEnabledSubscription;
+  bool _fipsEnabled = true;
+  int _fipsEnabledEpoch = 0;
 
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
+    _fipsEnabledSubscription =
+        widget.fipsRuntime?.enabledChanges.listen(_onFipsEnabledChanged);
+    unawaited(_loadFipsEnabled());
     if (_hasLocalFlightDeck) {
       _createTab(
         widget.localFlightDeckUrl,
@@ -159,6 +168,7 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
+    unawaited(_fipsEnabledSubscription?.cancel());
     HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
     unawaited(_persistTabsNow());
     _persistTabsTimer?.cancel();
@@ -168,6 +178,49 @@ class BrowserScreenState extends State<BrowserScreen> {
       tab.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _loadFipsEnabled() async {
+    final epoch = _fipsEnabledEpoch;
+    final enabled = await widget.fipsRuntime?.isEnabled;
+    if (epoch != _fipsEnabledEpoch) return;
+    if (mounted && enabled != null && enabled != _fipsEnabled) {
+      _onFipsEnabledChanged(enabled);
+    }
+  }
+
+  void _onFipsEnabledChanged(bool enabled) {
+    if (!mounted) return;
+    _fipsEnabledEpoch++;
+    _fipsEnabled = enabled;
+    for (final tab in _tabs) {
+      // Revoke epochs synchronously before any asynchronous document work.
+      tab.revokeSigningDocument();
+      if (!enabled && tab.isFips) {
+        tab.fipsDisabledUrl ??= tab.currentUrl ?? tab.addressController.text;
+        tab.message =
+            'FIPS is disabled. Enable it in Setup to open this service.';
+        unawaited(tab.controller.loadHtmlString(
+          '<html><body><h1>FIPS disabled</h1><p>Enable FIPS in Setup to open this service.</p></body></html>',
+          baseUrl: 'https://wingman.local/',
+        ));
+      } else if (enabled && tab.fipsDisabledUrl != null) {
+        final destination = tab.fipsDisabledUrl!;
+        tab.fipsDisabledUrl = null;
+        _loadAddressForTab(tab, destination);
+      } else if (!tab.isHome) {
+        // HTTPS signing remains usable with a fresh document token.
+        unawaited(_refreshDocumentProviders(tab, enabled));
+      }
+    }
+    setState(() {});
+  }
+
+  Future<void> _refreshDocumentProviders(BrowserTab tab, bool enabled) async {
+    final epoch = tab.signerDocumentEpoch;
+    if (enabled) await _injectGraspBridge(tab);
+    if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+    await _injectIfTrusted(tab);
   }
 
   @override
@@ -1167,7 +1220,10 @@ class BrowserScreenState extends State<BrowserScreen> {
             colour: tab.colour,
             url: tab.isHome
                 ? null
-                : (tab.currentUrl ?? tab.addressController.text).trim(),
+                : (tab.fipsDisabledUrl ??
+                        tab.currentUrl ??
+                        tab.addressController.text)
+                    .trim(),
             isHome: tab.isHome,
           ),
       ],
@@ -1231,6 +1287,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       return;
     }
     tab.revokeSigningDocument();
+    tab.fipsDisabledUrl = null;
     setState(() {
       tab.isHome = false;
       tab.currentUrl = uri.toString();
@@ -1246,6 +1303,34 @@ class BrowserScreenState extends State<BrowserScreen> {
     final epoch = tab.signerDocumentEpoch;
     unawaited(tab.nativeChannelsReady.then<void>((_) async {
       if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+      if (_isFipsAppUrl(uri.toString())) {
+        final enabled =
+            widget.fipsRuntime == null || await widget.fipsRuntime!.isEnabled;
+        if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) {
+          return;
+        }
+        if (!enabled || !_fipsEnabled) {
+          tab.fipsDisabledUrl = uri.toString();
+          tab.message =
+              'FIPS is disabled. Enable it in Setup to open this service.';
+          setState(() {});
+          return;
+        }
+        final failure =
+            await widget.onPrepareFipsNavigation?.call(uri.toString());
+        if (!mounted ||
+            tab.disposed ||
+            tab.signerDocumentEpoch != epoch ||
+            !_fipsEnabled) {
+          return;
+        }
+        if (failure != null) {
+          setState(() {
+            tab.message = failure;
+          });
+          return;
+        }
+      }
       await tab.controller.loadRequest(uri);
     }));
     _schedulePersistTabs();
@@ -1411,7 +1496,16 @@ class BrowserScreenState extends State<BrowserScreen> {
       return NavigationDecision.navigate;
     }
 
+    final tabAtStart = _tabById(tabId);
+    final epoch = tabAtStart?.signerDocumentEpoch;
+    if (!_fipsEnabled) return NavigationDecision.prevent;
     final failure = await prepare(request.url);
+    if (!_fipsEnabled ||
+        !mounted ||
+        _tabById(tabId) != tabAtStart ||
+        tabAtStart?.signerDocumentEpoch != epoch) {
+      return NavigationDecision.prevent;
+    }
     if (failure == null) return NavigationDecision.navigate;
     if (mounted) {
       final tab = _tabById(tabId);
@@ -1863,10 +1957,15 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (!await tab.nativeChannelsReady ||
         tab.disposed ||
         tab.graspBridge != null ||
-        widget.onPrepareFipsNavigation == null) {
+        widget.onPrepareFipsNavigation == null ||
+        !_fipsEnabled) {
       return;
     }
     final epoch = tab.signerDocumentEpoch;
+    if (widget.fipsRuntime != null && !await widget.fipsRuntime!.isEnabled) {
+      return;
+    }
+    if (!_fipsEnabled || tab.signerDocumentEpoch != epoch) return;
     final identity = widget.config.deviceNpub;
     final url = await tab.controller.currentUrl();
     if (!mounted ||
@@ -1882,6 +1981,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     }
     late final GraspFipsBrowserBridge bridge;
     bool current() =>
+        _fipsEnabled &&
         mounted &&
         _tabById(tab.id) == tab &&
         tab.signerDocumentEpoch == epoch &&
@@ -2123,6 +2223,7 @@ class BrowserScreenState extends State<BrowserScreen> {
             pageOriginForAuth !=
                 SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
     bool nativeContextValid() =>
+        ((meshTarget == null && !graspAuth && !directAuth) || _fipsEnabled) &&
         mounted &&
         _tabById(tabId) == tab &&
         _activeTabId == tabId &&
@@ -3956,6 +4057,7 @@ class BrowserTab {
   String? colour;
   String? currentUrl;
   String? message;
+  String? fipsDisabledUrl;
   bool isHome;
   GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;

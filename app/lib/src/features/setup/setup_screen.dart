@@ -374,6 +374,24 @@ class _SetupScreenState extends State<SetupScreen> {
               SelectableText('Node: ${status!.nodeNpub}'),
             ],
             const SizedBox(height: 12),
+            SwitchListTile(
+              key: const ValueKey('fips-enabled'),
+              title: const Text('Enable FIPS in WMAPP'),
+              subtitle: const Text(
+                  'FIPS-only services require this. HTTPS browsing works when disabled.'),
+              value: widget.fipsRuntime.enabledSnapshot ?? false,
+              onChanged: _busy || widget.fipsRuntime.enabledSnapshot == null
+                  ? null
+                  : (enabled) async {
+                      await _run(enabled ? 'Enabling FIPS…' : 'Disabling FIPS…',
+                          () async {
+                        final status =
+                            await widget.fipsRuntime.setEnabled(enabled);
+                        if (mounted) setState(() => _fipsStatus = status);
+                        return status.detail;
+                      });
+                    },
+            ),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -439,6 +457,7 @@ class _SetupScreenState extends State<SetupScreen> {
   String _fipsStateLabel(FipsRuntimeState? state) {
     return switch (state) {
       null => 'checking',
+      FipsRuntimeState.disabled => 'disabled',
       FipsRuntimeState.notBundled => 'not bundled',
       FipsRuntimeState.notInstalled => 'not installed',
       FipsRuntimeState.consentRequired => 'VPN consent required',

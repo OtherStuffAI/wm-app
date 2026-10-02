@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 
 class FakeAndroidFipsRuntime implements FipsAndroidRuntimeChannel {
@@ -96,6 +97,7 @@ extension on Object {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   FipsRuntimeService service(FakeAndroidFipsRuntime channel) =>
       FipsRuntimeService(
         isMacOS: false,
@@ -103,6 +105,27 @@ void main() {
         isAndroid: true,
         androidRuntime: channel,
       );
+
+  test('off/on waits for stale native start cleanup before a new owner',
+      () async {
+    final channel = FakeAndroidFipsRuntime()..startGate = Completer<void>();
+    final runtime = service(channel);
+    final starting = runtime.installOrRepair();
+    await Future<void>.delayed(Duration.zero);
+    expect(channel.startCalls, 1);
+    await runtime.stop();
+    final enabling = runtime.setEnabled(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(await runtime.isEnabled, isFalse);
+    channel.startGate!.complete();
+    expect((await starting).state, FipsRuntimeState.disabled);
+    await enabling;
+    expect(await runtime.isEnabled, isTrue);
+    expect(channel.status['state'], 'notInstalled');
+    channel.startGate = null;
+    expect((await runtime.ensureReadyForAppAccess()).isRunning, isTrue);
+    expect(channel.startCalls, 2);
+  });
 
   test('maps Android VPN consent state without desktop process inspection',
       () async {
@@ -155,7 +178,7 @@ void main() {
     final npub = 'npub1${List.filled(58, 'q').join()}';
 
     expect((await runtime.probe(npub)).ok, isTrue);
-    expect((await runtime.stop()).state, FipsRuntimeState.notInstalled);
+    expect((await runtime.stop()).state, FipsRuntimeState.disabled);
   });
 
   test('unexpected Android inspection errors become recoverable failures',

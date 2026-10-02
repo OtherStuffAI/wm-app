@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wingman_app/src/core/app_config.dart';
+import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
@@ -89,10 +90,14 @@ class AuthStore extends SignerStore {
 class Harness {
   Harness({
     this.realBridge,
+    this.fipsRuntime,
+    this.prepareFipsNavigation,
     this.signerVault,
     this.localFlightDeckUrl = 'https://flightdeck.example',
   });
   final NativeCoreBridge? realBridge;
+  final FipsRuntimeService? fipsRuntime;
+  final Future<String?> Function(String)? prepareFipsNavigation;
   final SignerVault? signerVault;
   final String localFlightDeckUrl;
   final signer = AuthSigner();
@@ -119,7 +124,8 @@ class Harness {
             onOpenSigner: () {},
             onOpenStatus: () {},
             signerVault: signerVault,
-            onPrepareFipsNavigation: (_) async => null,
+            fipsRuntime: fipsRuntime,
+            onPrepareFipsNavigation: prepareFipsNavigation ?? (_) async => null,
           ),
         ),
       );

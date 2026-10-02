@@ -2,12 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/setup/setup_screen.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   final npub = 'npub1${List.filled(58, 'q').join()}';
   const compatibleAttestation = '{"schema":2,"fipsVersion":"0.5.0",'
       '"rendezvousApp":"wingman-fips-poc-v1",'
@@ -17,6 +19,35 @@ void main() {
       '"udpAcceptConnections":true,"udpOutboundOnly":false,'
       '"bootstrapPeerNpub":"${FipsRuntimeService.bootstrapPeerNpub}",'
       '"bootstrapPeerAddress":"${FipsRuntimeService.bootstrapPeerAddress}"}';
+
+  testWidgets('persisted desktop off is shown and HTTPS remains explained',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(
+        {FipsRuntimeService.enabledPreferenceKey: false});
+    final runtime = FipsRuntimeService(
+        isMacOS: true,
+        processRunner: (_, __) =>
+            throw StateError('disabled must not run processes'));
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SetupScreen(
+      config: AppConfig.defaults(),
+      bridge: NativeCoreBridge(),
+      fipsRuntime: runtime,
+      onConfigChanged: (_) {},
+      onClearBrowserData: () async {},
+      onOpenFipsApp: (_) {},
+    ))));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('fips-enabled'));
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    expect(find.text('disabled'), findsOneWidget);
+    expect(find.textContaining('HTTPS browsing works when disabled'),
+        findsOneWidget);
+    expect(find.text('Install or repair'), findsNothing);
+  });
 
   testWidgets(
       'Open FIPS app activates bundled runtime once and remains safe to repeat',

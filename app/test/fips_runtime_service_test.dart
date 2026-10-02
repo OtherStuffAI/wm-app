@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   final npub = 'npub1${List.filled(58, 'q').join()}';
   const compatibleAttestation = '{"schema":2,"fipsVersion":"0.5.0",'
       '"rendezvousApp":"wingman-fips-poc-v1",'
@@ -14,6 +16,189 @@ void main() {
       '"udpAcceptConnections":true,"udpOutboundOnly":false,'
       '"bootstrapPeerNpub":"${FipsRuntimeService.bootstrapPeerNpub}",'
       '"bootstrapPeerAddress":"${FipsRuntimeService.bootstrapPeerAddress}"}';
+
+  test(
+      'desktop off persists across services and never touches system lifecycle',
+      () async {
+    final calls = <String>[];
+    FipsRuntimeService create() => FipsRuntimeService(
+          isMacOS: true,
+          processRunner: (executable, arguments) async {
+            calls.add('$executable $arguments');
+            return ProcessResult(0, 0, '', '');
+          },
+        );
+    final service = create();
+    expect((await service.stop()).state, FipsRuntimeState.disabled);
+    final relaunched = create();
+    expect(await relaunched.isEnabled, isFalse);
+    expect((await relaunched.inspect()).state, FipsRuntimeState.disabled);
+    expect((await relaunched.ensureReadyForAppAccess()).state,
+        FipsRuntimeState.disabled);
+    expect(
+        (await relaunched.installOrRepair()).state, FipsRuntimeState.disabled);
+    expect(calls, isEmpty);
+    await relaunched.setEnabled(true);
+    expect(await create().isEnabled, isTrue);
+  });
+
+  test('off cancels bootstrap wait and prevents any more peer commands',
+      () async {
+    final peerRead = Completer<void>();
+    var peerCalls = 0;
+    var enabled = true;
+    final service = FipsRuntimeService(
+      isMacOS: true,
+      bundledPackagePath: '/bundle/fips.pkg',
+      readEnabled: () async => enabled,
+      writeEnabled: (value) async {
+        enabled = value;
+      },
+      fileExists: (_) async => true,
+      readTextFile: (_) async => compatibleAttestation,
+      processRunner: (executable, arguments) async {
+        if (arguments.contains('--version')) {
+          return ProcessResult(0, 0, '0.5.0', '');
+        }
+        if (arguments.contains('status')) {
+          return ProcessResult(0, 0,
+              '{"state":"running","tun_state":"active","persistent":true}', '');
+        }
+        if (arguments.contains('peers')) {
+          peerCalls += 1;
+          if (!peerRead.isCompleted) peerRead.complete();
+          return ProcessResult(0, 0, '{"peers":[]}', '');
+        }
+        return ProcessResult(0, 0, '', '');
+      },
+    );
+    final starting = service.ensureReadyForAppAccess();
+    await peerRead.future;
+    await service.stop();
+    expect((await starting.timeout(const Duration(seconds: 1))).state,
+        FipsRuntimeState.disabled);
+    expect(peerCalls, 1);
+    expect(enabled, isFalse);
+  });
+
+  test('failed preference write leaves FIPS access closed', () async {
+    final service = FipsRuntimeService(
+        isMacOS: true,
+        readEnabled: () async => true,
+        writeEnabled: (_) async {
+          throw StateError('storage failed');
+        });
+    expect((await service.setEnabled(true)).state, FipsRuntimeState.failed);
+    expect(await service.isEnabled, isFalse);
+    expect((await service.ensureReadyForAppAccess()).state,
+        FipsRuntimeState.disabled);
+  });
+
+  test('stale preference load cannot reopen a disabled runtime', () async {
+    final stored = Completer<bool>();
+    final service = FipsRuntimeService(
+        isMacOS: true,
+        readEnabled: () => stored.future,
+        writeEnabled: (_) async {});
+    final loading = service.isEnabled;
+    await service.stop();
+    stored.complete(true);
+    expect(await loading, isFalse);
+    expect(await service.isEnabled, isFalse);
+  });
+
+  test('setting writes serialize and last off wins an in-flight enable',
+      () async {
+    final firstWrite = Completer<void>();
+    final writes = <bool>[];
+    final service = FipsRuntimeService(
+        isMacOS: true,
+        readEnabled: () async => false,
+        writeEnabled: (value) async {
+          writes.add(value);
+          if (writes.length == 1) await firstWrite.future;
+        });
+    final enabling = service.setEnabled(true);
+    await Future<void>.delayed(Duration.zero);
+    final disabling = service.stop();
+    firstWrite.complete();
+    expect((await enabling).state, FipsRuntimeState.disabled);
+    expect((await disabling).state, FipsRuntimeState.disabled);
+    expect(writes, [true, false]);
+    expect(await service.isEnabled, isFalse);
+  });
+
+  test('bootstrap connect failure cooldown avoids repeating process work',
+      () async {
+    final commands = <List<String>>[];
+    final service = FipsRuntimeService(
+        isMacOS: true,
+        fileExists: (_) async => true,
+        readTextFile: (_) async => compatibleAttestation,
+        processRunner: (_, arguments) async {
+          commands.add(arguments);
+          if (arguments.contains('--version')) {
+            return ProcessResult(0, 0, '0.5.0', '');
+          }
+          if (arguments.contains('status')) {
+            return ProcessResult(
+                0,
+                0,
+                '{"state":"running","tun_state":"active","persistent":true}',
+                '');
+          }
+          if (arguments.contains('peers')) {
+            return ProcessResult(0, 0, '{"peers":[]}', '');
+          }
+          return ProcessResult(0, 1, '', 'connection unavailable');
+        });
+    expect((await service.ensureReadyForAppAccess()).state,
+        FipsRuntimeState.degraded);
+    final count = commands.length;
+    expect((await service.ensureReadyForAppAccess()).state,
+        FipsRuntimeState.degraded);
+    expect(commands.length, count);
+    await service.stop();
+    await service.setEnabled(true);
+    await service.ensureReadyForAppAccess();
+    expect(commands.where((args) => args.contains('connect')).length, 2);
+  });
+
+  test('off interrupts active bootstrap timer instead of awaiting its deadline',
+      () async {
+    final connectedCommand = Completer<void>();
+    var peers = 0;
+    final service = FipsRuntimeService(
+        isMacOS: true,
+        fileExists: (_) async => true,
+        readTextFile: (_) async => compatibleAttestation,
+        processRunner: (_, arguments) async {
+          if (arguments.contains('--version')) {
+            return ProcessResult(0, 0, '0.5.0', '');
+          }
+          if (arguments.contains('status')) {
+            return ProcessResult(
+                0,
+                0,
+                '{"state":"running","tun_state":"active","persistent":true}',
+                '');
+          }
+          if (arguments.contains('peers')) {
+            peers += 1;
+            return ProcessResult(0, 0, '{"peers":[]}', '');
+          }
+          if (arguments.contains('connect')) connectedCommand.complete();
+          return ProcessResult(0, 0, '', '');
+        });
+    final operation = service.ensureReadyForAppAccess();
+    await connectedCommand.future;
+    // Flush the connect continuation so the retry timer is genuinely active.
+    await Future<void>.delayed(Duration.zero);
+    await service.stop();
+    expect((await operation.timeout(const Duration(milliseconds: 100))).state,
+        FipsRuntimeState.disabled);
+    expect(peers, 1);
+  });
 
   test('constructs an authorization command without shell-interpolating paths',
       () {
