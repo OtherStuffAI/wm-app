@@ -4,6 +4,10 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val androidChannel = providers.environmentVariable("WMAPP_ANDROID_CHANNEL").orNull ?: "stable"
+require(androidChannel in setOf("stable", "nightly")) { "Unknown Android release channel" }
+val nightly = androidChannel == "nightly"
+
 val repositoryRoot = rootProject.projectDir.parentFile.parentFile
 val fipsNativeOutput = file("src/main/jniLibs")
 
@@ -71,7 +75,8 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.wingmanbefree.wingman_app"
+        applicationId = if (nightly) "com.wingmanbefree.wingman_app.nightly" else "com.wingmanbefree.wingman_app"
+        manifestPlaceholders["wingmanAppLabel"] = if (nightly) "Wingman Nightly" else "Wingman App"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

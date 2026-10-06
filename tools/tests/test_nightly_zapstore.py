@@ -1,0 +1,30 @@
+import importlib.util
+from pathlib import Path
+import unittest
+spec=importlib.util.spec_from_file_location('nightly',Path(__file__).resolve().parents[1]/'nightly_zapstore.py')
+n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+class NightlyTests(unittest.TestCase):
+    def test_monotonic_over_local_and_remote(self):
+        ledger={'schema':1,'runs':{'yesterday':{'stage':'published','version_code':2000000001}}}
+        self.assertEqual(n.reserve(ledger,'today','session',2000000005)['version_code'],2000000006)
+    def test_duplicate_and_uncertain_delivery_block(self):
+        ledger={'schema':1,'runs':{}}
+        n.reserve(ledger,'today','session',0)
+        with self.assertRaisesRegex(ValueError,'already'):n.reserve(ledger,'today','session',0)
+        for stage in ('reserved','building','built','prepared','delivery_pending'):
+            ledger['runs']['today']['stage']=stage
+            with self.assertRaisesRegex(ValueError,'uncertain'):n.reserve(ledger,'tomorrow','other',0)
+    def test_invalid_history_and_owner_fail_closed(self):
+        for maximum in (-1,False,1.2,None):
+            with self.assertRaises(ValueError):n.reserve({'schema':1,'runs':{}},'today','session',maximum)
+        with self.assertRaises(ValueError):n.reserve({'schema':1,'runs':{}},'today',None,0)
+    def test_version_limit(self):
+        with self.assertRaises(ValueError):n.reserve({'schema':1,'runs':{}},'today','session',2100000000)
+    def test_package_isolation_and_provider_scope(self):
+        root=Path(__file__).resolve().parents[2]
+        gradle=(root/'app/android/app/build.gradle.kts').read_text()
+        self.assertIn('if (nightly) "'+n.PACKAGE+'" else "com.wingmanbefree.wingman_app"',gradle)
+        manifest=(root/'app/android/app/src/main/AndroidManifest.xml').read_text()
+        self.assertIn('${applicationId}.drivefiles',manifest)
+        self.assertIn('com.wingmanbefree.wingman_app.MainActivity',manifest)
+if __name__=='__main__':unittest.main()
