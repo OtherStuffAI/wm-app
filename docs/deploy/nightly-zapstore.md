@@ -25,7 +25,8 @@ future APK updates require the same certificate.
 2. Set the verified `FLIGHT_DECK_PG_APP_NPUB` from scoped Flight Deck context.
    Run `python3 tools/nightly_zapstore.py build`. It checks no TestFlight claim
    is active, queries relay history, reserves above all local/remote numbers,
-   builds Flight Deck then Android from isolated committed archives, validates
+   derives the marketing version from the exact committed pubspec, and builds
+   Flight Deck then Android from isolated committed archives. It validates
    Flight Deck public source/tests/dist, Flutter analysis/tests and ARM64 APK.
    Generated files never modify shared source. Local reservations never expire.
    For independently authorized first-publication setup only,
@@ -55,12 +56,26 @@ future APK updates require the same certificate.
    exact WMAPP/Flight Deck commits, source archive hashes, FD build identity and
    asset hashes, APK hash/version/package/certificate and publisher identity.
    Never include operational logs, local paths, credentials or device identifiers.
-6. Run `publish` once. It records `delivery_pending` before network mutations,
-   uploads APK/icon through the broker's Blossom client, retrieves public bytes,
-   verifies the downloaded APK certificate/hash, publishes signed proof and
-   release events to `wss://relay.zapstore.dev`, and reads every event back.
+6. Run `prepare-public` after `public-assets`. It uploads the icon to the same
+   authorized GitHub release, downloads/verifies that icon and the public APK,
+   and broker-signs events with exact GitHub asset URLs. Then run `publish-public`
+   once. It records `delivery_pending` before relay mutation, publishes the app
+   event first so repository proof can whitelist the publisher, then the proof,
+   asset and release events to `wss://relay.zapstore.dev`, and reads every event back.
+   GitHub release hosting is an independently authorized asset path supported by
+   NIP-82; it performs no CDN authentication or policy changes. The optional
+   `publish` action uses broker-authorized Blossom upload only when separately
+   granted. A denied CDN host never falls back to generic kind-24242 signing.
+   For a narrowly authorized CDN grant, scope `blossom.authorize` to upload only,
+   `https://cdn.zapstore.dev`, Rick's identity, this Nightly package/purpose and
+   exact APK/icon hashes/sizes; never widen unrelated session capabilities.
    Only all gates passing produce `published`. A receipt alone is insufficient.
    Independently verify the public listing and linked release/asset records.
+   Release download metadata uses the exact APK hash with
+   `https://cdn.zapstore.dev/<hash>?redirect=true`; verify a GET redirects to the
+   signed GitHub asset URL. A bare CDN hash or a HEAD request may return 404.
+   An intentional metadata correction requires confirmed prior delivery and
+   `amend-listing`; retain `listing_update_pending` on uncertainty.
 7. On uncertainty use `readback --day <original-day>` and inspect the exact
    retained signed IDs and public APK. Never retry upload or publication, repair
    ledger state, reuse a version code, or infer success from upload receipts.

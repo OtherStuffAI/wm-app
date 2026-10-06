@@ -28,7 +28,8 @@ def command(args, cwd=ROOT, env=None):
 
 
 def digest(path):
-    return hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def safe_private(path):
@@ -47,7 +48,8 @@ def save(path, value):
     tmp.write_text(json.dumps(value, indent=2) + '\n'); tmp.chmod(0o600); tmp.replace(path)
 
 
-def reserve(ledger, day, owner, remote_max):
+def reserve(ledger, day, owner, remote_max, base_version):
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',base_version): raise ValueError('Exact committed source marketing version required.')
     if not owner or type(remote_max) is not int or remote_max < 0: raise ValueError('Verified owner/history required.')
     if ledger.get('schema') != 1: raise ValueError('Unsupported ledger.')
     runs = ledger['runs']
@@ -56,7 +58,7 @@ def reserve(ledger, day, owner, remote_max):
         raise ValueError('Prior active or uncertain delivery requires exact reconciliation; no automatic expiry.')
     code = max([remote_max, int(dt.datetime.now(dt.timezone.utc).timestamp())] + [x['version_code'] for x in runs.values()]) + 1
     if code > 2100000000: raise ValueError('Android version code limit reached.')
-    runs[day] = {'owner': owner, 'stage': 'reserved', 'version_code': code, 'version_name': f'0.1.6-nightly.{day.replace("-", "")}.{code}'}
+    runs[day] = {'owner': owner, 'stage': 'reserved', 'version_code': code, 'version_name': f'{base_version}-nightly.{day.replace("-", "")}.{code}'}
     return runs[day]
 
 
@@ -91,6 +93,12 @@ def private_key_reference(path):
         raise ValueError('Signing reference must be an owner-only regular file without symlinks.')
 
 
+def require_resume(s, owner, run):
+    if not owner or s['owner']!=owner: raise ValueError('Only the reservation owner can resume.')
+    if s['stage']!='building' or any((run/x).exists() for x in ('app-release.apk','signed.json','proof-signed.json','broker-upload.log','relay-publish.log','signed-public-assets.json')):
+        raise ValueError('Resume allowed only before signing/delivery, for retained exact source snapshots.')
+
+
 def testflight_active(ledger):
     if ledger.get('schema') != 1 or not isinstance(ledger.get('days'), dict):
         raise ValueError('Invalid TestFlight coordination ledger.')
@@ -99,7 +107,7 @@ def testflight_active(ledger):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'resume-build', 'publish', 'readback', 'status'])
+    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'amend-listing', 'prepare-public', 'publish-public', 'resume-build', 'publish', 'readback', 'status'])
     parser.add_argument('--day', default=dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat())
     parser.add_argument('--committed-source', action='store_true', help='First-publication only: preserve incompatible active edits and validate exact committed snapshots.')
     parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
@@ -108,11 +116,13 @@ def main():
     safe_private(PRIVATE); PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name in ('.release.lock', 'ledger.json'):
         if (PRIVATE/name).is_symlink(): raise ValueError('Unsafe release storage.')
+    if a.action=='status':
+        path=PRIVATE/'ledger.json'
+        print(path.read_text() if path.exists() else json.dumps({'schema':1,'runs':{}}));return
     with (PRIVATE/'.release.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ledger_path = PRIVATE/'ledger.json'
         ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {'schema': 1, 'runs': {}}
-        if a.action == 'status': print(json.dumps(ledger, indent=2)); return
         run = PRIVATE/a.day
         env = {**os.environ, 'JAVA_HOME': JAVA, 'AUTOPILOT_REPO': str(ROOT.parent/'autopilot'), 'RUSTUP_TOOLCHAIN':'stable'}
         def logged(args, cwd, label):
@@ -133,7 +143,10 @@ def main():
                 if command(['git','status','--porcelain'],repo) and not a.committed_source: raise ValueError('Commit validated compatible source first; preserve concurrent work.')
             private_key_reference(KEYSTORE); private_key_reference(PASSWORD)
             history=json.loads(command(['bun',ROOT/'tools/zapstore_broker.ts','history',PRIVATE]))
-            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode']); s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
+            source_commit=command(['git','rev-parse','HEAD'])
+            source_version=re.search(r'^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+',command(['git','show',source_commit+':app/pubspec.yaml']),re.MULTILINE)
+            if not source_version: raise ValueError('Committed source version missing.')
+            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode'],source_version.group(1));s['planned_source_commit']=source_commit; s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
             run.mkdir(mode=0o700);update('building')
             fd=run/'flightdeck';wm=run/'wmapp'
             s['flightdeck_commit']=snapshot(a.flightdeck,fd);update('building')
@@ -144,6 +157,7 @@ def main():
             for script in ('check:public-source','test','build','verify:dist'): logged(['bun','run',script],fd,'fd-'+script.replace(':','-'))
             s['flightdeck_version']=json.loads((fd/'dist/version.json').read_text());s['flightdeck_assets']=assets(fd/'dist')
             if s['flightdeck_version']['buildId'] != env['FLIGHTDECK_BUILD_ID']: raise ValueError('Flight Deck build ID mismatch.')
+            if command(['git','rev-parse','HEAD'])!=s['planned_source_commit']: raise ValueError('WMAPP commit moved during Flight Deck validation; preserve and stop.')
             s['source_commit']=snapshot(ROOT,wm);update('building')
             logged([wm/'tools/update_flightdeck_bundle.sh','--use-existing-dist'],wm,'bundle')
             if assets(wm/'app/assets/flightdeck') != s['flightdeck_assets']: raise ValueError('Bundled assets differ.')
@@ -153,12 +167,13 @@ def main():
             import shutil
             shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
             s['apk_sha256']=digest(run/'app-release.apk')
+            logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','android-unit-tests')
             update('built')
         else:
             s=ledger['runs'][a.day]
             if a.action!='readback' and s['owner']!=os.environ.get('SESSION_ID'): raise ValueError('Only reservation owner can mutate release.')
             if a.action=='resume-build':
-                if s['stage']!='building' or any((run/x).exists() for x in ('app-release.apk','signed.json','proof-signed.json','broker-upload.log','relay-publish.log')): raise ValueError('Resume allowed only before signing/delivery, for retained exact source snapshots.')
+                require_resume(s,os.environ.get('SESSION_ID'),run)
                 fd=run/'flightdeck';wm=run/'wmapp'
                 for name,key in [('flightdeck','flightdeck_commit'),('wmapp','source_commit')]:
                     proof=json.loads((run/(name+'-source.json')).read_text())
@@ -173,7 +188,8 @@ def main():
                 for args,label in [(['flutter','analyze'],'resume-analyze'),(['flutter','test'],'resume-flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'resume-apk-build')]: logged(args,wm/'app',label)
                 import shutil
                 shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
-                s['apk_sha256']=digest(run/'app-release.apk');update('built')
+                s['apk_sha256']=digest(run/'app-release.apk')
+                logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','resume-android-unit-tests');update('built')
             elif a.action=='prepare':
                 if s['stage']!='built': raise ValueError('Preparation requires built state.')
                 private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
@@ -224,6 +240,29 @@ def main():
                 for filename in ('app-release.apk','wmapp.tar','flightdeck.tar','build-proof.json'):
                     if digest(public/filename)!=digest(run/filename): raise ValueError('Public GitHub asset hash mismatch.')
                 update('prepared')
+            elif a.action=='amend-listing':
+                if s['stage']!='published': raise ValueError('Only a confirmed release can receive an intentional listing metadata correction.')
+                update('listing_update_pending')
+                logged(['bun',ROOT/'tools/zapstore_broker.ts','amend-listing',run,s['certificate_sha256']],ROOT,'listing-amendment')
+                update('published')
+            elif a.action=='prepare-public':
+                if s['stage']!='prepared' or not s.get('public_release_url'): raise ValueError('Verified public source release required.')
+                if (run/'github-icon.log').exists(): raise ValueError('Reconcile existing icon upload before retry.')
+                release=s['public_release_url'].split('/')[-1]
+                logged(['gh','release','upload',release,'--repo','OtherStuffAI/wingman-nightly',run/'icon.png'],ROOT,'github-icon')
+                icon_dir=run/'github-icon-readback';icon_dir.mkdir(mode=0o700)
+                logged(['gh','release','download',release,'--repo','OtherStuffAI/wingman-nightly','--pattern','icon.png','--dir',icon_dir],ROOT,'github-icon-readback')
+                if digest(icon_dir/'icon.png')!=digest(run/'icon.png'): raise ValueError('Public icon hash mismatch.')
+                import prepare_zapstore_release as prep
+                prep.EXPECTED_PACKAGE_ID=PACKAGE;prep.EXPECTED_CERTIFICATE_SHA256=s['certificate_sha256']
+                prep.ApkInspector().inspect(run/'github-readback/app-release.apk',run/'icon.png')
+                logged(['bun',ROOT/'tools/zapstore_broker.ts','sign-public',run,s['certificate_sha256']],ROOT,'broker-sign-public')
+                s['asset_host']='github';s['icon_sha256']=digest(run/'icon.png');update('prepared_public')
+            elif a.action=='publish-public':
+                if s['stage']!='prepared_public': raise ValueError('Verified public GitHub assets required; never retry delivery.')
+                update('delivery_pending')
+                logged(['bun',ROOT/'tools/zapstore_broker.ts','publish-public',run,s['certificate_sha256']],ROOT,'relay-publish-public')
+                update('published')
             elif a.action=='publish':
                 if s['stage']!='prepared' or not s.get('public_release_url'): raise ValueError('Verified public source assets required; never retry delivery.')
                 update('delivery_pending')
