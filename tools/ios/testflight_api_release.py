@@ -12,6 +12,18 @@ def numbers(h):
     return [int(b['attributes']['version']) for b in h['builds']] + [int(u['attributes']['cfBundleVersion']) for u in h['uploads']]
 
 
+def latest_version(r, h):
+    versions = [v['attributes']['version'] for v in h['versions'] if v['attributes']['platform'] == 'IOS']
+    versions += [u['attributes']['cfBundleShortVersionString'] for u in h['uploads']]
+    return max(versions, key=r.version)
+
+
+def reservation_gate(r, h, s):
+    r.require(not h['pending_upload_ids'] and not h.get('pending_build_ids'), 'Apple history has pending deliveries.')
+    r.require(s['build'] > max(numbers(h), default=0), 'Apple build history changed; reconcile and reserve higher.')
+    r.require(r.version(s['version']) >= r.version(latest_version(r, h)), 'Apple marketing version changed; rebuild with current version.')
+
+
 PENDING = {'upload_pending', 'uploaded_processing', 'api_processing', 'api_upload_uncertain',
            'api_action_required', 'uploaded_action_required', 'api_assigned_ready', 'api_failed_processing'}
 
@@ -52,9 +64,7 @@ def reserve(r, run, client):
         r.require(s.get('stage') not in PENDING or client.local_reconciled(path),
                   'Local pending delivery blocks all new uploads; reconcile exact run first.')
     r.require(not run.exists(), 'Run already reserved; resume without a new upload.')
-    versions = [v['attributes']['version'] for v in h['versions'] if v['attributes']['platform'] == 'IOS']
-    versions += [u['attributes']['cfBundleShortVersionString'] for u in h['uploads']]
-    version = max(versions, key=r.version)
+    version = latest_version(r, h)
     s = {'schema': 1, 'version': version, 'build': max(numbers(h) + local + [0]) + 1,
          'app_id': APP, 'stage': 'initialized', 'audience': 'internal', 'group': r.GROUP, 'api': True}
     run.mkdir(mode=0o700)
@@ -100,7 +110,7 @@ def execute(r, a, run):
         r.require(s['stage'] == 'initialized', 'Build already attempted; preserve evidence.')
         r.require(os.environ.get('FLIGHT_DECK_PG_APP_NPUB'), 'Verified FLIGHT_DECK_PG_APP_NPUB required.')
         h = client.preflight()
-        r.require(not h['pending_upload_ids'] and not h.get('pending_build_ids') and s['build'] > max(numbers(h), default=0), 'Apple history changed; reserve a new higher run after reconciliation.')
+        reservation_gate(r, h, s)
         delivery_barrier(r, run, client)
         s['stage'] = 'building'; r.write(state, s)
         # Flight Deck is built first from the exact committed snapshot.
@@ -140,7 +150,7 @@ def execute(r, a, run):
     elif a.action == 'api-upload':
         r.require(s['stage'] == 'exported', 'Upload attempted already; readback only, never retry.')
         h = client.preflight()
-        r.require(not h['pending_upload_ids'] and not h.get('pending_build_ids') and s['build'] > max(numbers(h), default=0), 'Apple history changed or uncertain.')
+        reservation_gate(r, h, s)
         delivery_barrier(r, run, client)
         r.no_other_delivery(run, s)
         r.require(r.validate_artifacts(run, s) == s['artifact'], 'Artifact changed.')

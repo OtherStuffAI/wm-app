@@ -163,7 +163,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):api.delivery_barrier(release,None,c)
 
     def test_upload_persists_barrier_before_command_and_no_retry(self):
-        c=client();c.preflight=Mock(return_value={'pending_upload_ids':[],'builds':[build()],'uploads':[]})
+        c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],'uploads':[]})
         c.xcode_args=Mock(return_value=['-authenticationKeyPath','private-reference'])
         with tempfile.TemporaryDirectory() as d:
             run=Path(d);s={'api':True,'app_id':APP,'audience':'internal','build':11,'version':'0.1.7','stage':'exported','artifact':{'sha256':'fixture'}}
@@ -186,6 +186,12 @@ class RunnerTests(unittest.TestCase):
             c.readback.assert_called_once_with('0.1.7',11,assign=False)
             self.assertEqual(release.read(run/'state.json')['stage'],'api_processing')
 
+    def test_current_marketing_version_drift_blocks_before_packaging_or_upload(self):
+        h={'pending_upload_ids':[],'builds':[build()],'uploads':[],
+           'versions':[{'attributes':{'platform':'IOS','version':'0.2.0'}}]}
+        with self.assertRaises(ValueError):api.reservation_gate(release,h,{'build':11,'version':'0.1.7'})
+        api.reservation_gate(release,h,{'build':11,'version':'0.2.0'})
+
     def test_api_dry_run_rejected_before_client_or_mutations(self):
         for action in ['api-reserve','api-build','api-upload','api-readback']:
             with patch.object(api,'Client') as make_client:
@@ -203,7 +209,7 @@ class RunnerTests(unittest.TestCase):
             c.readback.assert_not_called()
 
     def test_upload_preconditions_with_reconciled_cancelled_local_build9(self):
-        c=client();c.preflight=Mock(return_value={'pending_upload_ids':[],'builds':[build()],
+        c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],
             'uploads':[upload('9','0.1.7'),upload('10','0.1.7','COMPLETE')]})
         c.local_reconciled=Mock(return_value=True);c.xcode_args=Mock(return_value=[])
         with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'):
@@ -252,7 +258,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(release.read(run/'state.json')['stage'],'initialized')
 
     def test_build_orders_isolated_fd_before_wm_and_validates_signatures(self):
-        c=client();c.preflight=Mock(return_value={'pending_upload_ids':[],'builds':[build()],'uploads':[]})
+        c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],'uploads':[]})
         c.xcode_args=Mock(return_value=[])
         with tempfile.TemporaryDirectory() as d:
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
