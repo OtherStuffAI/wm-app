@@ -78,6 +78,7 @@ def snapshot(r, repo, target):
 
 
 def execute(r, a, run):
+    r.require(not getattr(a, 'dry_run', False), '--dry-run is not supported for API actions; use api-preflight or read-only readback.')
     client = Client(a.auth_reference)
     if a.action == 'api-preflight':
         h = client.preflight()
@@ -85,7 +86,8 @@ def execute(r, a, run):
                           'builds': numbers(h), 'pending_upload_ids': h['pending_upload_ids'],
                           'audience': h['audience'], 'upload_performed': False}, indent=2))
         return
-    if a.action in ('api-reserve', 'api-build', 'api-upload'):
+    if a.action in ('api-reserve', 'api-build', 'api-upload') or (
+            a.action == 'api-readback' and not getattr(a, 'read_only', False)):
         require_daily_claim()
     if a.action == 'api-reserve':
         print(json.dumps(reserve(r, run, client), indent=2))
@@ -155,7 +157,7 @@ def execute(r, a, run):
         r.require(s['stage'] in ('upload_pending', 'api_processing', 'api_upload_uncertain', 'api_action_required', 'api_assigned_ready', 'api_testing', 'api_failed_processing'), 'Upload intent required.')
         deadline = time.monotonic() + a.poll_seconds
         while True:
-            result = client.readback(s['version'], s['build'], assign=True)
+            result = client.readback(s['version'], s['build'], assign=not getattr(a, 'read_only', False))
             stages = {'upload_pending': 'api_upload_uncertain', 'uploaded_processing': 'api_processing',
                       'uploaded_action_required': 'api_action_required', 'api_testing': 'api_testing',
                       'processed_awaiting_tester': 'api_assigned_ready'}

@@ -181,10 +181,35 @@ class RunnerTests(unittest.TestCase):
         c=client();c.readback=Mock(return_value={'stage':'uploaded_processing','build_id':'exact'})
         with tempfile.TemporaryDirectory() as d:
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal','build':11,'version':'0.1.7','stage':'upload_pending'})
-            a=SimpleNamespace(action='api-readback',auth_reference='unused',poll_seconds=0)
+            a=SimpleNamespace(action='api-readback',auth_reference='unused',poll_seconds=0,read_only=True)
             with patch.object(api,'Client',return_value=c), patch.object(release,'project_settings'), contextlib.redirect_stdout(io.StringIO()):api.execute(release,a,run)
-            c.readback.assert_called_once_with('0.1.7',11,assign=True)
+            c.readback.assert_called_once_with('0.1.7',11,assign=False)
             self.assertEqual(release.read(run/'state.json')['stage'],'api_processing')
+
+    def test_api_dry_run_rejected_before_client_or_mutations(self):
+        for action in ['api-reserve','api-build','api-upload','api-readback']:
+            with patch.object(api,'Client') as make_client:
+                with self.assertRaises(ValueError):api.execute(release,SimpleNamespace(action=action,dry_run=True),Path('/unused'))
+                make_client.assert_not_called()
+            with patch.object(sys,'argv',['testflight_release.py',action,'--run','unused','--dry-run']), patch.object(nightly,'safe_private'), patch.object(release,'execute') as execute:
+                with self.assertRaises(ValueError):release.main()
+                execute.assert_not_called()
+
+    def test_assignment_readback_requires_claim_before_apple_mutation(self):
+        c=client();c.readback=Mock()
+        a=SimpleNamespace(action='api-readback',auth_reference='unused',read_only=False)
+        with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim',side_effect=ValueError('claim required')):
+            with self.assertRaises(ValueError):api.execute(release,a,Path('/unused'))
+            c.readback.assert_not_called()
+
+    def test_reviewed_old_build_does_not_block_higher_upload_same_build_still_blocks(self):
+        c=client();c.local_reconciled=Mock(return_value=True)
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'):
+            root=Path(d);old=root/'old';old.mkdir();release.write(old/'state.json',{'app_id':APP,'build':9,'stage':'upload_pending'})
+            new=root/'new';new.mkdir()
+            api.delivery_barrier(release,new,c)
+            release.no_other_delivery(new,{'app_id':APP,'build':11})
+            with self.assertRaises(ValueError):release.no_other_delivery(new,{'app_id':APP,'build':9})
 
     def test_state_symlink_cannot_overwrite_evidence(self):
         with tempfile.TemporaryDirectory() as d:

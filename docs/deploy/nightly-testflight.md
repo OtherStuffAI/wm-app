@@ -90,7 +90,9 @@ creating a rule; an empty file list alone does not establish cancellation.
    `api-reserve` with the same run name. Reservation queries fresh history,
    applies Apple/local pending barriers, and reserves a number greater than
    all build/upload/local numbers under the global release lock. API reserve,
-   build and upload require this session's active current Perth daily claim.
+   build, upload and assignment-capable readback require this session's active
+   current Perth daily claim. All API actions reject `--dry-run`; `api-preflight`
+   is read-only.
    Never reuse uncertain numbers or re-upload a pending delivery.
 8. Create isolated snapshots of the exact committed Flight Deck and WMAPP trees
    under ignored private evidence. Use `git archive` or a private local clone;
@@ -110,7 +112,9 @@ creating a rule; an empty file list alone does not establish cancellation.
     internal group, sole Pete and manual distribution remain mandatory. No
     external group, public link, tester invitation or production submission.
     Run `api-readback --run <unique-name> --poll-seconds 600` for bounded processing
-    and exact group assignment/readback. Resolve actual standard encryption beyond
+    and exact group assignment/readback. Recovery without an active claim uses
+    `api-readback --read-only`; it checks status and writes local evidence but
+    cannot assign groups. Resolve actual standard encryption beyond
     OS crypto accurately using the documented inventory and authorized territories.
     The API never patches encryption flags or reuses an older declaration. If
     Apple requires compliance action, stop and report it; do not invent exemptions
