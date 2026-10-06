@@ -202,6 +202,28 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):api.execute(release,a,Path('/unused'))
             c.readback.assert_not_called()
 
+    def test_upload_preconditions_with_reconciled_cancelled_local_build9(self):
+        c=client();c.preflight=Mock(return_value={'pending_upload_ids':[],'builds':[build()],
+            'uploads':[upload('9','0.1.7'),upload('10','0.1.7','COMPLETE')]})
+        c.local_reconciled=Mock(return_value=True);c.xcode_args=Mock(return_value=[])
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'):
+            root=Path(d);old=root/'cancelled-build9';old.mkdir()
+            old_state={'app_id':APP,'build':9,'version':'0.1.7','stage':'upload_pending'}
+            release.write(old/'state.json',old_state);original=(old/'state.json').read_bytes()
+            run=root/'nightly11';run.mkdir();state={'api':True,'app_id':APP,'audience':'internal',
+                'build':11,'version':'0.1.7','stage':'exported','artifact':{'sha256':'fixture'}}
+            release.write(run/'state.json',state)
+            def upload_once(args,upload_run,label):
+                self.assertEqual(release.read(upload_run/'state.json')['stage'],'upload_pending')
+                self.assertEqual(label,'upload')
+            # Both real barriers run here; only signature checking and the actual
+            # Xcode mutation are substituted. The cancelled state is untouched.
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(release,'project_settings'), patch.object(release,'validate_artifacts',return_value=state['artifact']), patch.object(release,'logged',side_effect=upload_once) as logged:
+                api.execute(release,SimpleNamespace(action='api-upload',auth_reference='unused'),run)
+                logged.assert_called_once()
+            self.assertEqual((old/'state.json').read_bytes(),original)
+            self.assertIn('upload_command_completed_at',release.read(run/'state.json'))
+
     def test_reviewed_old_build_does_not_block_higher_upload_same_build_still_blocks(self):
         c=client();c.local_reconciled=Mock(return_value=True)
         with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'):
