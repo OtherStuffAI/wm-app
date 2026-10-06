@@ -63,6 +63,8 @@ remains usable for a human release via [testflight.md](testflight.md).
 8. Create isolated snapshots of the exact committed Flight Deck and WMAPP trees
    under ignored private evidence. Use `git archive` or a private local clone;
    never build the shared working copy. Install frozen Flight Deck dependencies,
+   set `FLIGHT_DECK_PG_APP_NPUB` to the verified Flight Deck app identity from
+   the scoped Flight Deck context (local overrides do not set it automatically),
    pin `FLIGHTDECK_BUILD_NUMBER`, `FLIGHTDECK_BUILD_ID`, `SOURCE_DATE_EPOCH`,
    build and verify `dist`, then pass that snapshot through `FLIGHT_DECK_DIR`
    to the existing WMAPP release workflow. Record commit, version/build and
