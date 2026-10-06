@@ -20,6 +20,26 @@ class NightlyTests(unittest.TestCase):
         with self.assertRaises(ValueError):n.reserve({'schema':1,'runs':{}},'today',None,0)
     def test_version_limit(self):
         with self.assertRaises(ValueError):n.reserve({'schema':1,'runs':{}},'today','session',2100000000)
+    def test_scheduler_coordination_is_fail_closed(self):
+        self.assertTrue(n.testflight_active({'schema':1,'days':{'today':{'status':'active'}}}))
+        self.assertFalse(n.testflight_active({'schema':1,'days':{'today':{'status':'testing'}}}))
+        with self.assertRaises(ValueError):n.testflight_active({'days':{}})
+        with self.assertRaises(KeyError):n.testflight_active({'schema':1,'days':{'today':{}}})
+    def test_snapshot_has_real_source_index_and_preserves_shared_state(self):
+        import tempfile,subprocess
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            repo=Path(temp)/'source';repo.mkdir()
+            def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
+            git('init','-b','main');git('config','user.name','Test');git('config','user.email','test@example.invalid')
+            (repo/'source.txt').write_text('committed source');git('add','source.txt');git('commit','-m','test: source')
+            (repo/'unfinished.txt').write_text('concurrent edit')
+            before=git('status','--porcelain')
+            with patch.object(n,'safe_private',lambda p:None):commit=n.snapshot(repo,Path(temp)/'snapshot')
+            self.assertEqual(git('status','--porcelain'),before)
+            self.assertEqual(n.command(['git','ls-files'],Path(temp)/'snapshot'),'source.txt')
+            self.assertEqual(n.command(['git','rev-parse','HEAD'],Path(temp)/'snapshot'),commit)
+            self.assertFalse((Path(temp)/'snapshot/unfinished.txt').exists())
     def test_package_isolation_and_provider_scope(self):
         root=Path(__file__).resolve().parents[2]
         gradle=(root/'app/android/app/build.gradle.kts').read_text()

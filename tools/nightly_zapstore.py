@@ -68,6 +68,16 @@ def snapshot(repo, target):
     with tar.open('xb') as stream:
         subprocess.run(['git', '-C', str(repo), 'archive', commit], stdout=stream, check=True)
     subprocess.run(['tar', '-xf', str(tar), '-C', str(target)], check=True)
+    # Supply the exact source index to Git-based validation without adding
+    # generated/ignored files or changing the shared repository index.
+    command(['git','init',target])
+    objects=Path(command(['git','rev-parse','--git-path','objects'],repo))
+    if not objects.is_absolute(): objects=repo/objects
+    (target/'.git/objects/info/alternates').write_text(str(objects.resolve())+'\n')
+    command(['git','read-tree',commit],target)
+    command(['git','update-ref','refs/heads/main',commit],target)
+    command(['git','symbolic-ref','HEAD','refs/heads/main'],target)
+    save(target.parent/(target.name+'-source.json'), {'commit':commit,'archive_sha256':digest(tar)})
     if command(['git', 'rev-parse', 'HEAD'], repo) != commit: raise ValueError('Source commit moved during snapshot.')
     return commit
 
@@ -81,9 +91,15 @@ def private_key_reference(path):
         raise ValueError('Signing reference must be an owner-only regular file without symlinks.')
 
 
+def testflight_active(ledger):
+    if ledger.get('schema') != 1 or not isinstance(ledger.get('days'), dict):
+        raise ValueError('Invalid TestFlight coordination ledger.')
+    return any(x['status']=='active' for x in ledger['days'].values())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'publish', 'readback', 'status'])
+    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'resume-build', 'publish', 'readback', 'status'])
     parser.add_argument('--day', default=dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat())
     parser.add_argument('--committed-source', action='store_true', help='First-publication only: preserve incompatible active edits and validate exact committed snapshots.')
     parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
@@ -98,7 +114,7 @@ def main():
         ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {'schema': 1, 'runs': {}}
         if a.action == 'status': print(json.dumps(ledger, indent=2)); return
         run = PRIVATE/a.day
-        env = {**os.environ, 'JAVA_HOME': JAVA, 'AUTOPILOT_REPO': str(ROOT.parent/'autopilot')}
+        env = {**os.environ, 'JAVA_HOME': JAVA, 'AUTOPILOT_REPO': str(ROOT.parent/'autopilot'), 'RUSTUP_TOOLCHAIN':'stable'}
         def logged(args, cwd, label):
             with (run/(label+'.log')).open('xb') as output:
                 result = subprocess.run([str(x) for x in args], cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT)
@@ -111,7 +127,7 @@ def main():
             # A single scheduler session prepares source for both lanes. Manual builds
             # refuse an active TestFlight claim rather than compete with it.
             ios_ledger = ROOT/'tmp/docs/handoffs/nightly-testflight/ledger.json'
-            if ios_ledger.exists() and any(x['status']=='active' for x in json.loads(ios_ledger.read_text())['days'].values()):
+            if ios_ledger.exists() and testflight_active(json.loads(ios_ledger.read_text())):
                 raise ValueError('TestFlight nightly is active; finish/reconcile that lane first.')
             for repo in (a.flightdeck, ROOT):
                 if command(['git','status','--porcelain'],repo) and not a.committed_source: raise ValueError('Commit validated compatible source first; preserve concurrent work.')
@@ -120,7 +136,7 @@ def main():
             s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode']); s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
             run.mkdir(mode=0o700);update('building')
             fd=run/'flightdeck';wm=run/'wmapp'
-            s['flightdeck_commit']=snapshot(a.flightdeck,fd)
+            s['flightdeck_commit']=snapshot(a.flightdeck,fd);update('building')
             meta=json.loads((fd/'.build-meta.json').read_text());notes=json.loads((fd/'release-notes.json').read_text())
             number=max([meta['absoluteVersion']]+[x['buildNumber'] for x in notes['releases']])
             env.update(FLIGHTDECK_BUILD_NUMBER=str(number),FLIGHTDECK_BUILD_ID=f"wmapp-{s['flightdeck_commit'][:12]}-{number}",SOURCE_DATE_EPOCH=command(['git','log','-1','--format=%ct'],a.flightdeck),FLIGHT_DECK_DIR=str(fd))
@@ -128,10 +144,11 @@ def main():
             for script in ('check:public-source','test','build','verify:dist'): logged(['bun','run',script],fd,'fd-'+script.replace(':','-'))
             s['flightdeck_version']=json.loads((fd/'dist/version.json').read_text());s['flightdeck_assets']=assets(fd/'dist')
             if s['flightdeck_version']['buildId'] != env['FLIGHTDECK_BUILD_ID']: raise ValueError('Flight Deck build ID mismatch.')
-            s['source_commit']=snapshot(ROOT,wm)
+            s['source_commit']=snapshot(ROOT,wm);update('building')
             logged([wm/'tools/update_flightdeck_bundle.sh','--use-existing-dist'],wm,'bundle')
             if assets(wm/'app/assets/flightdeck') != s['flightdeck_assets']: raise ValueError('Bundled assets differ.')
             env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly')
+            logged(['cargo','build','--locked','--release','-p','wmapp-drive-fs'],wm,'drive-fs-build')
             for args,label in [(['flutter','pub','get'],'pub'),(['flutter','analyze'],'analyze'),(['flutter','test'],'flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'apk-build')]: logged(args,wm/'app',label)
             import shutil
             shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
@@ -140,7 +157,24 @@ def main():
         else:
             s=ledger['runs'][a.day]
             if a.action!='readback' and s['owner']!=os.environ.get('SESSION_ID'): raise ValueError('Only reservation owner can mutate release.')
-            if a.action=='prepare':
+            if a.action=='resume-build':
+                if s['stage']!='building' or any((run/x).exists() for x in ('app-release.apk','signed.json','proof-signed.json','broker-upload.log','relay-publish.log')): raise ValueError('Resume allowed only before signing/delivery, for retained exact source snapshots.')
+                fd=run/'flightdeck';wm=run/'wmapp'
+                for name,key in [('flightdeck','flightdeck_commit'),('wmapp','source_commit')]:
+                    proof=json.loads((run/(name+'-source.json')).read_text())
+                    if digest(run/(name+'.tar'))!=proof['archive_sha256']: raise ValueError('Source archive changed.')
+                    s[key]=proof['commit']
+                s['flightdeck_version']=json.loads((fd/'dist/version.json').read_text());s['flightdeck_assets']=assets(fd/'dist')
+                if assets(wm/'app/assets/flightdeck')!=s['flightdeck_assets']: raise ValueError('Bundled Flight Deck differs.')
+                private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
+                env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly',RUSTUP_TOOLCHAIN='stable')
+                update('building')
+                logged(['cargo','build','--locked','--release','-p','wmapp-drive-fs'],wm,'resume-drive-fs-build')
+                for args,label in [(['flutter','analyze'],'resume-analyze'),(['flutter','test'],'resume-flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'resume-apk-build')]: logged(args,wm/'app',label)
+                import shutil
+                shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
+                s['apk_sha256']=digest(run/'app-release.apk');update('built')
+            elif a.action=='prepare':
                 if s['stage']!='built': raise ValueError('Preparation requires built state.')
                 private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
                 env.update(SIGN_WITH=NPUB,KEYSTORE_PASSWORD=PASSWORD.read_text())

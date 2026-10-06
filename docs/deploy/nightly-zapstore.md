@@ -32,7 +32,11 @@ future APK updates require the same certificate.
    `--committed-source` may preserve incompatible active edits and records their
    exclusion while validating the exact committed snapshots. Scheduled runs
    require clean, validated source and must not use this exception.
-3. Run `prepare`. It verifies the APK signature, exact package/version/name,
+3. Build also compiles the pinned native Drive filesystem helper required by
+   Flutter integration tests. On a known pre-delivery build prerequisite failure,
+   `resume-build` validates the retained source archive journals and resumes the
+   same reservation; signing or delivery artifacts prohibit that recovery.
+   Run `prepare`. It verifies the APK signature, exact package/version/name,
    certificate, ARM64 contents, FIPS library/service and canonical extracted icon.
    zsp v0.4.17 emits JSONL with `SIGN_WITH` set to Rick's **public** npub,
    `--offline --no-compress --channel nightly --commit <commit>`.
