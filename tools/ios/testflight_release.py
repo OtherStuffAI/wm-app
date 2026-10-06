@@ -49,6 +49,7 @@ def read(path):
 def write(path, value):
     # Atomic state writes; locking is held across the entire command.
     temp = path.with_suffix('.new')
+    require(not path.is_symlink() and not temp.is_symlink(), 'State cannot use symlinks.')
     temp.write_text(json.dumps(value, indent=2) + '\n')
     os.chmod(temp, 0o600)
     temp.replace(path)
@@ -300,6 +301,10 @@ def no_other_delivery(run, s):
 
 def execute(a, run):
     state = run / 'state.json'
+    if a.action.startswith('api-'):
+        from testflight_api_release import execute as api_execute
+        api_execute(sys.modules[__name__], a, run)
+        return
     if a.action == 'init':
         require(not run.exists(), 'Run exists; resume it rather than overwriting.')
         version(a.version)
@@ -468,7 +473,7 @@ def execute(a, run):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action', choices=['init', 'run', 'verify', 'upload', 'readback', 'status'])
+    p.add_argument('action', choices=['init', 'run', 'verify', 'upload', 'readback', 'status', 'api-preflight', 'api-reserve', 'api-build', 'api-upload', 'api-readback'])
     p.add_argument('--run', required=True, help='Unique name under ignored tmp/docs/handoffs/testflight')
     p.add_argument('--audience', choices=['internal', 'external'], default='internal',
                    help='Init only: private by default; external requires explicit audience authorization.')
@@ -478,7 +483,15 @@ def main():
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--via', choices=['organizer', 'cli'], default='organizer',
                    help='Upload route: organizer prints instructions; cli sends a real upload using the existing Xcode account.')
+    p.add_argument('--auth-reference', type=Path, default=ROOT / 'tmp/docs/handoffs/nightly-testflight/auth-reference.json')
+    p.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
+    p.add_argument('--poll-seconds', type=int, default=600)
     a = p.parse_args()
+    require(0 <= a.poll_seconds <= 1800, 'Polling must be bounded to 0–1800 seconds.')
+    if a.action.startswith('api-'):
+        from nightly_testflight import safe_private
+        safe_private(PRIVATE)
+        safe_private(a.auth_reference)
     require(bool(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]*', a.run)), 'Use a simple unique run name.')
     require(a.action == 'init' or (a.audience == 'internal' and a.group is None),
             'Audience/group are immutable and can only be selected at init.')
@@ -488,6 +501,11 @@ def main():
     PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     run = PRIVATE / a.run
     require(not run.is_symlink(), 'Run cannot be a symlink.')
+    if a.action.startswith('api-'):
+        safe_private(PRIVATE / '.lock')
+        safe_private(run / 'state.json')
+        safe_private(run / 'state.new')
+    require(not (PRIVATE / '.lock').is_symlink(), 'Release lock cannot be a symlink.')
     # One lock for all runs because Flutter output paths are shared.
     with (PRIVATE / '.lock').open('w') as lock:
         try:

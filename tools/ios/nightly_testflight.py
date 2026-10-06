@@ -77,14 +77,35 @@ def prerequisites(fd):
                        'commit': git(repo, 'rev-parse', 'HEAD'),
                        'status': git(repo, 'status', '--porcelain'),
                        'upstream': git(repo, 'config', '--get', 'branch.main.remote')}
-    # Inspect references only, never search/read/export private key material.
+    auth = {'ready': False, 'status': 'blocked_auth', 'release_ready': False,
+            'reason': 'Private API credential reference is missing.'}
+    reference = PRIVATE / 'auth-reference.json'
+    if reference.is_file():
+        try:
+            from appstore_connect import Client
+            from testflight_api_release import numbers, delivery_barrier
+            import testflight_release as release
+            client = Client(reference)
+            h = client.preflight()
+            auth.pop('reason', None)
+            auth.update(ready=True, status='api_authenticated', history_complete=True,
+                        builds=numbers(h), audience=h['audience'],
+                        pending_upload_ids=h['pending_upload_ids'], pending_build_ids=h['pending_build_ids'],
+                        upload_path='xcodebuild API archive/export/upload; live upload not yet proven',
+                        release_ready=not h['pending_upload_ids'] and not h['pending_build_ids'],
+                        inactive_upload_ids=h['inactive_upload_ids'])
+            try:
+                delivery_barrier(release, None, client)
+            except ValueError as error:
+                auth.update(release_ready=False, release_blocker=str(error))
+            if h['pending_upload_ids'] or h['pending_build_ids']:
+                auth['release_blocker'] = 'Apple pending delivery requires reconciliation.'
+        except (ValueError, OSError, KeyError, ImportError) as error:
+            auth.update(ready=False, release_ready=False, status='blocked_auth', reason=str(error))
     return {'repos': repos, 'main_ready': all(v['branch'] == 'main' for v in repos.values()),
-            'tools': {tool: bool(shutil.which(tool)) for tool in ('flutter', 'xcodebuild', 'codesign', 'bun', 'rsync')},
-            'auth': {'ready': False, 'status': 'blocked_auth',
-                     'reason': 'No verified unattended App Store Connect history/audience/upload/readback integration. Existing Organizer account is GUI-only evidence.',
-                     'reference_config_present': (PRIVATE / 'auth-reference.json').is_file(),
-                     'setup': 'Provision an App Store Connect API credential through Apple and an approved secure credential store; provide only its reference plus key ID/issuer ID to the operator. Validate scoped history, Pete Private membership/manual settings and upload/readback before enabling automated upload.'},
-            'upload_performed': False}
+            'tools': {tool: bool(shutil.which(tool)) for tool in ('flutter', 'xcodebuild', 'codesign', 'bun', 'node', 'rsync')},
+            'auth': auth, 'upload_performed': False}
+
 
 
 def main():

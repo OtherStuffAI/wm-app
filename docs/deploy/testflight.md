@@ -464,3 +464,15 @@ accepts the release evidence.
 - [Apple TestFlight test information](https://developer.apple.com/help/app-store-connect/test-a-beta-version/provide-test-information)
 - [Apple internal tester groups](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
 - [Apple encryption documentation workflow](https://developer.apple.com/help/app-store-connect/manage-app-information/determine-and-upload-app-encryption-documentation/)
+
+## Nightly API integration
+
+The private nightly runner also supports `api-preflight`, `api-reserve`,
+`api-build`, `api-upload` and `api-readback`. See
+[nightly-testflight.md](nightly-testflight.md) for credential-reference setup,
+complete history/audience gates, exact committed isolated Flight Deck-first
+builds, cancellation reconciliation, daily claims and bounded processing checks.
+These actions preserve the existing archive/IPA and both-target signature
+validation and durable `upload_pending` barrier. They use only the existing
+private manual internal group. Human Organizer observations and API readback
+remain distinct evidence; API `Testing` does not prove device visibility.
