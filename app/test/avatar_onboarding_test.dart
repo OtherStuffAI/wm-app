@@ -89,8 +89,18 @@ void main() {
       'version': 2,
       'active_index': 1,
       'tabs': [
-        {'title': 'deck.test', 'url': 'https://deck.test', 'is_home': false},
-        {'title': 'other.test', 'url': 'https://other.test', 'is_home': false},
+        {
+          'title': 'deck.test',
+          'url': 'https://deck.test',
+          'is_home': false,
+          'diagnostics_tab_key': 'A' * 43
+        },
+        {
+          'title': 'other.test',
+          'url': 'https://other.test',
+          'is_home': false,
+          'diagnostics_tab_key': 'B' * 43
+        },
       ]
     });
     await prefs.setString('wingman.browser.last_signer_npub.v1', identity.npub);

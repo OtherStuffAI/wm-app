@@ -52,6 +52,14 @@ void setFakeTitleRetrievalFailure({
   _fakeWebViewControllers[controllerIndex]._titleRetrievalFails = fails;
 }
 
+void submitFakeWebResourceError(
+    {required int controllerIndex, required WebResourceError error}) {
+  _fakeWebViewControllers[controllerIndex]
+      ._navigationDelegate
+      ?._onWebResourceError
+      ?.call(error);
+}
+
 void submitFakePageFinished({
   required int controllerIndex,
   required String url,
@@ -219,6 +227,7 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
   PageEventCallback? _onPageStarted;
   PageEventCallback? _onPageFinished;
   UrlChangeCallback? _onUrlChange;
+  WebResourceErrorCallback? _onWebResourceError;
 
   @override
   Future<void> setOnNavigationRequest(
@@ -230,6 +239,12 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
   @override
   Future<void> setOnPageStarted(PageEventCallback callback) async {
     _onPageStarted = callback;
+  }
+
+  @override
+  Future<void> setOnWebResourceError(
+      WebResourceErrorCallback onWebResourceError) async {
+    _onWebResourceError = onWebResourceError;
   }
 
   @override

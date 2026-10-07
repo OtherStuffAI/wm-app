@@ -18,6 +18,8 @@ import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
 import 'focus_edge_gestures.dart';
+import 'diagnostics_store.dart';
+import 'relay_diagnostics.dart';
 import 'profile_avatar_upload.dart';
 import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
@@ -78,7 +80,8 @@ class BrowserScreen extends StatefulWidget {
   State<BrowserScreen> createState() => BrowserScreenState();
 }
 
-class BrowserScreenState extends State<BrowserScreen> {
+class BrowserScreenState extends State<BrowserScreen>
+    with WidgetsBindingObserver {
   static final Set<Factory<OneSequenceGestureRecognizer>>
       _androidWebViewGestureRecognizers = {
     const Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
@@ -107,6 +110,8 @@ class BrowserScreenState extends State<BrowserScreen> {
   List<BrowserBookmark> _bookmarks = const [];
   String? _lastWebStateSignerNpub;
   NostrProfile _profile = const NostrProfile();
+  final DiagnosticsStore _diagnosticsStore = DiagnosticsStore();
+  Timer? _diagnosticsMaintenance;
   Timer? _persistTabsTimer;
   bool _clearingWebState = false;
   bool _restoringTabs = false;
@@ -117,7 +122,12 @@ class BrowserScreenState extends State<BrowserScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
+    unawaited(_diagnosticsStore.prune().catchError((Object _) {}));
+    _diagnosticsMaintenance = Timer.periodic(const Duration(minutes: 1), (_) {
+      unawaited(_diagnosticsStore.prune().catchError((Object _) {}));
+    });
     _fipsEnabledSubscription =
         widget.fipsRuntime?.enabledChanges.listen(_onFipsEnabledChanged);
     unawaited(_loadFipsEnabled());
@@ -142,6 +152,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         oldWidget.config.towerUrl != widget.config.towerUrl ||
         oldWidget.config.flightDeckUrl != widget.config.flightDeckUrl) {
       for (final tab in _tabs) {
+        tab.clearDiagnosticsTransition();
         tab.revokeSigningDocument();
       }
     }
@@ -168,11 +179,13 @@ class BrowserScreenState extends State<BrowserScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_fipsEnabledSubscription?.cancel());
     HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
     unawaited(_persistTabsNow());
     _persistTabsTimer?.cancel();
     _addressBarHideTimer?.cancel();
+    _diagnosticsMaintenance?.cancel();
     _tabStripController.dispose();
     for (final tab in _tabs) {
       tab.dispose();
@@ -761,10 +774,19 @@ class BrowserScreenState extends State<BrowserScreen> {
         NavigationDelegate(
           onNavigationRequest: (request) => _onNavigationRequest(id, request),
           onUrlChange: (change) => _onUrlChanged(id, change.url),
-          onPageStarted: (_) {
+          onPageStarted: (url) {
             final tab = _tabById(id);
             if (tab != null) {
+              _captureDiagnosticsTransition(tab, url);
               tab.revokeSigningDocument();
+            }
+          },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame == true) {
+              final tab = _tabById(id);
+              if (tab != null) {
+                _recordWebViewDiagnostic(tab, error);
+              }
             }
           },
           onPageFinished: (url) => _onPageFinished(id, url),
@@ -1172,6 +1194,9 @@ class BrowserScreenState extends State<BrowserScreen> {
         _createTab(tab.url!, activate: false, persistState: false);
       }
       final restored = _tabs.last;
+      if (tab.diagnosticsTabKey != null) {
+        restored.diagnosticsTabKey = tab.diagnosticsTabKey!;
+      }
       restored.prefix = tab.prefix;
       restored.colour = tab.colour;
       if (tab.title != null && tab.title!.trim().isNotEmpty) {
@@ -1216,6 +1241,7 @@ class BrowserScreenState extends State<BrowserScreen> {
         for (final tab in _tabs)
           _BrowserTabSnapshot(
             title: tab.title,
+            diagnosticsTabKey: tab.diagnosticsTabKey,
             prefix: tab.prefix,
             colour: tab.colour,
             url: tab.isHome
@@ -1286,6 +1312,7 @@ class BrowserScreenState extends State<BrowserScreen> {
       });
       return;
     }
+    _captureDiagnosticsTransition(tab, normalized);
     tab.revokeSigningDocument();
     tab.fipsDisabledUrl = null;
     setState(() {
@@ -1490,7 +1517,13 @@ class BrowserScreenState extends State<BrowserScreen> {
     int tabId,
     NavigationRequest request,
   ) async {
-    if (request.isMainFrame) _tabById(tabId)?.revokeSigningDocument();
+    if (request.isMainFrame) {
+      final tab = _tabById(tabId);
+      if (tab != null) {
+        _captureDiagnosticsTransition(tab, request.url);
+        tab.revokeSigningDocument();
+      }
+    }
     final prepare = widget.onPrepareFipsNavigation;
     if (prepare == null || !_isFipsAppUrl(request.url)) {
       return NavigationDecision.navigate;
@@ -1543,6 +1576,7 @@ class BrowserScreenState extends State<BrowserScreen> {
     if (previousOrigin.isNotEmpty &&
         nextOrigin.isNotEmpty &&
         previousOrigin != nextOrigin) {
+      tab.clearDiagnosticsTransition();
       tab.revokeSigningDocument();
     }
     setState(() {
@@ -1557,6 +1591,7 @@ class BrowserScreenState extends State<BrowserScreen> {
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
+    tab.clearDiagnosticsTransition();
     if (tab.isHome &&
         (url == 'about:blank' || url == 'https://wingman.local/')) {
       await _injectTabCapture(tab);
@@ -1988,6 +2023,34 @@ class BrowserScreenState extends State<BrowserScreen> {
         identical(tab.graspBridge, bridge) &&
         widget.config.deviceNpub == identity;
     bridge = GraspFipsBrowserBridge(
+      onDiagnostic: (tabTrace, relayTrace, stage) {
+        RelayDiagnostics.record(tabTrace, relayTrace, stage);
+        const allowed = {
+          'ws_open_start',
+          'ws_open_failed',
+          'ws_open_ok',
+          'ws_close_requested',
+          'auth_ok',
+          'auth_rejected',
+          'ws_next_closed',
+          'ws_next_or_send_failed',
+          'bridge_revoked',
+          'signer_request',
+          'signer_scope_denied',
+          'signer_policy_denied',
+          'signer_approved',
+          'signer_denied',
+          'subscription_closed'
+        };
+        if (allowed.contains(stage)) {
+          _recordHostDiagnostic(tab, 'transport',
+              level: stage.contains('failed') ||
+                      stage.contains('denied') ||
+                      stage.contains('rejected')
+                  ? 'warn'
+                  : 'info');
+        }
+      },
       pageOrigin: origin,
       reply: tab.controller.runJavaScript,
       prepare: (endpoint) async => current()
@@ -2091,6 +2154,254 @@ class BrowserScreenState extends State<BrowserScreen> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    for (final tab in _tabs) {
+      _recordHostDiagnostic(tab, 'lifecycle');
+      // Background/OS lock cannot retain a diagnostics retrieval grant.
+      if (state != AppLifecycleState.resumed) {
+        tab.clearDiagnosticsTransition();
+        tab.revokeDiagnostics();
+      }
+    }
+  }
+
+  void _captureDiagnosticsTransition(BrowserTab tab, String targetUrl) {
+    final origin = SignerPolicy.normalizeOrigin(tab.currentUrl ?? '');
+    final target = SignerPolicy.normalizeOrigin(targetUrl);
+    if (!widget.config.hasDeviceSecret || origin.isEmpty || target != origin) {
+      tab.clearDiagnosticsTransition();
+      return;
+    }
+    final scope = tab.diagnosticsScope;
+    if (scope != null &&
+        tab.diagnosticsWorkspace != null &&
+        tab.signerDocumentToken != null) {
+      tab._setDiagnosticsTransition(_DiagnosticsTransition(
+          scope: scope,
+          origin: origin,
+          identity: widget.config.deviceNpub,
+          documentToken: tab.signerDocumentToken!,
+          workspace: tab.diagnosticsWorkspace!,
+          expires: DateTime.now().add(const Duration(seconds: 30))));
+    }
+  }
+
+  void _recordWebViewDiagnostic(BrowserTab tab, WebResourceError error) {
+    final terminated =
+        error.errorType == WebResourceErrorType.webContentProcessTerminated;
+    if (tab.diagnosticsScope != null) {
+      _recordHostDiagnostic(tab, 'webview', level: 'error');
+    } else {
+      final transition = tab._diagnosticsTransition;
+      final errorOrigin = SignerPolicy.normalizeOrigin(error.url ?? '');
+      if (transition != null &&
+          !tab.disposed &&
+          widget.config.hasDeviceSecret &&
+          widget.config.deviceNpub == transition.identity &&
+          DateTime.now().isBefore(transition.expires) &&
+          (errorOrigin == transition.origin ||
+              (terminated &&
+                  SignerPolicy.normalizeOrigin(tab.currentUrl ?? '') ==
+                      transition.origin))) {
+        unawaited(_diagnosticsStore.append(transition.scope, [
+          {
+            'ts': DateTime.now().millisecondsSinceEpoch,
+            'source': 'host',
+            'level': 'error',
+            'code': 'webview',
+          }
+        ]).catchError((Object _) => 0));
+      }
+    }
+    if (terminated) {
+      tab.clearDiagnosticsTransition();
+      tab.revokeSigningDocument();
+    }
+  }
+
+  void _recordHostDiagnostic(BrowserTab tab, String code,
+      {String level = 'info'}) {
+    final scope = tab.diagnosticsScope;
+    if (scope == null || tab.disposed || !widget.config.hasDeviceSecret) return;
+    unawaited(_diagnosticsStore.append(scope, [
+      {
+        'ts': DateTime.now().millisecondsSinceEpoch,
+        'source': 'host',
+        'level': level,
+        'code': code,
+      }
+    ]).catchError((Object _) => 0));
+  }
+
+  Future<void> _onDiagnosticsMessage(BrowserTab tab, String requestId,
+      String method, Map<String, dynamic> payload) async {
+    final params = payload['params'];
+    final workspace = params is Map ? params['workspaceId'] : null;
+    final origin = SignerPolicy.normalizeOrigin(tab.currentUrl ?? '');
+    final token = tab.signerDocumentToken;
+    final epoch = tab.signerDocumentEpoch;
+    final identity = widget.config.deviceNpub;
+    bool valid() =>
+        mounted &&
+        !tab.disposed &&
+        _tabById(tab.id) == tab &&
+        _activeTabId == tab.id &&
+        widget.config.hasDeviceSecret &&
+        widget.config.deviceNpub == identity &&
+        token != null &&
+        payload['signerDocumentToken'] == token &&
+        tab.signerDocumentToken == token &&
+        tab.signerDocumentEpoch == epoch &&
+        SignerPolicy.normalizeOrigin(tab.currentUrl ?? '') == origin &&
+        _signerPolicy.canInject(tab.currentUrl ?? '');
+    final transition = tab._diagnosticsTransition;
+    final canCancelTransition = transition != null &&
+        mounted &&
+        !tab.disposed &&
+        _tabById(tab.id) == tab &&
+        _activeTabId == tab.id &&
+        widget.config.hasDeviceSecret &&
+        identity == transition.identity &&
+        origin == transition.origin &&
+        DateTime.now().isBefore(transition.expires) &&
+        payload['signerDocumentToken'] == transition.documentToken;
+    if (!valid() && canCancelTransition) {
+      // Revocation/deletion only: an old document can cancel its pending native
+      // transition, but can never read, append or restore any capability.
+      if (workspace != transition.workspace) tab.clearDiagnosticsTransition();
+      if (workspace == transition.workspace &&
+          (method == 'diagnostics.clear' ||
+              (method == 'diagnostics.configure' &&
+                  params['enabled'] == false))) {
+        tab.clearDiagnosticsTransition();
+        if (method == 'diagnostics.clear') {
+          await _diagnosticsStore.clear(transition.scope);
+        }
+        await _resolveSignerRequest(tab, requestId, {
+          'result': method == 'diagnostics.clear'
+              ? {'version': 1, 'cleared': true}
+              : {'version': 1, 'enabled': false}
+        });
+        return;
+      }
+    }
+    if (!valid() ||
+        workspace is! String ||
+        !RegExp(r'^[a-zA-Z0-9-]{1,80}$').hasMatch(workspace)) {
+      await _resolveSignerRequest(
+          tab, requestId, {'error': 'Diagnostics scope revoked or invalid.'});
+      return;
+    }
+    final scope = DiagnosticsStore.scopeKey(
+        origin, identity, workspace, tab.diagnosticsTabKey);
+    // A request in another workspace revokes the old grant before any await.
+    if (tab.diagnosticsWorkspace != workspace) {
+      tab.clearDiagnosticsTransition();
+      tab.diagnosticsConfigEpoch++;
+      tab.diagnosticsScope = null;
+      tab.diagnosticsWorkspace = null;
+    }
+    try {
+      Map<String, dynamic> result;
+      if (method == 'diagnostics.configure') {
+        final configEpoch = ++tab.diagnosticsConfigEpoch;
+        if (params['enabled'] != true) {
+          tab.clearDiagnosticsTransition();
+          tab.diagnosticsScope = null;
+          tab.diagnosticsWorkspace = null;
+          result = {'version': 1, 'enabled': false};
+        } else {
+          if (tab.diagnosticsConsentPending) {
+            throw StateError('Diagnostics consent already pending.');
+          }
+          if (tab.diagnosticsScope != scope) {
+            tab.diagnosticsConsentPending = true;
+            bool approved;
+            try {
+              approved = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                            title: const Text('Allow local diagnostics?'),
+                            content: Text(
+                                '$origin requests sanitized local evidence for workspace $workspace in this tab.\n\nOnly event codes and bounded timing/status/stack metadata are saved for up to 30 minutes. No page text, payloads, screenshots or other tabs. Reports are sent separately by Flight Deck. Reload, navigation or locking revokes access.'),
+                            actions: [
+                              TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(context, false),
+                                  child: const Text('Deny')),
+                              FilledButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('Allow this document'))
+                            ],
+                          )) ==
+                  true;
+            } finally {
+              tab.diagnosticsConsentPending = false;
+            }
+            if (!valid() ||
+                !approved ||
+                tab.diagnosticsConfigEpoch != configEpoch) {
+              throw StateError('Diagnostics consent denied or revoked.');
+            }
+            final saved = await _diagnosticsStore.snapshot(scope);
+            if (!valid() || tab.diagnosticsConfigEpoch != configEpoch) {
+              throw StateError('Diagnostics scope revoked.');
+            }
+            tab.diagnosticsRecovered = saved.isNotEmpty;
+            tab.diagnosticsScope = scope;
+            tab.diagnosticsWorkspace = workspace;
+            _recordHostDiagnostic(tab, 'lifecycle');
+          }
+          result = {'version': 1, 'enabled': true};
+        }
+      } else if (method == 'diagnostics.clear') {
+        tab.clearDiagnosticsTransition();
+        await _diagnosticsStore.clear(scope);
+        tab.diagnosticsRecovered = false;
+        result = {'version': 1, 'cleared': true};
+      } else {
+        if (tab.diagnosticsScope != scope) {
+          throw StateError('Native diagnostics consent required.');
+        }
+        if (method == 'diagnostics.append') {
+          final events = params['events'];
+          if (events is! List) throw StateError('Invalid diagnostics events.');
+          final accepted = await _diagnosticsStore.append(scope, events);
+          result = {'version': 1, 'accepted': accepted};
+        } else if (method == 'diagnostics.snapshot') {
+          result = {
+            'version': 1,
+            'events': await _diagnosticsStore.snapshot(scope),
+            'host': {
+              'version': '0.1.7+9',
+              'platform': Platform.operatingSystem
+            },
+            'recovered': tab.diagnosticsRecovered,
+            'limitations': [
+              'Bounded saved evidence; no OS crash dumps or crash-time sending.',
+              'Host capture covers document readiness, main-frame WebView errors and available transport stage codes.'
+            ]
+          };
+        } else {
+          throw StateError('Unknown diagnostics method.');
+        }
+      }
+      if (!valid() ||
+          (method != 'diagnostics.configure' &&
+              method != 'diagnostics.clear' &&
+              tab.diagnosticsScope != scope)) {
+        return;
+      }
+      await _resolveSignerRequest(tab, requestId, {'result': result});
+    } catch (_) {
+      if (valid()) {
+        await _resolveSignerRequest(tab, requestId,
+            {'error': 'Diagnostics unavailable, denied or revoked.'});
+      }
+    }
+  }
+
   Future<void> _onSignerMessage(int tabId, JavaScriptMessage message) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
@@ -2099,6 +2410,18 @@ class BrowserScreenState extends State<BrowserScreen> {
     final requestId = payload['id']?.toString() ?? '';
     final method = payload['method']?.toString() ?? '';
     if (requestId.isEmpty || method.isEmpty) return;
+
+    if (method.startsWith('diagnostics.')) {
+      final verified = await tab.nativeChannelsReady;
+      if (!verified ||
+          !(Platform.isAndroid || Platform.isIOS || Platform.isMacOS)) {
+        await _resolveSignerRequest(tab, requestId,
+            {'error': 'Verified native diagnostics channel unavailable.'});
+        return;
+      }
+      await _onDiagnosticsMessage(tab, requestId, method, payload);
+      return;
+    }
 
     if (method == 'openTab') {
       final params = payload['params'] is Map<String, dynamic>
@@ -3263,9 +3586,26 @@ class BrowserScreenState extends State<BrowserScreen> {
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
     });
+    if (method.startsWith('diagnostics.')) {
+      // Revoked documents may never receive another native callback.
+      const timeout = setTimeout(() => {
+        const entry = pending.get(id);
+        if (!entry) return;
+        pending.delete(id);
+        entry.reject(new Error('Diagnostics request expired or revoked.'));
+      }, 30000);
+      promise.then(() => clearTimeout(timeout), () => clearTimeout(timeout));
+    }
     WingmanSigner.postMessage(message);
     return promise;
   }
+  if (${Platform.isAndroid || Platform.isIOS || Platform.isMacOS}) Object.defineProperty(window, 'wingmanDiagnostics', {configurable: true, value: Object.freeze({
+    version: 1,
+    configure: (params) => callNative('diagnostics.configure', params),
+    append: (params) => callNative('diagnostics.append', params),
+    snapshot: (params) => callNative('diagnostics.snapshot', params),
+    clear: (params) => callNative('diagnostics.clear', params),
+  })});
   window.nostr = {
     __wingman: true,
     __wingmanDocument: signerDocumentToken,
@@ -4004,8 +4344,10 @@ class _BrowserTabSnapshot {
     required this.isHome,
     this.prefix = '',
     this.colour,
+    this.diagnosticsTabKey,
   });
 
+  final String? diagnosticsTabKey;
   final String? title;
   final String? url;
   final bool isHome;
@@ -4017,6 +4359,7 @@ class _BrowserTabSnapshot {
       'title': title,
       'url': url,
       'is_home': isHome,
+      if (diagnosticsTabKey != null) 'diagnostics_tab_key': diagnosticsTabKey,
       if (prefix.isNotEmpty) 'prefix': prefix,
       if (colour != null) 'colour': colour,
     };
@@ -4027,6 +4370,11 @@ class _BrowserTabSnapshot {
     final url = value['url']?.toString().trim();
     if (!isHome && (url == null || url.isEmpty)) return null;
     return _BrowserTabSnapshot(
+      diagnosticsTabKey: value['diagnostics_tab_key'] is String &&
+              RegExp(r'^[A-Za-z0-9_-]{43}$')
+                  .hasMatch(value['diagnostics_tab_key'] as String)
+          ? value['diagnostics_tab_key'] as String
+          : null,
       title: value['title']?.toString(),
       url: url == null || url.isEmpty ? null : url,
       isHome: isHome,
@@ -4036,6 +4384,22 @@ class _BrowserTabSnapshot {
           : null,
     );
   }
+}
+
+class _DiagnosticsTransition {
+  const _DiagnosticsTransition(
+      {required this.scope,
+      required this.origin,
+      required this.identity,
+      required this.documentToken,
+      required this.workspace,
+      required this.expires});
+  final String scope;
+  final String origin;
+  final String identity;
+  final String documentToken;
+  final String workspace;
+  final DateTime expires;
 }
 
 class BrowserTab {
@@ -4062,6 +4426,28 @@ class BrowserTab {
   GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;
   int signerDocumentEpoch = 0;
+  String diagnosticsTabKey = TowerFipsProxy.capability();
+  int diagnosticsConfigEpoch = 0;
+  String? diagnosticsScope;
+  String? diagnosticsWorkspace;
+  bool diagnosticsRecovered = false;
+  bool diagnosticsConsentPending = false;
+  _DiagnosticsTransition? _diagnosticsTransition;
+  Timer? _diagnosticsTransitionTimer;
+
+  void _setDiagnosticsTransition(_DiagnosticsTransition transition) {
+    clearDiagnosticsTransition();
+    _diagnosticsTransition = transition;
+    _diagnosticsTransitionTimer =
+        Timer(const Duration(seconds: 30), clearDiagnosticsTransition);
+  }
+
+  void clearDiagnosticsTransition() {
+    _diagnosticsTransitionTimer?.cancel();
+    _diagnosticsTransitionTimer = null;
+    _diagnosticsTransition = null;
+  }
+
   bool meshAuthPending = false;
   Future<bool> nativeChannelsReady = Future.value(false);
   int? androidWebViewIdentifier;
@@ -4070,8 +4456,16 @@ class BrowserTab {
   void revokeSigningDocument() {
     graspBridge?.close();
     graspBridge = null;
+    revokeDiagnostics();
     signerDocumentToken = null;
     signerDocumentEpoch++;
+  }
+
+  void revokeDiagnostics() {
+    diagnosticsConfigEpoch++;
+    diagnosticsScope = null;
+    diagnosticsWorkspace = null;
+    diagnosticsRecovered = false;
   }
 
   bool canGoBack = false;
@@ -4098,6 +4492,7 @@ class BrowserTab {
 
   void dispose() {
     disposed = true;
+    clearDiagnosticsTransition();
     revokeSigningDocument();
     final nativeId = androidWebViewIdentifier;
     if (nativeId != null) unawaited(GraspAndroidChannel.remove(nativeId));
