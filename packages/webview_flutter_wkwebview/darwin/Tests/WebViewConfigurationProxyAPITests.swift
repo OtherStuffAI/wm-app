@@ -14,6 +14,9 @@ class WebViewConfigurationProxyAPITests: XCTestCase {
 
     let instance = try? api.pigeonDelegate.pigeonDefaultConstructor(pigeonApi: api)
     XCTAssertNotNil(instance)
+    if #available(macOS 12.3, iOS 15.4, *) {
+      XCTAssertEqual(instance?.preferences.isElementFullscreenEnabled, true)
+    }
   }
 
   @MainActor func testSetUserContentController() {

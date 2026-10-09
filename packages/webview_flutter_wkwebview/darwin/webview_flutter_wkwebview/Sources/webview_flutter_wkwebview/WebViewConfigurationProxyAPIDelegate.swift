@@ -12,7 +12,7 @@ class WebViewConfigurationProxyAPIDelegate: PigeonApiDelegateWKWebViewConfigurat
   func pigeonDefaultConstructor(pigeonApi: PigeonApiWKWebViewConfiguration) throws
     -> WKWebViewConfiguration
   {
-    return WKWebViewConfiguration()
+    return BrowserWebViewConfiguration.make()
   }
 
   func setUserContentController(

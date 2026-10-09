@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../../core/app_config.dart';
 import '../../core/tower_fips_proxy.dart';
@@ -764,7 +765,19 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   WebViewController _createWebViewController(int id) {
-    final controller = WebViewController()
+    final PlatformWebViewControllerCreationParams params;
+    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
+      params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: true,
+        mediaTypesRequiringUserAction: const {
+          PlaybackMediaTypes.audio,
+          PlaybackMediaTypes.video,
+        },
+      );
+    } else {
+      params = const PlatformWebViewControllerCreationParams();
+    }
+    final controller = WebViewController.fromPlatformCreationParams(params)
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
         'WingmanTitle',

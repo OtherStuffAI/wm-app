@@ -10,11 +10,12 @@ WMAPP uses the platform WebView file-selection APIs independently of its
   `OpenMultipleDocuments`. Those contracts return `content://` URIs and require
   no broad storage permission.
 - macOS uses a repository-owned path copy of
-  `webview_flutter_wkwebview` 3.26.0. Its only behavioral change is the missing
+  `webview_flutter_wkwebview` 3.26.0. It includes generic fullscreen configuration (see
+  [fullscreen/media validation](webview-fullscreen-media-validation.md)) and the missing
   `WKUIDelegate.runOpenPanelWith` callback, which presents `NSOpenPanel` and
   returns file URLs to WebKit. When upgrading the upstream package, compare
-  `UIDelegateProxyAPIDelegate.swift`; remove the fork when upstream provides the
-  same macOS callback.
+  `UIDelegateProxyAPIDelegate.swift` and the configuration constructor. Remove the
+  fork when upstream supplies both capabilities, preserving browser settings.
 - `WKOpenPanelParameters` exposes multiple-selection and directory-selection
   policy, but no accepted MIME types or extensions on macOS. WMAPP therefore
   cannot configure `NSOpenPanel.allowedContentTypes` from an HTML `accept`
