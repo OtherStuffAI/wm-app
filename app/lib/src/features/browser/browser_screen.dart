@@ -18,6 +18,7 @@ import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
+import 'embedded_content_focus.dart';
 import 'focus_edge_gestures.dart';
 import 'diagnostics_store.dart';
 import 'relay_diagnostics.dart';
@@ -291,8 +292,9 @@ class BrowserScreenState extends State<BrowserScreen>
           ),
       ],
     );
-    if (!_focusMode) return stack;
-    return SafeArea(bottom: false, child: stack);
+    final content = EmbeddedContentFocus(child: stack);
+    if (!_focusMode) return content;
+    return SafeArea(bottom: false, child: content);
   }
 
   Widget _buildTabBar(BuildContext context) {

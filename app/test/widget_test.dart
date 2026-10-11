@@ -23,6 +23,7 @@ import 'package:wingman_app/src/features/shell/shell_home.dart';
 import 'package:wingman_app/src/features/shell/macos_menu_bridge.dart';
 
 import 'fake_webview_platform.dart';
+import 'package:wingman_app/src/features/browser/embedded_content_focus.dart';
 
 class _AcceptProfileRelays extends NostrProfileRelayClient {
   @override
@@ -89,6 +90,11 @@ void main() {
       );
       await tester.pump();
 
+      expect(
+          find.ancestor(
+              of: find.byType(WebViewWidget),
+              matching: find.byType(EmbeddedContentFocus)),
+          findsOneWidget);
       final webView = tester.widget<WebViewWidget>(find.byType(WebViewWidget));
       expect(webView.gestureRecognizers, hasLength(1));
       expect(
