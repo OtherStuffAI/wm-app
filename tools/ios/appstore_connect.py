@@ -69,6 +69,11 @@ class Client:
                 '-authenticationKeyID', self.config['key_id'],
                 '-authenticationKeyIssuerID', self.config['issuer_id']]
 
+    def altool_args(self):
+        owner_file(self.config['key_path'])
+        return ['--api-key', self.config['key_id'], '--api-issuer', self.config['issuer_id'],
+                '--p8-file-path', self.config['key_path']]
+
     def request(self, path, method='GET', payload=None):
         url = BASE + path if path.startswith('/') else path
         parsed = urllib.parse.urlsplit(url)

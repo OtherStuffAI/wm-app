@@ -162,3 +162,45 @@ options. Internal exports require `testFlightInternalTestingOnly=true` and
 `manageAppVersionAndBuildNumber=false`; uploading changes only `destination` to
 `upload`. API `Testing` verifies Apple status and assignment, while device
 visibility remains unverified until the tester confirms the exact build.
+
+## Recover a reservation created during local export
+
+A successful Xcode export can create an `AWAITING_UPLOAD` reservation before
+sending any binary. Timing and an empty upload-file list alone do not prove
+ownership. Preserve the native `.xcdistributionlogs` bundle named in that run's
+`export.log` under ignored operational storage, without changing its bytes or
+file timestamps; make the retained log files owner-only.
+
+For an explicitly authorized immediate release whose worker is archived and
+whose current Perth-day claim finished `failed`, use:
+
+```sh
+"$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-recover-export \
+  --run "$RUN" --previous-owner "$STOPPED_SESSION_ID" \
+  --export-logs "$RETAINED_NATIVE_EXPORT_LOGS"
+```
+
+This command uploads nothing. It verifies the successful private export policy,
+exact native creation request and `201 Created` reservation ID, absence of
+subsequent native activity, original complete preflight, signed retained IPA
+with `TFInternalTestingOnly=true`, archive/IPA hashes, fresh complete Apple
+history and empty reservation files. Any unrelated pending upload, processing
+build, existing exact build, higher reservation, prior upload intent, changed
+proof or uncertain evidence blocks recovery. It reads the prior worker's archive
+through the supported session CLI and transfers only its exact failed current-day
+claim, retaining the original claim as history. Active claims are never stolen.
+The recovered claim permits only this retained run's upload and readback.
+
+Then `api-upload --run "$RUN"` rechecks the pinned proof and live Apple facts,
+records durable upload intent, and sends the exact retained IPA once with
+Apple's native `altool --upload-package` and the existing private API reference.
+It does not re-export or rebuild. The reservation remains in Apple history and
+participates in every other run's numbering and pending gates. This is neither
+cancellation nor a legacy inactive reservation exception. Upload failure remains
+uncertain and cannot be retried. Use `api-readback` for processing and independent
+private group assignment verification, then finish the recovered daily claim.
+An interrupted recovery must be inspected before any further mutation.
+
+Apple documents [altool as a supported upload route](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds).
+The installed tool's `--help` specifies package identity and private-key-path
+options. Processing and exact private audience readback remain mandatory.

@@ -28,7 +28,7 @@ PENDING = {'upload_pending', 'uploaded_processing', 'api_processing', 'api_uploa
            'api_action_required', 'uploaded_action_required', 'api_assigned_ready', 'api_failed_processing'}
 
 
-def require_daily_claim():
+def require_daily_claim(run=None, action=None):
     import datetime as dt
     from zoneinfo import ZoneInfo
     from nightly_testflight import PRIVATE, safe_private
@@ -40,6 +40,8 @@ def require_daily_claim():
     entry = ledger.get('days', {}).get(day, {})
     if ledger.get('schema') != 1 or not owner or entry.get('owner') != owner or entry.get('status') != 'active':
         raise ValueError('Nightly API mutation requires this session’s active Perth daily claim.')
+    if entry.get('recovery_run') and (run is None or entry['recovery_run'] != run.name or action not in ('api-upload', 'api-readback')):
+        raise ValueError('Recovered claim authorizes only exact retained-run upload/readback.')
 
 
 def local_states(r):
@@ -98,7 +100,7 @@ def execute(r, a, run):
         return
     if a.action in ('api-reserve', 'api-build', 'api-upload') or (
             a.action == 'api-readback' and not getattr(a, 'read_only', False)):
-        require_daily_claim()
+        require_daily_claim(run, a.action)
     if a.action == 'api-reserve':
         print(json.dumps(reserve(r, run, client), indent=2))
         return
@@ -106,6 +108,10 @@ def execute(r, a, run):
     s = r.read(run / 'state.json')
     r.require(s.get('api') and s['app_id'] == APP and r.release_audience(s) == 'internal', 'API actions require exact private API run.')
     state = run / 'state.json'
+    if a.action == 'api-recover-export':
+        from testflight_export_recovery import recover
+        recover(r, client, run, s, a)
+        return
     if a.action == 'api-build':
         r.require(s['stage'] == 'initialized', 'Build already attempted; preserve evidence.')
         r.require(os.environ.get('FLIGHT_DECK_PG_APP_NPUB'), 'Verified FLIGHT_DECK_PG_APP_NPUB required.')
@@ -150,7 +156,12 @@ def execute(r, a, run):
     elif a.action == 'api-upload':
         r.require(s['stage'] == 'exported', 'Upload attempted already; readback only, never retry.')
         h = client.preflight()
-        reservation_gate(r, h, s)
+        recovered = (run / 'export-recovery.json').exists()
+        if recovered:
+            from testflight_export_recovery import upload_gate
+            upload_command = upload_gate(r, client, run, s, h)
+        else:
+            reservation_gate(r, h, s)
         delivery_barrier(r, run, client)
         r.no_other_delivery(run, s)
         r.require(r.validate_artifacts(run, s) == s['artifact'], 'Artifact changed.')
@@ -160,7 +171,7 @@ def execute(r, a, run):
         policy.write_bytes(plistlib.dumps(p)); os.chmod(policy, 0o600)
         s['stage'] = 'upload_pending'; r.write(state, s)
         # Existing helper's durable barrier and validated archive; API authentication only.
-        r.logged(['xcodebuild', '-exportArchive', '-archivePath', run / 'Runner.xcarchive', '-exportPath', run / 'upload-output',
+        r.logged(upload_command if recovered else ['xcodebuild', '-exportArchive', '-archivePath', run / 'Runner.xcarchive', '-exportPath', run / 'upload-output',
                   '-exportOptionsPlist', policy, *client.xcode_args()], run, 'upload')
         s['upload_command_completed_at'] = r.now(); r.write(state, s)
     elif a.action == 'api-readback':

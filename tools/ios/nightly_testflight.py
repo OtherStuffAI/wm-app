@@ -70,6 +70,28 @@ def transition(directory, action, owner, day, result=None):
         return {'day': day, **days[day]}
 
 
+def recover_claim(directory, owner, previous_owner, run, state_sha256):
+    """Explicitly resume a failed day for one proved retained export, preserving history."""
+    if not owner or owner == previous_owner or not run or len(state_sha256) != 64:
+        raise ValueError('Distinct recovery owner and exact retained run are required.')
+    if directory.is_symlink() or any((directory / name).is_symlink() for name in ('.lock', 'ledger.json', 'ledger.new')):
+        raise ValueError('Claim storage cannot use symlinks.')
+    day = dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat()
+    with (directory / '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        path = directory / 'ledger.json'
+        ledger = json.loads(path.read_text())
+        entry = ledger.get('days', {}).get(day)
+        if ledger.get('schema') != 1 or not entry or entry.get('owner') != previous_owner or entry.get('status') != 'failed' or any(v.get('status') == 'active' for v in ledger['days'].values()):
+            raise ValueError('Recovery requires exact failed current-day owner and no active claim.')
+        prior = dict(entry)
+        entry.clear()
+        entry.update(owner=owner, status='active', started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                     recovery_run=run, recovery_state_sha256=state_sha256, prior_claim=prior)
+        save(path, ledger)
+        return {'day': day, **entry}
+
+
 def prerequisites(fd):
     repos = {}
     for name, repo in [('flightdeck', fd), ('wmapp', ROOT)]:
