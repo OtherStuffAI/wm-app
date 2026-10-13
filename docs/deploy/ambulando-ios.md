@@ -54,8 +54,13 @@ Signing requires the existing authorized Apple team account in Xcode and explici
 Network Extensions provisioning for both Ambulando identifiers. A wildcard
 profile or installed signing certificate alone is insufficient. Follow
 [iOS FIPS](ios-fips.md) for capability and transport details. When signing is
-blocked, sign into the authorized account under Xcode Settings → Accounts, enable
-Network Extensions for both App IDs, and download/create matching profiles.
+blocked, inspect the live Xcode Settings → Apple Accounts team first. A CLI
+“No Accounts” error alone does not establish that the GUI is signed out. Confirm
+the selected Xcode installation, process user, home and exact configured team
+before changing account configuration. If the account is present, use Xcode's
+supported profile refresh and automatic signing UI to check provisioning for
+both App IDs. Enable Network Extensions and obtain matching profiles through
+the authorized team. Add an account only when the live GUI confirms it is absent.
 Reconnect/unlock the already-paired iPhone, keep Developer Mode enabled, then:
 
 ```sh
