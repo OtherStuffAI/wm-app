@@ -150,3 +150,15 @@ SSE-worker and sync caller as follows:
 Native non-browser features should instantiate the same generic endpoint-pinned
 FIPS transport implementation and preserve the same redirect, header, socket,
 cancellation and revocation rules. They do not need a JavaScript bridge.
+
+## Foreground lifecycle events
+
+Non-resumed native lifecycle states revoke every document's transport and signer
+capabilities. The generic `wingman-fips-transport-revoked` event follows cleanup
+of streams, sockets, pending calls and worker ports. On resume, a fresh provider
+emits `wingman-fips-transport-ready`; the native shell then emits `focus` after
+both transport and signer providers finish. Consumers must replace old handles
+and reattach their workers, then run their existing authenticated reconnect and
+cursor recovery. An old handle never becomes usable again. JavaScript events
+are advisory; native epoch and live-document checks enforce revocation even
+when the WebView cannot execute before suspension.

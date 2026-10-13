@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/app_config.dart';
+import 'core/app_product.dart';
 import 'core/flight_deck_update_manager.dart';
 import 'core/native_core_bridge.dart';
 import 'core/signer_vault.dart';
@@ -174,13 +175,16 @@ class _WingmanAppState extends State<WingmanApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Wingman',
+      title: AppProduct.title,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF286A5A),
+          seedColor:
+              const Color(AppProduct.ambulando ? 0xFF17364A : 0xFF286A5A),
           brightness: Brightness.light,
         ),
+        scaffoldBackgroundColor:
+            AppProduct.ambulando ? const Color(0xFFFAF8F1) : null,
         useMaterial3: true,
         visualDensity: VisualDensity.standard,
       ),

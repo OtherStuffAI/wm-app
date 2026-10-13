@@ -5,6 +5,8 @@ class LocalFlightDeckServer {
 
   static Future<LocalFlightDeckServer> start({
     FlightDeckUpdateController? updates,
+    String assetPrefix = 'assets/flightdeck/',
+    int serverPort = 47831,
   }) async {
     return LocalFlightDeckServer();
   }

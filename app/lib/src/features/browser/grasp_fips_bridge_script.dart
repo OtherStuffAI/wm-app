@@ -36,6 +36,7 @@ String graspFipsBridgeScript(String documentToken, String pageOrigin) => '''
     for (const cleanup of [...portCleanups]) cleanup();
     for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error('GRASP grant revoked.')); }
     pending.clear();
+    window.dispatchEvent(new Event('wingman-fips-transport-revoked'));
   };
   const encode = bytes => {
     let s = ''; for (const b of bytes) s += String.fromCharCode(b);

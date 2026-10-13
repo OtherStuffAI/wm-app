@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import UIKit
 
 final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
-    private static let providerID = "com.wingmanbefree.wingmanApp.FipsPacketTunnel"
+    private static let providerID = (Bundle.main.bundleIdentifier ?? "com.wingmanbefree.wingmanApp") + ".FipsPacketTunnel"
     private var manager: NETunnelProviderManager?
     private var operation: FlutterResult?
     private var operationID = UUID()

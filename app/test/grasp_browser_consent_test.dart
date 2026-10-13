@@ -441,7 +441,8 @@ void main() {
     'identity',
     'lock',
     'tab-close',
-    'disconnect-reconnect'
+    'disconnect-reconnect',
+    'suspension'
   ]) {
     testWidgets('pending GRASP signature invalidated by $reason',
         (tester) async {
@@ -454,6 +455,13 @@ void main() {
       if (reason == 'navigation') {
         await submitFakeNavigationRequest(
             controllerIndex: 0, url: page, isMainFrame: true);
+      } else if (reason == 'suspension') {
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        await tester.pumpAndSettle();
+        tester.binding
+            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pumpAndSettle();
       } else if (reason == 'identity' || reason == 'lock') {
         h.config = reason == 'identity'
             ? h.config.copyWith(deviceNpub: 'other')

@@ -30,6 +30,8 @@ dependency_overrides:
     path: ../packages/webview_flutter_wkwebview
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_lints: ^4.0.0
   flutter_secure_storage_platform_interface: ^2.0.1
   flutter_test:
@@ -42,6 +44,33 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - path: assets/ambulando/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/assets/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/ambulando/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/ambulando/icons/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/legal/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/napplets/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/napplets/message-activity/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/napplets/org-data/
+      flavors:
+        - ambulando
+    - path: assets/ambulando/napplets/org-data/v1/
+      flavors:
+        - ambulando
     - assets/app-selector/
     - assets/flightdeck/
     - assets/flightdeck/assets/

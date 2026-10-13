@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
+import '../../core/app_product.dart';
 import '../../core/fips_runtime_service.dart';
 import '../../core/flight_deck_update_manager.dart';
 import '../../core/native_core_bridge.dart';
@@ -58,7 +59,8 @@ class _ShellHomeState extends State<ShellHome> {
   final GlobalKey<BrowserScreenState> _browserKey =
       GlobalKey<BrowserScreenState>();
   ShellSurface _selectedSurface = ShellSurface.browser;
-  final ValueNotifier<bool> _browserFocusMode = ValueNotifier(false);
+  final ValueNotifier<bool> _browserFocusMode =
+      ValueNotifier(AppProduct.ambulando);
   final ValueNotifier<BrowserBookmarkMenuState> _bookmarkMenuState =
       ValueNotifier(const BrowserBookmarkMenuState.unavailable());
   final MacOSMenuBridge _macOSMenuBridge = MacOSMenuBridge();
@@ -163,7 +165,7 @@ class _ShellHomeState extends State<ShellHome> {
             children: [
               const Padding(
                 padding: EdgeInsets.fromLTRB(28, 24, 16, 16),
-                child: Text('Wingman'),
+                child: Text(AppProduct.title),
               ),
               if (_selectedSurface == ShellSurface.browser && browserFocused)
                 Semantics(

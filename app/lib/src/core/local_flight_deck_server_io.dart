@@ -6,7 +6,8 @@ import 'package:flutter/services.dart';
 import 'flight_deck_update_models.dart';
 
 class LocalFlightDeckServer {
-  LocalFlightDeckServer._(this._server, this._assetKeys, this._updates) {
+  LocalFlightDeckServer._(
+      this._server, this._assetKeys, this._updates, this.assetPrefix) {
     _server.listen(_serve);
   }
 
@@ -15,30 +16,33 @@ class LocalFlightDeckServer {
   static const origin = 'http://$host:$port';
   static const _assetPrefix = 'assets/flightdeck/';
 
+  final String assetPrefix;
   final HttpServer _server;
   final Set<String> _assetKeys;
   final FlightDeckUpdateController? _updates;
 
   static Future<LocalFlightDeckServer> start({
     FlightDeckUpdateController? updates,
+    String assetPrefix = _assetPrefix,
+    int serverPort = port,
   }) async {
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final assetKeys = manifest
         .listAssets()
-        .where((key) => key.startsWith(_assetPrefix))
+        .where((key) => key.startsWith(assetPrefix))
         .toSet();
-    if (!assetKeys.contains('${_assetPrefix}index.html')) {
+    if (!assetKeys.contains('${assetPrefix}index.html')) {
       throw StateError('The packaged Flight Deck bundle is missing index.html');
     }
     final server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
-      port,
+      serverPort,
       shared: true,
     );
-    return LocalFlightDeckServer._(server, assetKeys, updates);
+    return LocalFlightDeckServer._(server, assetKeys, updates, assetPrefix);
   }
 
-  String get url => '$origin/';
+  String get url => 'http://$host:${_server.port}/';
 
   Future<void> _serve(HttpRequest request) async {
     if (request.method != 'GET' && request.method != 'HEAD') {
@@ -104,9 +108,9 @@ class LocalFlightDeckServer {
   }
 
   Future<void> _servePackaged(HttpRequest request, String relativePath) async {
-    var assetKey = '$_assetPrefix$relativePath';
+    var assetKey = '$assetPrefix$relativePath';
     if (!_assetKeys.contains(assetKey) && !_hasFileExtension(relativePath)) {
-      assetKey = '${_assetPrefix}index.html';
+      assetKey = '${assetPrefix}index.html';
     }
     if (!_assetKeys.contains(assetKey)) {
       request.response.statusCode = HttpStatus.notFound;

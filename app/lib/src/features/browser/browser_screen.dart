@@ -12,6 +12,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../../core/app_config.dart';
+import '../../core/app_product.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
@@ -98,11 +99,11 @@ class BrowserScreenState extends State<BrowserScreen>
   Timer? _addressBarHideTimer;
   int _addressBarHideGeneration = 0;
   bool _addressBarVisible = false;
-  bool _focusMode = false;
+  bool _focusMode = AppProduct.ambulando;
   static const _nip44PolicyTarget = '*';
   static const _tabClickAddressReveal = Duration(seconds: 3);
   static const _homeTitle = 'New Tab';
-  static const _flightDeckTitle = 'Flight Deck';
+  static const _flightDeckTitle = AppProduct.bundledTitle;
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v3.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
@@ -131,6 +132,7 @@ class BrowserScreenState extends State<BrowserScreen>
   bool _restoringTabs = false;
   StreamSubscription<bool>? _fipsEnabledSubscription;
   bool _fipsEnabled = true;
+  bool _documentActive = true;
   int _fipsEnabledEpoch = 0;
 
   @override
@@ -243,6 +245,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   Future<void> _refreshDocumentProviders(BrowserTab tab, bool enabled) async {
     final epoch = tab.signerDocumentEpoch;
+    if (!_documentActive) return;
     if (enabled) await _injectGraspBridge(tab);
     if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
     await _injectIfTrusted(tab);
@@ -653,7 +656,7 @@ class BrowserScreenState extends State<BrowserScreen>
     _bookmarks = bookmarks;
     _selectorBackground = background;
     _labelColour = colour;
-    _builtInStartup = builtInStartup;
+    _builtInStartup = AppProduct.ambulando || builtInStartup;
     _reloadHomeTabs();
     _notifyBookmarkMenuState();
   }
@@ -1791,6 +1794,8 @@ class BrowserScreenState extends State<BrowserScreen>
           labelColour: _labelColour);
 
   Future<void> _injectGraspBridge(BrowserTab tab) async {
+    if (!_documentActive) return;
+    final epoch = tab.signerDocumentEpoch;
     // WKWebView (iOS/macOS) and Android's WebMessageListener validate
     // main-frame origin natively. A platform name alone is not authority.
     if (!await tab.nativeChannelsReady ||
@@ -1800,11 +1805,13 @@ class BrowserScreenState extends State<BrowserScreen>
         !_fipsEnabled) {
       return;
     }
-    final epoch = tab.signerDocumentEpoch;
+    if (!_documentActive || tab.signerDocumentEpoch != epoch) return;
     if (widget.fipsRuntime != null && !await widget.fipsRuntime!.isEnabled) {
       return;
     }
-    if (!_fipsEnabled || tab.signerDocumentEpoch != epoch) return;
+    if (!_documentActive || !_fipsEnabled || tab.signerDocumentEpoch != epoch) {
+      return;
+    }
     final identity = widget.config.deviceNpub;
     final url = await tab.controller.currentUrl();
     if (!mounted ||
@@ -1820,6 +1827,7 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     late final GraspFipsBrowserBridge bridge;
     bool current() =>
+        _documentActive &&
         _fipsEnabled &&
         mounted &&
         _tabById(tab.id) == tab &&
@@ -1936,9 +1944,20 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _injectIfTrusted(BrowserTab tab) async {
+    if (!_documentActive) return;
+    final epoch = tab.signerDocumentEpoch;
     if (Platform.isAndroid && !await tab.nativeChannelsReady) return;
-    if (!mounted || tab.disposed) return;
-    final url = tab.currentUrl ?? widget.config.flightDeckUrl;
+    if (!mounted || tab.disposed || !_documentActive) return;
+    final url = await tab.controller.currentUrl();
+    if (url == null ||
+        !mounted ||
+        !_documentActive ||
+        tab.disposed ||
+        tab.signerDocumentEpoch != epoch ||
+        SignerPolicy.normalizeOrigin(url) !=
+            SignerPolicy.normalizeOrigin(tab.currentUrl ?? '')) {
+      return;
+    }
     final origin = SignerPolicy.normalizeOrigin(url);
     final policy = _signerPolicy;
     if (!policy.canInject(url)) {
@@ -1960,13 +1979,36 @@ class BrowserScreenState extends State<BrowserScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasActive = _documentActive;
+    _documentActive = state == AppLifecycleState.resumed;
     for (final tab in _tabs) {
       _recordHostDiagnostic(tab, 'lifecycle');
-      // Background/OS lock cannot retain a diagnostics retrieval grant.
-      if (state != AppLifecycleState.resumed) {
+      if (!_documentActive) {
         tab.clearDiagnosticsTransition();
-        tab.revokeDiagnostics();
+        tab.revokeSigningDocument();
+      } else if (!wasActive && !tab.isHome) {
+        // Validate the live main-frame URL and mint new document capabilities.
+        // Storage and the page survive; endpoint grants never survive suspension.
+        unawaited(_resumeDocument(tab));
       }
+    }
+    if (!_documentActive) unawaited(_persistTabsNow());
+  }
+
+  Future<void> _resumeDocument(BrowserTab tab) async {
+    final epoch = tab.signerDocumentEpoch;
+    try {
+      await _refreshDocumentProviders(tab, _fipsEnabled);
+      if (!mounted ||
+          !_documentActive ||
+          tab.disposed ||
+          tab.signerDocumentEpoch != epoch) {
+        return;
+      }
+      await tab.controller
+          .runJavaScript("window.dispatchEvent(new Event('focus'))");
+    } catch (_) {
+      // A terminated WebView remains revoked; the visible reload control retries.
     }
   }
 
@@ -2480,6 +2522,7 @@ class BrowserScreenState extends State<BrowserScreen>
             pageOriginForAuth !=
                 SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
     bool nativeContextValid() =>
+        _documentActive &&
         ((meshTarget == null && !graspAuth && !directAuth) || _fipsEnabled) &&
         mounted &&
         _tabById(tabId) == tab &&
@@ -3505,7 +3548,15 @@ class BrowserScreenState extends State<BrowserScreen>
   if (window !== window.top || location.origin !== ${jsonEncode(pageOrigin)}) return;
   const signerDocumentToken = ${jsonEncode(signerDocumentToken)};
   if (window.nostr && window.nostr.__wingmanDocument === signerDocumentToken) return;
+  window.__wingmanSignerRevoke?.();
   const pending = new Map();
+  let revoked = false;
+  window.__wingmanSignerRevoke = (secret = signerDocumentToken) => {
+    if (secret !== signerDocumentToken || revoked) return;
+    revoked = true;
+    for (const entry of pending.values()) entry.reject(new Error('Signer document revoked.'));
+    pending.clear();
+  };
   let seq = 0;
   window.__wingmanResolve = (id, payload) => {
     const entry = pending.get(id);
@@ -3515,18 +3566,19 @@ class BrowserScreenState extends State<BrowserScreen>
     else entry.resolve(payload ? payload.result : undefined);
   };
   function callNative(method, params) {
-    const id = String(++seq);
+    if (revoked) return Promise.reject(new Error('Signer document revoked.'));
+    const id = signerDocumentToken + ':' + String(++seq);
     const message = JSON.stringify({ id, method, params: params || {}, signerDocumentToken, towerDocumentToken: ${jsonEncode(towerDocumentToken)} });
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
     });
-    if (method.startsWith('diagnostics.')) {
+    {
       // Revoked documents may never receive another native callback.
       const timeout = setTimeout(() => {
         const entry = pending.get(id);
         if (!entry) return;
         pending.delete(id);
-        entry.reject(new Error('Diagnostics request expired or revoked.'));
+        entry.reject(new Error('Native request expired or revoked.'));
       }, 30000);
       promise.then(() => clearTimeout(timeout), () => clearTimeout(timeout));
     }
@@ -4344,6 +4396,13 @@ class BrowserTab {
   bool disposed = false;
 
   void revokeSigningDocument() {
+    final oldSignerToken = signerDocumentToken;
+    if (oldSignerToken != null) {
+      unawaited(controller
+          .runJavaScript(
+              'window.__wingmanSignerRevoke?.(${jsonEncode(oldSignerToken)})')
+          .catchError((Object _) {}));
+    }
     graspBridge?.close();
     graspBridge = null;
     revokeDiagnostics();
