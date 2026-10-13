@@ -459,8 +459,7 @@ void main() {
     expect(find.byTooltip('Back'), findsNothing);
     expect(find.text('New Tab'), findsOneWidget);
     expect(fakeLoadedRequestUrls, isEmpty);
-    expect(fakeLoadedHtmlStrings.single,
-        contains('Browser and Nostr signer ready'));
+    expect(fakeLoadedHtmlStrings.single, contains('Choose an app to open'));
     expect(fakeLoadedHtmlStrings.single, isNot(contains('Flight Deck')));
     expect(fakeLoadedHtmlStrings.single, isNot(contains('Tower')));
     expect(fakeLoadedHtmlStrings.single, isNot(contains('Autopilot')));
@@ -1034,7 +1033,7 @@ void main() {
     expect(find.byTooltip('Close tab'), findsNWidgets(2));
   });
 
-  testWidgets('browser bookmarks add, rename, reload, open, and remove',
+  testWidgets('browser saved apps edit actual URL, reload, open, and remove',
       (tester) async {
     final config = AppConfig.defaults().copyWith(
       deviceSecret: 'nsec-placeholder',
@@ -1085,38 +1084,31 @@ void main() {
     const canonicalUrl = 'https://example.com/projects/one?view=board#today';
     expect(fakeLoadedHtmlStrings.last, contains('example.com'));
     expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
-    expect(fakeLoadedHtmlStrings.last, contains('data-wingman-bookmark-url'));
-    expect(
-      fakeLoadedHtmlStrings.last,
-      contains('data-wingman-remove-bookmark-url'),
-    );
-    expect(fakeLoadedHtmlStrings.last, contains('Edit bookmark name'));
-    expect(fakeLoadedHtmlStrings.last, contains('>Cancel</button>'));
-    expect(fakeLoadedHtmlStrings.last, contains('event.key !== \'Escape\''));
-    expect(
-      fakeLoadedHtmlStrings.last,
-      contains('if (!title) {\n          closeEditor(card);'),
-    );
-
+    expect(fakeLoadedHtmlStrings.last, contains('class="app-open"'));
+    expect(fakeLoadedHtmlStrings.last, contains('Edit apps and background'));
     final homeControllerIndex = fakeWebViewControllerCreationCount - 1;
     submitFakeJavaScriptMessage(
-      controllerIndex: homeControllerIndex,
-      channel: 'WingmanSigner',
-      message:
-          '{"id":"bookmark-rename","method":"renameBookmark","params":{"url":"$canonicalUrl","title":"  Project board  "}}',
-    );
+        controllerIndex: homeControllerIndex,
+        channel: 'WingmanSigner',
+        message: jsonEncode({
+          'id': 'edit',
+          'method': 'editBookmark',
+          'params': {'url': canonicalUrl}
+        }));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit saved app'), findsOneWidget);
+    final nameField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'App name');
+    final urlField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Launch URL');
+    await tester.enterText(nameField, 'Project board');
+    const editedUrl = 'https://example.com/projects?intentional=1#part';
+    await tester.enterText(urlField, editedUrl);
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(fakeLoadedHtmlStrings.last, contains('Project board'));
-    expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
-
-    submitFakeJavaScriptMessage(
-      controllerIndex: homeControllerIndex,
-      channel: 'WingmanSigner',
-      message:
-          '{"id":"bookmark-blank","method":"renameBookmark","params":{"url":"$canonicalUrl","title":"   "}}',
-    );
-    await tester.pumpAndSettle();
-    expect(fakeLoadedHtmlStrings.last, contains('Project board'));
+    expect(fakeLoadedHtmlStrings.last, contains(editedUrl));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains(canonicalUrl)));
 
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1125,18 +1117,18 @@ void main() {
     await tester.pumpWidget(shell());
     await tester.pumpAndSettle();
 
-    expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
+    expect(fakeLoadedHtmlStrings.last, contains(editedUrl));
     expect(fakeLoadedHtmlStrings.last, contains('Project board'));
     final controllerCount = fakeWebViewControllerCreationCount;
     submitFakeJavaScriptMessage(
       controllerIndex: controllerCount - 1,
       channel: 'WingmanSigner',
       message:
-          '{"id":"bookmark-open","method":"navigateTab","params":{"url":"$canonicalUrl"}}',
+          '{"id":"bookmark-open","method":"navigateTab","params":{"url":"$editedUrl"}}',
     );
     await tester.pumpAndSettle();
     expect(fakeWebViewControllerCreationCount, controllerCount);
-    expect(fakeLoadedRequestUrls.last, canonicalUrl);
+    expect(fakeLoadedRequestUrls.last, editedUrl);
 
     await tester.tap(find.byTooltip('New tab'));
     await tester.pumpAndSettle();
@@ -1145,11 +1137,11 @@ void main() {
       controllerIndex: removalHomeControllerIndex,
       channel: 'WingmanSigner',
       message:
-          '{"id":"bookmark-remove","method":"removeBookmark","params":{"url":"$canonicalUrl"}}',
+          '{"id":"bookmark-remove","method":"removeBookmark","params":{"url":"$editedUrl"}}',
     );
     await tester.pumpAndSettle();
-    expect(fakeLoadedHtmlStrings.last, contains('No saved bookmarks yet'));
-    expect(fakeLoadedHtmlStrings.last, isNot(contains(canonicalUrl)));
+    expect(fakeLoadedHtmlStrings.last, contains('No saved apps yet'));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains(editedUrl)));
   });
 
   testWidgets('new-tab bookmark layout wraps long labels at narrow width',
@@ -1186,8 +1178,8 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(fakeLoadedHtmlStrings.last, contains(longTitle));
-    expect(fakeLoadedHtmlStrings.last, contains('overflow-wrap: anywhere'));
-    expect(fakeLoadedHtmlStrings.last, contains('min-width: 0'));
+    expect(fakeLoadedHtmlStrings.last, contains('overflow-wrap:anywhere'));
+    expect(fakeLoadedHtmlStrings.last, contains('min-width:0'));
   });
 
   testWidgets('Wingman browser cycles tabs with Ctrl+Tab', (tester) async {

@@ -10,6 +10,7 @@ class FakePhotoPicker extends ImagePicker {
   XFile? file;
   Exception? error;
   int calls = 0;
+  double expectedDimension = 512;
 
   @override
   Future<XFile?> pickImage({
@@ -22,8 +23,8 @@ class FakePhotoPicker extends ImagePicker {
   }) async {
     calls++;
     expect(source, ImageSource.gallery);
-    expect(maxWidth, 512);
-    expect(maxHeight, 512);
+    expect(maxWidth, expectedDimension);
+    expect(maxHeight, expectedDimension);
     expect(imageQuality, 90);
     expect(requestFullMetadata, isFalse);
     if (error != null) throw error!;
@@ -61,6 +62,20 @@ void main() {
   });
 
   tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  test(
+      'background selection retains more resolution within existing byte limits',
+      () async {
+    picker.expectedDimension = 1920;
+    picker.file = XFile.fromData(png, name: 'background.png');
+    final bytes = await uploader.pick(maxDimension: 1920);
+    final codec = await ui.instantiateImageCodec(bytes!);
+    final frame = await codec.getNextFrame();
+    expect(frame.image.width, 800);
+    expect(frame.image.height, 400);
+    frame.image.dispose();
+    codec.dispose();
+  });
 
   test('iPhone and iPad use gallery and normalize the selected image',
       () async {

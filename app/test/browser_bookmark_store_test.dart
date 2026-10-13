@@ -61,6 +61,52 @@ void main() {
     expect(restored.url, original.url);
   });
 
+  test('thumbnail precedence and background are persisted and identity scoped',
+      () async {
+    final store = BrowserBookmarkStore();
+    final image = 'data:image/png;base64,${base64Encode([
+          137,
+          80,
+          78,
+          71,
+          13,
+          10,
+          26,
+          10
+        ])}';
+    final app = BrowserBookmark(
+        title: 'App',
+        url: 'https://example.com/?keep=1#part',
+        iconUrl: 'https://example.com/icon.png',
+        customImage: image);
+    await store.save('npub-a', [app]);
+    await store.saveBackground('npub-a', image);
+    final restored = (await store.load('npub-a')).single;
+    expect(restored.thumbnail, image);
+    expect(restored.url, app.url);
+    expect(restored.iconUrl, app.iconUrl);
+    expect(await store.loadBackground('npub-a'), image);
+    expect(await store.loadBackground('npub-b'), isNull);
+    await store.saveBackground('npub-a', null);
+    expect(await store.loadBackground('npub-a'), isNull);
+  });
+
+  test('metadata cannot become a service endpoint or script', () {
+    expect(safeBookmarkIconUrl('https://peer.fips/icon.png'), isNull);
+    expect(safeBookmarkIconUrl('http://remote.example/icon.png'), isNull);
+    expect(safeBookmarkIconUrl('javascript:alert(1)'), isNull);
+    expect(safeBookmarkImage('data:image/svg+xml,<svg/>'), isNull);
+    expect(safeBookmarkImage('data:image/png;base64,broken'), isNull);
+    expect(safeBookmarkIconUrl('http://127.0.0.1:47831/icon.png'), isNotNull);
+    expect(
+        canonicalBrowserBookmarkUrl('https://user:pass@example.com'), isNull);
+    expect(canonicalBrowserBookmarkUrl('https://example.com/a b'), isNull);
+    const app = BrowserBookmark(
+        title: 'Legacy', url: 'https://example.com/path?private=1');
+    expect(app.thumbnail, 'https://example.com/favicon.ico');
+    expect(app.renamed('New').url, app.url);
+  });
+
   test('corrupt and stale entries are ignored and duplicates are removed',
       () async {
     final preferences = SharedPreferencesAsync();

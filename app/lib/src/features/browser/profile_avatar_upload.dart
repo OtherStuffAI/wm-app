@@ -31,15 +31,15 @@ class ProfileAvatarUpload {
   final ImagePicker _imagePicker;
   final Future<XFile?> Function() _selectFile;
 
-  Future<Uint8List?> pick() async {
+  Future<Uint8List?> pick({int maxDimension = 512}) async {
     try {
       final file = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
           // Native resizing also converts HEIC to JPEG before Dart validation.
           // Avoid requesting library-wide access or original photo metadata.
           ? await _imagePicker.pickImage(
               source: ImageSource.gallery,
-              maxWidth: 512,
-              maxHeight: 512,
+              maxWidth: maxDimension.toDouble(),
+              maxHeight: maxDimension.toDouble(),
               imageQuality: 90,
               requestFullMetadata: false,
             )
@@ -49,7 +49,8 @@ class ProfileAvatarUpload {
         throw const AvatarUploadException(
             'Choose an image no larger than 5 MB.');
       }
-      return await prepare(await file.readAsBytes());
+      return await prepare(await file.readAsBytes(),
+          maxDimension: maxDimension);
     } on AvatarUploadException {
       rethrow;
     } on PlatformException catch (error) {
@@ -86,7 +87,11 @@ class ProfileAvatarUpload {
         ]),
       ]);
 
-  static Future<Uint8List> prepare(Uint8List bytes) async {
+  static Future<Uint8List> prepare(Uint8List bytes,
+      {int maxDimension = 512}) async {
+    if (maxDimension < 1 || maxDimension > 2048) {
+      throw const AvatarUploadException('Invalid image dimensions.');
+    }
     if (bytes.isEmpty || bytes.length > maxInputBytes) {
       throw const AvatarUploadException('Choose an image no larger than 5 MB.');
     }
@@ -110,8 +115,8 @@ class ProfileAvatarUpload {
           throw const AvatarUploadException(
               'Choose an image below 40 megapixels.');
         }
-        final scale =
-            math.min(1.0, 512 / math.max(descriptor.width, descriptor.height));
+        final scale = math.min(
+            1.0, maxDimension / math.max(descriptor.width, descriptor.height));
         final codec = await descriptor.instantiateCodec(
           targetWidth: math.max(1, (descriptor.width * scale).round()),
           targetHeight: math.max(1, (descriptor.height * scale).round()),
