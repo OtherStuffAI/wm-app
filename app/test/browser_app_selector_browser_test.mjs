@@ -16,6 +16,24 @@ try {
     await page.evaluate(() => {window.calls=[];window.WingmanSigner={postMessage:raw=>window.calls.push(JSON.parse(raw))};});
     await page.waitForFunction(() => Array.from(document.querySelectorAll('.icon img')).every(img=>img.complete));
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true, `No horizontal overflow at ${width}px`);
+    assert.equal(await page.locator('header,h1').count(),0);
+    assert.equal(await page.locator('.star:visible').count(),0);
+    const appearance = await page.evaluate(() => ({
+      card:getComputedStyle(document.querySelector('.app')).backgroundColor,
+      image:getComputedStyle(document.querySelector('.icon img')).backgroundColor,
+      padding:getComputedStyle(document.querySelector('.icon img')).padding,
+      size:document.querySelector('.icon').getBoundingClientRect().width,
+      colour:getComputedStyle(document.querySelector('.name')).color,
+      shadow:getComputedStyle(document.querySelector('.name')).textShadow,
+      cog:document.querySelector('.settings').getBoundingClientRect().right,
+    }));
+    assert.equal(appearance.card,'rgba(0, 0, 0, 0)');
+    assert.equal(appearance.image,'rgba(0, 0, 0, 0)');
+    assert.equal(appearance.padding,'0px');
+    assert.ok(appearance.size>=100 && appearance.size<=120);
+    assert.equal(appearance.colour,'rgb(255, 255, 255)');
+    assert.notEqual(appearance.shadow,'none');
+    assert.equal(appearance.cog,width-16);
     assert.equal(await page.locator('.edit:visible').count(),0);
     assert.equal(await page.locator('.remove:visible').count(),0);
     assert.equal(await page.locator('.icon img').count(),1,'Custom image survives; broken favicon falls back to initial');
@@ -24,6 +42,18 @@ try {
     assert.equal((await page.evaluate(()=>window.calls.at(-1))).params.url,'https://apps.example/deck?workspace=deliberately-long-route&scope=keep-this#today');
     await page.screenshot({path:join(directory,`selector-${width}.png`),fullPage:true});
     await page.getByRole('button',{name:'Edit apps and background'}).click();
+    assert.equal(await page.locator('.star:visible').count(),6);
+    const star=page.getByRole('button',{name:'Open Flight Deck on startup',exact:true});
+    await star.click();
+    assert.equal(await star.getAttribute('aria-pressed'),'true');
+    assert.deepEqual((await page.evaluate(()=>window.calls.at(-1))).params,{url:'http://127.0.0.1:47831/',enabled:true});
+    assert.equal((await page.evaluate(()=>window.calls.at(-1))).method,'setStartup');
+    await star.click();
+    assert.equal(await star.getAttribute('aria-pressed'),'false');
+    await page.locator('#label-colour').evaluate(el=>{el.value='#ffcc88';el.dispatchEvent(new Event('change',{bubbles:true}));});
+    assert.equal(await page.locator('.name').first().evaluate(el=>getComputedStyle(el).color),'rgb(255, 204, 136)');
+    assert.equal((await page.evaluate(()=>window.calls.at(-1))).method,'setLabelColour');
+    assert.equal((await page.evaluate(()=>window.calls.at(-1))).params.colour,'#ffcc88');
     assert.equal(await page.locator('.edit:visible').count(),5);
     assert.equal(await page.locator('.remove:visible').count(),5);
     await page.getByRole('button',{name:'Edit Solvitur Ambulando',exact:true}).click();

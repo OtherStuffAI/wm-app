@@ -125,6 +125,7 @@ class _BookmarkEditorState extends State<BookmarkEditor> {
                               title: _title.text.trim(),
                               url: url,
                               customImage: _image,
+                              startup: widget.bookmark.startup,
                               iconUrl: url == widget.bookmark.url
                                   ? widget.bookmark.iconUrl
                                   : null));

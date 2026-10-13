@@ -11,6 +11,7 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
+import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
 import 'package:wingman_app/src/core/signer_vault.dart';
 import 'fake_webview_platform.dart';
@@ -129,7 +130,7 @@ class Harness {
           ),
         ),
       );
-  Future<void> start(WidgetTester tester) async {
+  Future<void> start(WidgetTester tester, {bool builtInStartup = false}) async {
     SharedPreferences.setMockInitialValues({});
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
@@ -137,6 +138,8 @@ class Harness {
       'wingman.browser.last_signer_npub.v1',
       config.deviceNpub,
     );
+    await BrowserBookmarkStore()
+        .saveBuiltInStartup(config.deviceNpub, builtInStartup);
     installFakeWebViewPlatform();
     await tester.pumpWidget(widget());
     await tester.pumpAndSettle();

@@ -4,12 +4,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class BrowserBookmark {
   const BrowserBookmark(
-      {required this.title, required this.url, this.iconUrl, this.customImage});
+      {required this.title,
+      required this.url,
+      this.iconUrl,
+      this.customImage,
+      this.startup = false});
 
   final String title;
   final String url;
   final String? iconUrl;
   final String? customImage;
+  final bool startup;
 
   String? get thumbnail => customImage ?? iconUrl ?? bookmarkFaviconUrl(url);
 
@@ -20,6 +25,7 @@ class BrowserBookmark {
       url: url,
       iconUrl: iconUrl,
       customImage: customImage,
+      startup: startup,
     );
   }
 
@@ -27,7 +33,8 @@ class BrowserBookmark {
         'title': title,
         'url': url,
         'iconUrl': iconUrl,
-        'customImage': customImage
+        'customImage': customImage,
+        'startup': startup
       };
 
   static BrowserBookmark? tryParse(Object? value) {
@@ -40,6 +47,7 @@ class BrowserBookmark {
       url: canonicalUrl,
       iconUrl: safeBookmarkIconUrl(value['iconUrl']?.toString()),
       customImage: safeBookmarkImage(value['customImage']?.toString()),
+      startup: value['startup'] == true,
     );
   }
 }
@@ -124,6 +132,32 @@ class BrowserBookmarkStore {
     }
   }
 
+  Future<String> loadLabelColour(String signerNpub) async {
+    final key = _storageKey(signerNpub);
+    return safeLabelColour(
+        key == null ? null : await _preferences.getString('$key.labelColour'));
+  }
+
+  Future<void> saveLabelColour(String signerNpub, String colour) async {
+    final key = _storageKey(signerNpub);
+    if (key != null) {
+      await _preferences.setString('$key.labelColour', safeLabelColour(colour));
+    }
+  }
+
+  Future<bool> loadBuiltInStartup(String signerNpub) async {
+    final key = _storageKey(signerNpub);
+    return key != null &&
+        await _preferences.getBool('$key.builtInStartup.v1') == true;
+  }
+
+  Future<void> saveBuiltInStartup(String signerNpub, bool enabled) async {
+    final key = _storageKey(signerNpub);
+    if (key != null) {
+      await _preferences.setBool('$key.builtInStartup.v1', enabled);
+    }
+  }
+
   String? _storageKey(String signerNpub) {
     final normalized = signerNpub.trim();
     return normalized.isEmpty ? null : '$keyPrefix$normalized';
@@ -181,3 +215,9 @@ String? bookmarkEditError(List<BrowserBookmark> bookmarks,
   }
   return null;
 }
+
+/// Only opaque six-digit RGB values may enter launcher CSS.
+String safeLabelColour(String? value) =>
+    value != null && RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)
+        ? value.toLowerCase()
+        : '#ffffff';

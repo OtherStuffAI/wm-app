@@ -12,6 +12,7 @@ import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/core/signer_vault.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
+import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart';
 import 'package:wingman_app/src/features/browser/nostr_profile_store.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
@@ -76,7 +77,7 @@ void main() {
   }
 
   testWidgets(
-      'saved vault gates restored tabs and same identity unlock preserves them',
+      'saved vault gates starred startup tabs and same identity unlock preserves them',
       (tester) async {
     final vault = ObservedVault();
     late SignerVaultUnlock identity;
@@ -105,6 +106,12 @@ void main() {
     });
     await prefs.setString('wingman.browser.last_signer_npub.v1', identity.npub);
     await prefs.setString(tabsKey, snapshot);
+    await BrowserBookmarkStore().save(identity.npub, const [
+      BrowserBookmark(
+          title: 'deck.test', url: 'https://deck.test', startup: true),
+      BrowserBookmark(
+          title: 'other.test', url: 'https://other.test', startup: true),
+    ]);
     await tester.pumpWidget(WingmanApp(
         signerVault: vault, profileRelayClient: FakeProfileRelays()));
     await tester.pumpAndSettle();

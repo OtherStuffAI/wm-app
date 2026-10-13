@@ -104,7 +104,7 @@ class BrowserScreenState extends State<BrowserScreen>
   static const _homeTitle = 'New Tab';
   static const _flightDeckTitle = 'Flight Deck';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
-  static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v1.';
+  static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v3.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final NostrProfileStore _profileStore = NostrProfileStore();
   late final NostrProfileRelayClient _profileRelayClient =
@@ -115,12 +115,19 @@ class BrowserScreenState extends State<BrowserScreen>
   String? _selectorBackground;
   String? _defaultSelectorBackground;
   bool _bookmarkEditorOpen = false;
+  String _labelColour = '#ffffff';
+  bool _builtInStartup = false;
+  int _signerSyncEpoch = 0;
+  Future<void> _launcherSettingsQueue = Future<void>.value();
+  final Map<String, _BrowserTabsSnapshot> _sessionTabs = {};
+
   String? _lastWebStateSignerNpub;
   NostrProfile _profile = const NostrProfile();
   final DiagnosticsStore _diagnosticsStore = DiagnosticsStore();
   Timer? _diagnosticsMaintenance;
   Timer? _persistTabsTimer;
   bool _clearingWebState = false;
+  Completer<void>? _webStateClear;
   bool _restoringTabs = false;
   StreamSubscription<bool>? _fipsEnabledSubscription;
   bool _fipsEnabled = true;
@@ -138,18 +145,11 @@ class BrowserScreenState extends State<BrowserScreen>
     _fipsEnabledSubscription =
         widget.fipsRuntime?.enabledChanges.listen(_onFipsEnabledChanged);
     unawaited(_loadFipsEnabled());
-    if (_hasLocalFlightDeck) {
-      _createTab(
-        widget.localFlightDeckUrl,
-        activate: true,
-        title: _flightDeckTitle,
-      );
-    } else {
-      _createHomeTab(activate: true);
-    }
+    _restoringTabs = true;
+    _createHomeTab(activate: true, persistState: false);
     unawaited(_loadSelectorBackgroundAsset());
     unawaited(_loadProfile());
-    _syncWebStateToSigner(resetTabsOnChange: false);
+    unawaited(_syncWebStateToSigner());
   }
 
   @override
@@ -167,6 +167,8 @@ class BrowserScreenState extends State<BrowserScreen>
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
       _bookmarks = const [];
       _selectorBackground = null;
+      _labelColour = '#ffffff';
+      _builtInStartup = false;
       _profileEpoch++;
       _profile = const NostrProfile();
       unawaited(_loadProfile().then((_) {
@@ -504,7 +506,8 @@ class BrowserScreenState extends State<BrowserScreen>
   BrowserBookmark? get _localFlightDeckBookmark {
     final url = canonicalBrowserBookmarkUrl(widget.localFlightDeckUrl);
     if (url == null) return null;
-    return BrowserBookmark(title: _flightDeckTitle, url: url);
+    return BrowserBookmark(
+        title: _flightDeckTitle, url: url, startup: _builtInStartup);
   }
 
   List<BrowserBookmark> get _visibleBookmarks {
@@ -637,13 +640,20 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _loadBookmarksForSigner(String signerNpub) async {
+    final epoch = _signerSyncEpoch;
     final bookmarks = await _bookmarkStore.load(signerNpub);
     final background = await _bookmarkStore.loadBackground(signerNpub);
-    if (!mounted || widget.config.deviceNpub.trim() != signerNpub.trim()) {
+    final colour = await _bookmarkStore.loadLabelColour(signerNpub);
+    final builtInStartup = await _bookmarkStore.loadBuiltInStartup(signerNpub);
+    if (!mounted ||
+        epoch != _signerSyncEpoch ||
+        widget.config.deviceNpub.trim() != signerNpub.trim()) {
       return;
     }
     _bookmarks = bookmarks;
     _selectorBackground = background;
+    _labelColour = colour;
+    _builtInStartup = builtInStartup;
     _reloadHomeTabs();
     _notifyBookmarkMenuState();
   }
@@ -1121,45 +1131,50 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _switchSignerTabs(String previousSignerNpub) async {
-    await _persistTabsForSigner(previousSignerNpub);
-    if (!mounted) return;
+    // Capture before yielding; hide the old identity's documents immediately.
+    final saving = _persistTabsForSigner(previousSignerNpub);
+    // Capture the departing controllers for storage clearing before hiding them.
+    final clearing = _clearWebState(resetTabs: false);
+    _persistTabsTimer?.cancel();
+    _restoringTabs = true;
+    _resetTabsToDefault(persistState: false);
+    unawaited(saving);
+    unawaited(clearing);
     await _syncWebStateToSigner();
   }
 
-  Future<void> _syncWebStateToSigner({
-    bool resetTabsOnChange = true,
-  }) async {
+  Future<void> _syncWebStateToSigner() async {
     final signerNpub = widget.config.deviceNpub.trim();
-    if (signerNpub.isEmpty || _lastWebStateSignerNpub == signerNpub) return;
+    if (_lastWebStateSignerNpub == signerNpub) return;
     _lastWebStateSignerNpub = signerNpub;
-
+    final epoch = ++_signerSyncEpoch;
+    bool current() =>
+        mounted &&
+        epoch == _signerSyncEpoch &&
+        widget.config.deviceNpub.trim() == signerNpub;
+    _restoringTabs = true;
     final preferences = SharedPreferencesAsync();
     final previousSignerNpub = await preferences.getString(_browserSignerKey);
-    if (!mounted) return;
-    if (previousSignerNpub == signerNpub) {
-      await _loadBookmarksForSigner(signerNpub);
-      await _restoreTabsForSigner(signerNpub);
-      return;
+    if (!current()) return;
+    if (previousSignerNpub != signerNpub &&
+        (signerNpub.isNotEmpty || (previousSignerNpub?.isNotEmpty ?? false))) {
+      await _clearWebState(resetTabs: false);
+      if (!current()) return;
+      await preferences.setString(_browserSignerKey, signerNpub);
     }
-
-    await _clearWebState(
-      resetTabs: resetTabsOnChange &&
-          previousSignerNpub != null &&
-          previousSignerNpub.isNotEmpty,
-    );
-    await preferences.setString(_browserSignerKey, signerNpub);
+    if (!current()) return;
     await _loadBookmarksForSigner(signerNpub);
-    await _restoreTabsForSigner(
-      signerNpub,
-      resetToHomeWhenMissing: previousSignerNpub != null &&
-          previousSignerNpub.isNotEmpty &&
-          previousSignerNpub != signerNpub,
-    );
+    if (!current()) return;
+    await _restoreTabsForSigner(signerNpub);
   }
 
   Future<void> _clearWebState({required bool resetTabs}) async {
-    if (_clearingWebState) return;
+    if (_clearingWebState) {
+      await _webStateClear?.future;
+      return;
+    }
     _clearingWebState = true;
+    final completion = _webStateClear = Completer<void>();
     final tabs = List<BrowserTab>.from(_tabs);
     // Revoke synchronously, before clearing platform storage can yield.
     for (final tab in tabs) {
@@ -1180,6 +1195,7 @@ class BrowserScreenState extends State<BrowserScreen>
       }
     } finally {
       _clearingWebState = false;
+      completion.complete();
     }
     if (!mounted || !resetTabs) return;
     _resetTabsToDefault(persistState: false);
@@ -1199,37 +1215,33 @@ class BrowserScreenState extends State<BrowserScreen>
     });
     final wasRestoringTabs = _restoringTabs;
     if (!persistState) _restoringTabs = true;
-    if (_hasLocalFlightDeck) {
-      _createTab(
-        widget.localFlightDeckUrl,
-        activate: true,
-        persistState: persistState,
-        title: _flightDeckTitle,
-      );
-    } else {
-      _createHomeTab(activate: true, persistState: persistState);
-    }
+    _createHomeTab(activate: true, persistState: persistState);
     _restoringTabs = wasRestoringTabs;
   }
 
-  Future<void> _restoreTabsForSigner(
-    String signerNpub, {
-    bool resetToHomeWhenMissing = false,
-  }) async {
-    final key = _tabsStorageKey(signerNpub);
-    if (key == null) {
-      if (resetToHomeWhenMissing) {
-        _resetTabsToDefault(persistState: true);
+  Future<void> _restoreTabsForSigner(String signerNpub) async {
+    // Disk restore records never override explicit startup selection. Only
+    // identities already visited in this BrowserScreen restore session state.
+    final snapshot = _sessionTabs[signerNpub];
+    if (snapshot == null) {
+      if (_tabs.length != 1 || !_tabs.single.isHome) {
+        _resetTabsToDefault(persistState: false);
       }
-      return;
-    }
-    final raw = await SharedPreferencesAsync().getString(key);
-    if (!mounted) return;
-    final snapshot = _BrowserTabsSnapshot.tryParse(raw);
-    if (snapshot == null || snapshot.tabs.isEmpty) {
-      if (resetToHomeWhenMissing) {
-        _resetTabsToDefault(persistState: true);
+      final selected = _visibleBookmarks.where((app) => app.startup).toList();
+      if (selected.isNotEmpty) {
+        final seen = <String>{};
+        for (final app in selected) {
+          if (!seen.add(app.url)) continue;
+          if (seen.length == 1) {
+            _loadAddressForTab(_tabs.single, app.url);
+            _tabs.single.title = app.title;
+          } else {
+            _createTab(app.url,
+                activate: false, persistState: false, title: app.title);
+          }
+        }
       }
+      _restoringTabs = false;
       return;
     }
 
@@ -1247,19 +1259,6 @@ class BrowserScreenState extends State<BrowserScreen>
     });
 
     for (final tab in snapshot.tabs) {
-      // Version 1 snapshots predate the packaged Flight Deck. Seed it once on
-      // upgrade, then version 2 persistence remembers if the user closes it.
-      if (_tabs.isEmpty &&
-          snapshot.version < 2 &&
-          _hasLocalFlightDeck &&
-          !snapshot.tabs.any((saved) => _isLocalFlightDeckUrl(saved.url))) {
-        _createTab(
-          widget.localFlightDeckUrl,
-          activate: false,
-          persistState: false,
-          title: _flightDeckTitle,
-        );
-      }
       if (tab.isHome || tab.url == null || tab.url!.isEmpty) {
         _createHomeTab(activate: false, persistState: false);
       } else {
@@ -1276,14 +1275,7 @@ class BrowserScreenState extends State<BrowserScreen>
       }
     }
 
-    final seededFlightDeck = snapshot.version < 2 &&
-        _hasLocalFlightDeck &&
-        _tabs.isNotEmpty &&
-        _isLocalFlightDeckUrl(_tabs.first.currentUrl) &&
-        !snapshot.tabs.any((saved) => _isLocalFlightDeckUrl(saved.url));
-    final activeIndex = seededFlightDeck
-        ? 0
-        : snapshot.activeIndex.clamp(0, _tabs.length - 1).toInt();
+    final activeIndex = snapshot.activeIndex.clamp(0, _tabs.length - 1).toInt();
     setState(() {
       _activeTabId = _tabs[activeIndex].id;
     });
@@ -1307,7 +1299,7 @@ class BrowserScreenState extends State<BrowserScreen>
     final key = _tabsStorageKey(signerNpub);
     if (key == null || _tabs.isEmpty) return;
     final snapshot = _BrowserTabsSnapshot(
-      version: 2,
+      version: 3,
       activeIndex: _activeTabIndex,
       tabs: [
         for (final tab in _tabs)
@@ -1326,6 +1318,7 @@ class BrowserScreenState extends State<BrowserScreen>
           ),
       ],
     );
+    _sessionTabs[signerNpub.trim()] = snapshot;
     await SharedPreferencesAsync().setString(
       key,
       jsonEncode(snapshot.toJson()),
@@ -1794,7 +1787,8 @@ class BrowserScreenState extends State<BrowserScreen>
       browserAppSelectorHtml(
           savedBookmarks: savedBookmarks,
           builtInUrl: _localFlightDeckBookmark?.url,
-          backgroundImage: _selectorBackground ?? _defaultSelectorBackground);
+          backgroundImage: _selectorBackground ?? _defaultSelectorBackground,
+          labelColour: _labelColour);
 
   Future<void> _injectGraspBridge(BrowserTab tab) async {
     // WKWebView (iOS/macOS) and Android's WebMessageListener validate
@@ -2255,6 +2249,19 @@ class BrowserScreenState extends State<BrowserScreen>
       return;
     }
 
+    if (method == 'bookmarkIcon' ||
+        method == 'removeBookmark' ||
+        method == 'editBookmark') {
+      final identity = widget.config.deviceNpub;
+      final epoch = tab.signerDocumentEpoch;
+      await _launcherSettingsQueue;
+      if (!mounted ||
+          tab.disposed ||
+          identity != widget.config.deviceNpub ||
+          epoch != tab.signerDocumentEpoch) {
+        return;
+      }
+    }
     if (method == 'bookmarkIcon') {
       final params = payload['params'];
       if (tab.isHome || params is! Map<String, dynamic>) return;
@@ -2274,9 +2281,94 @@ class BrowserScreenState extends State<BrowserScreen>
             title: original.title,
             url: original.url,
             iconUrl: icon,
-            customImage: original.customImage);
+            customImage: original.customImage,
+            startup: original.startup);
       await _persistBookmarks();
       if (mounted) _reloadHomeTabs();
+      return;
+    }
+    if (method == 'setStartup' || method == 'setLabelColour') {
+      if (!tab.isHome || _restoringTabs) return;
+      final params = payload['params'];
+      if (params is! Map<String, dynamic>) return;
+      final identity = widget.config.deviceNpub;
+      final epoch = tab.signerDocumentEpoch;
+      final syncEpoch = _signerSyncEpoch;
+      bool current() =>
+          mounted &&
+          !tab.disposed &&
+          tab.isHome &&
+          tab.signerDocumentEpoch == epoch &&
+          syncEpoch == _signerSyncEpoch &&
+          identity == widget.config.deviceNpub;
+      final saving = _launcherSettingsQueue.then((_) async {
+        if (!current()) return;
+        try {
+          if (method == 'setLabelColour') {
+            final colour = params['colour'];
+            if (colour is! String ||
+                safeLabelColour(colour) != colour.toLowerCase()) {
+              return;
+            }
+            await _bookmarkStore.saveLabelColour(identity, colour);
+            if (current()) _labelColour = safeLabelColour(colour);
+          } else {
+            final url = canonicalBrowserBookmarkUrl(params['url']?.toString());
+            final enabled = params['enabled'];
+            if (enabled is! bool ||
+                url == null ||
+                !_visibleBookmarks.any((b) => b.url == url)) {
+              return;
+            }
+            if (url == _localFlightDeckBookmark?.url) {
+              await _bookmarkStore.saveBuiltInStartup(identity, enabled);
+              if (current()) _builtInStartup = enabled;
+            } else {
+              final updated = [
+                for (final app in _bookmarks)
+                  if (app.url != url)
+                    app
+                  else
+                    BrowserBookmark(
+                        title: app.title,
+                        url: app.url,
+                        iconUrl: app.iconUrl,
+                        customImage: app.customImage,
+                        startup: enabled)
+              ];
+              await _bookmarkStore.save(identity, updated);
+              if (current()) _bookmarks = updated;
+            }
+          }
+          // Update controls without reloading the home document or launching apps.
+          if (current()) {
+            for (final home
+                in List<BrowserTab>.of(_tabs.where((t) => t.isHome))) {
+              if (!current()) return;
+              if (home.disposed || !home.isHome) continue;
+              await home.controller.runJavaScript(
+                  'document.querySelectorAll(".star").forEach(el => {const values = '
+                  '${jsonEncode({
+                    for (final app in _visibleBookmarks) app.url: app.startup
+                  })};'
+                  'const enabled = values[el.dataset.url] === true;'
+                  'el.setAttribute("aria-pressed", String(enabled));'
+                  'el.textContent = enabled ? "★" : "☆";});'
+                  'document.querySelectorAll(".name").forEach(el => el.style.color = ${jsonEncode(_labelColour)});'
+                  'document.getElementById("label-colour").value = ${jsonEncode(_labelColour)};');
+            }
+          }
+        } catch (_) {
+          if (mounted && current()) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content:
+                    Text('Could not save launcher settings. Please retry.')));
+            _loadHomeForTab(tab);
+          }
+        }
+      });
+      _launcherSettingsQueue = saving;
+      await saving;
       return;
     }
     if (method == 'chooseBackground' || method == 'resetBackground') {
@@ -4153,30 +4245,6 @@ class _BrowserTabsSnapshot {
       'tabs': [for (final tab in tabs) tab.toJson()],
     };
   }
-
-  static _BrowserTabsSnapshot? tryParse(String? value) {
-    if (value == null || value.trim().isEmpty) return null;
-    try {
-      final decoded = jsonDecode(value);
-      if (decoded is! Map<String, dynamic>) return null;
-      final tabsValue = decoded['tabs'];
-      if (tabsValue is! List) return null;
-      final tabs = [
-        for (final rawTab in tabsValue)
-          if (rawTab is Map<String, dynamic>)
-            _BrowserTabSnapshot.tryParse(rawTab),
-      ].whereType<_BrowserTabSnapshot>().toList(growable: false);
-      if (tabs.isEmpty) return null;
-      return _BrowserTabsSnapshot(
-        version: decoded['version'] is int ? decoded['version'] as int : 1,
-        activeIndex:
-            decoded['active_index'] is int ? decoded['active_index'] as int : 0,
-        tabs: tabs,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
 }
 
 class _BrowserTabSnapshot {
@@ -4205,26 +4273,6 @@ class _BrowserTabSnapshot {
       if (prefix.isNotEmpty) 'prefix': prefix,
       if (colour != null) 'colour': colour,
     };
-  }
-
-  static _BrowserTabSnapshot? tryParse(Map<String, dynamic> value) {
-    final isHome = value['is_home'] == true;
-    final url = value['url']?.toString().trim();
-    if (!isHome && (url == null || url.isEmpty)) return null;
-    return _BrowserTabSnapshot(
-      diagnosticsTabKey: value['diagnostics_tab_key'] is String &&
-              RegExp(r'^[A-Za-z0-9_-]{43}$')
-                  .hasMatch(value['diagnostics_tab_key'] as String)
-          ? value['diagnostics_tab_key'] as String
-          : null,
-      title: value['title']?.toString(),
-      url: url == null || url.isEmpty ? null : url,
-      isHome: isHome,
-      prefix: value['prefix'] is String ? value['prefix'] as String : '',
-      colour: _tabColours.containsKey(value['colour'])
-          ? value['colour'] as String
-          : null,
-    );
   }
 }
 

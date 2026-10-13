@@ -121,7 +121,7 @@ void main() {
       (tester) async {
     final runtime = _ToggleBrowserRuntime()..enabled = false;
     final h = Harness(fipsRuntime: runtime, localFlightDeckUrl: appPage);
-    await h.start(tester);
+    await h.start(tester, builtInStartup: true);
     expect(
         fakeLoadedRequestUrls.where((url) => url.contains('.fips')), isEmpty);
     runtime.change(true);

@@ -7,6 +7,7 @@ import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 
 const original = BrowserBookmark(
     title: 'App',
+    startup: true,
     url: 'https://example.com/long?keep=1#section',
     iconUrl: 'https://example.com/icon.png');
 const other = BrowserBookmark(title: 'Other', url: 'https://example.com/short');
@@ -53,6 +54,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(result!.url, 'https://example.com/intentional?x=2#part');
     expect(result!.title, 'Short app');
+    expect(result!.startup, isTrue);
     expect(result!.iconUrl, isNull);
   });
   testWidgets('cancel discards edited name and URL', (tester) async {

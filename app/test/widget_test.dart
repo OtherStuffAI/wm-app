@@ -18,6 +18,7 @@ import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/core/signer_vault.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
+import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
 import 'package:wingman_app/src/features/shell/shell_home.dart';
 import 'package:wingman_app/src/features/shell/macos_menu_bridge.dart';
@@ -459,11 +460,11 @@ void main() {
     expect(find.byTooltip('Back'), findsNothing);
     expect(find.text('New Tab'), findsOneWidget);
     expect(fakeLoadedRequestUrls, isEmpty);
-    expect(fakeLoadedHtmlStrings.single, contains('Choose an app to open'));
-    expect(fakeLoadedHtmlStrings.single, isNot(contains('Flight Deck')));
-    expect(fakeLoadedHtmlStrings.single, isNot(contains('Tower')));
-    expect(fakeLoadedHtmlStrings.single, isNot(contains('Autopilot')));
-    expect(fakeLoadedHtmlStrings.single, isNot(contains('runwingman.com')));
+    expect(fakeLoadedHtmlStrings.last, contains('Saved apps'));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains('Flight Deck')));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains('Tower')));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains('Autopilot')));
+    expect(fakeLoadedHtmlStrings.last, isNot(contains('runwingman.com')));
     expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
 
     await tester.pump(const Duration(seconds: 6));
@@ -545,6 +546,13 @@ void main() {
     );
     await tester.pump();
 
+    submitFakeJavaScriptMessage(
+        controllerIndex: 0,
+        channel: 'WingmanSigner',
+        message:
+            '{"id":"open-built-in","method":"navigateTab","params":{"url":"$flightDeckUrl"}}');
+    await tester.pumpAndSettle();
+
     expect(fakeLoadedRequestUrls.single, flightDeckUrl);
     expect(find.text('Flight Deck'), findsOneWidget);
 
@@ -616,7 +624,7 @@ void main() {
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
-      const storageKey = 'wingman.browser.tabs.v1.npub-tab-appearance';
+      const storageKey = 'wingman.browser.tabs.v3.npub-tab-appearance';
       Widget browser() => MaterialApp(
               home: Scaffold(
                   body: BrowserScreen(
@@ -648,6 +656,12 @@ void main() {
 
       await tester.pumpWidget(browser());
       await tester.pumpAndSettle();
+      submitFakeJavaScriptMessage(
+          controllerIndex: 0,
+          channel: 'WingmanSigner',
+          message:
+              '{"id":"open-built-in","method":"navigateTab","params":{"url":"http://127.0.0.1:47831/"}}');
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('New tab'));
       await tester.pumpAndSettle();
       await menu();
@@ -669,17 +683,6 @@ void main() {
       expect(saved['tabs'][0]['colour'], 'Blue');
       expect(saved['tabs'][0]['title'], 'Tasks');
       expect(saved['tabs'][1].containsKey('prefix'), isFalse);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pumpAndSettle();
-      installFakeWebViewPlatform();
-      await tester.pumpWidget(browser());
-      await tester.pumpAndSettle();
-      expect(find.text('WORK: Flight Deck'), findsOneWidget);
-      setFakePageTitle(controllerIndex: 1, title: 'Tasks');
-      submitFakePageFinished(
-          controllerIndex: 1, url: 'http://127.0.0.1:47831/');
-      await tester.pumpAndSettle();
-      expect(find.text('WORK: Tasks'), findsOneWidget);
       await menu();
       expect(
           tester
@@ -701,6 +704,19 @@ void main() {
       expect(cleared['tabs'][0].containsKey('colour'), isFalse);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
+      installFakeWebViewPlatform();
+      await tester.pumpWidget(browser());
+      await tester.pumpAndSettle();
+      expect(find.text('New Tab'), findsOneWidget);
+      expect(find.text('WORK: Flight Deck'), findsNothing);
+      expect(fakeLoadedRequestUrls, isEmpty);
+      final retained =
+          jsonDecode((await SharedPreferencesAsync().getString(storageKey))!)
+              as Map;
+      // Startup doesn't restore the tab prefix; the saved record remains readable.
+      expect(retained['tabs'], isNotEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
@@ -719,6 +735,7 @@ void main() {
           ']}',
     );
 
+    await BrowserBookmarkStore().saveBuiltInStartup(signer, true);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -752,7 +769,7 @@ void main() {
     expect(find.text('Flight Deck'), findsNothing);
   });
 
-  testWidgets('existing browser state seeds packaged Flight Deck only once',
+  testWidgets('legacy snapshots never seed packaged Flight Deck',
       (tester) async {
     const signer = 'npub-flight-deck-upgrade';
     const flightDeckUrl = 'http://127.0.0.1:47831/';
@@ -781,16 +798,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('Flight Deck'), findsNothing);
     expect(find.text('New Tab'), findsOneWidget);
-    expect(activeBrowserStackIndex(tester), 0);
-
-    await tester.tap(find.byTooltip('Close tab').first);
-    await tester.pump(const Duration(milliseconds: 150));
-
-    final persisted = await preferences.getString(tabsKey);
-    expect(persisted, contains('"version":2'));
-    expect(persisted, isNot(contains(flightDeckUrl)));
+    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(await preferences.getString(tabsKey),
+        '{"version":1,"active_index":0,"tabs":[{"title":"New Tab","url":null,"is_home":true}]}');
   });
 
   testWidgets('iPhone-width strip scrolls and reorders ordinary tabs',
@@ -925,6 +937,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    submitFakeJavaScriptMessage(
+        controllerIndex: 0,
+        channel: 'WingmanSigner',
+        message:
+            '{"id":"open-built-in","method":"navigateTab","params":{"url":"$flightDeckUrl"}}');
+    await tester.pumpAndSettle();
     expect(fakeLoadedRequestUrls, [flightDeckUrl]);
     expect(fakeReloadCalls, 0);
 
@@ -941,7 +959,8 @@ void main() {
     expect(fakeReloadCalls, 1);
   });
 
-  testWidgets('Wingman shell restores browser tabs for the current signer',
+  testWidgets(
+      'Wingman shell uses startup selection on relaunch instead of disk tabs',
       (tester) async {
     final config = AppConfig.defaults().copyWith(
       deviceSecret: 'nsec-placeholder',
@@ -992,13 +1011,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('New Tab'), findsNWidgets(2));
-    expect(find.text('rick.runwingman.com'), findsOneWidget);
-    expect(fakeLoadedRequestUrls, contains('https://rick.runwingman.com'));
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(find.text('rick.runwingman.com'), findsNothing);
+    expect(fakeLoadedRequestUrls, isEmpty);
     expect(find.byTooltip('Back'), findsNothing);
   });
 
-  testWidgets('legacy pinned snapshots retain URLs as ordinary tabs',
+  testWidgets('legacy pinned snapshots cannot override zero startup stars',
       (tester) async {
     const signer = 'npub-legacy-tabs';
     final preferences = SharedPreferencesAsync();
@@ -1027,10 +1046,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(fakeLoadedRequestUrls, contains('https://user-flightdeck.example'));
-    expect(fakeLoadedRequestUrls, contains('https://user-site.example'));
+    expect(fakeLoadedRequestUrls, isEmpty);
     expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
-    expect(find.byTooltip('Close tab'), findsNWidgets(2));
+    expect(find.byTooltip('Close tab'), findsOneWidget);
+    expect(await preferences.getString('wingman.browser.tabs.v1.$signer'),
+        contains('https://user-flightdeck.example'));
   });
 
   testWidgets('browser saved apps edit actual URL, reload, open, and remove',
@@ -1091,6 +1111,15 @@ void main() {
         controllerIndex: homeControllerIndex,
         channel: 'WingmanSigner',
         message: jsonEncode({
+          'id': 'star-before-edit',
+          'method': 'setStartup',
+          'params': {'url': canonicalUrl, 'enabled': true}
+        }));
+    await tester.pumpAndSettle();
+    submitFakeJavaScriptMessage(
+        controllerIndex: homeControllerIndex,
+        channel: 'WingmanSigner',
+        message: jsonEncode({
           'id': 'edit',
           'method': 'editBookmark',
           'params': {'url': canonicalUrl}
@@ -1109,6 +1138,20 @@ void main() {
     expect(fakeLoadedHtmlStrings.last, contains('Project board'));
     expect(fakeLoadedHtmlStrings.last, contains(editedUrl));
     expect(fakeLoadedHtmlStrings.last, isNot(contains(canonicalUrl)));
+    final savedApp =
+        (await BrowserBookmarkStore().load(config.deviceNpub)).single;
+    expect(savedApp.startup, isTrue);
+    expect(savedApp.url, editedUrl);
+    // Unstar before the existing launcher interaction checks below.
+    submitFakeJavaScriptMessage(
+        controllerIndex: homeControllerIndex,
+        channel: 'WingmanSigner',
+        message: jsonEncode({
+          'id': 'unstar-after-edit',
+          'method': 'setStartup',
+          'params': {'url': editedUrl, 'enabled': false}
+        }));
+    await tester.pumpAndSettle();
 
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpWidget(const SizedBox.shrink());

@@ -12,6 +12,59 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
+  test(
+      'legacy apps have no startup stars; settings validate and isolate identities',
+      () async {
+    final preferences = SharedPreferencesAsync();
+    final store = BrowserBookmarkStore(preferences: preferences);
+    await preferences.setString(
+        '${BrowserBookmarkStore.keyPrefix}npub-a',
+        jsonEncode({
+          'version': 1,
+          'bookmarks': [
+            {'title': 'Legacy', 'url': 'https://example.com/'},
+            {
+              'title': 'Malformed',
+              'url': 'https://other.example/',
+              'startup': 'true'
+            }
+          ]
+        }));
+    expect((await store.load('npub-a')).every((b) => !b.startup), isTrue);
+    expect(await store.loadBuiltInStartup('npub-a'), isFalse);
+    expect(await store.loadLabelColour('npub-a'), '#ffffff');
+    await store.saveBuiltInStartup('npub-a', true);
+    await store.saveLabelColour('npub-a', '#ABCDEF');
+    final relaunched = BrowserBookmarkStore();
+    expect(await relaunched.loadBuiltInStartup('npub-a'), isTrue);
+    expect(await relaunched.loadLabelColour('npub-a'), '#abcdef');
+    expect(await relaunched.loadBuiltInStartup('npub-b'), isFalse);
+    expect(await relaunched.loadLabelColour('npub-b'), '#ffffff');
+    for (final value in ['red', '#fff', '#ffffff;display:none', '#ffffff00']) {
+      await preferences.setString(
+          '${BrowserBookmarkStore.keyPrefix}npub-a.labelColour', value);
+      expect(await store.loadLabelColour('npub-a'), '#ffffff');
+    }
+  });
+
+  test('startup selection persists with app edits and disappears on deletion',
+      () async {
+    final store = BrowserBookmarkStore();
+    const original = BrowserBookmark(
+        title: 'App', url: 'https://example.com/long', startup: true);
+    await store.save('npub-a', [original.renamed('New name')]);
+    expect(
+        (await BrowserBookmarkStore().load('npub-a')).single.startup, isTrue);
+    const edited = BrowserBookmark(
+        title: 'New name', url: 'https://example.com/short', startup: true);
+    await store.save('npub-a', [edited]);
+    final saved = (await BrowserBookmarkStore().load('npub-a')).single;
+    expect(saved.url, edited.url);
+    expect(saved.startup, isTrue);
+    await store.save('npub-a', []);
+    expect(await BrowserBookmarkStore().load('npub-a'), isEmpty);
+  });
+
   test('canonicalization only normalizes whitespace and scheme/host casing',
       () {
     expect(

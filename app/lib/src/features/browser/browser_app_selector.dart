@@ -10,7 +10,8 @@ String _escape(String value) => value
 String browserAppSelectorHtml(
     {required List<BrowserBookmark> savedBookmarks,
     String? builtInUrl,
-    String? backgroundImage}) {
+    String? backgroundImage,
+    String labelColour = '#ffffff'}) {
   final cards = savedBookmarks.map((app) {
     final builtIn = app.url == builtInUrl;
     final thumbnail = app.thumbnail;
@@ -19,6 +20,7 @@ String browserAppSelectorHtml(
         <span class="icon" aria-hidden="true"><span class="fallback">${builtIn ? '✦' : _escape(app.title.isEmpty ? '?' : String.fromCharCode(app.title.runes.first).toUpperCase())}</span>${thumbnail == null || builtIn ? '' : '<img src="${_escape(thumbnail)}" alt="" referrerpolicy="no-referrer">'}</span>
         <span class="name">${_escape(app.title)}</span>
       </button>
+      <button class="star edit-control" data-url="${_escape(app.url)}" aria-label="Open ${_escape(app.title)} on startup" aria-pressed="${app.startup}" title="Open on startup">${app.startup ? '★' : '☆'}</button>
       ${builtIn ? '' : '<button class="remove edit-control" data-url="${_escape(app.url)}" aria-label="Remove ${_escape(app.title)}" title="Remove app">×</button><button class="edit edit-control" data-url="${_escape(app.url)}" aria-label="Edit ${_escape(app.title)}">Edit</button>'}
     </article>''';
   }).join('\n');
@@ -31,31 +33,42 @@ String browserAppSelectorHtml(
 <style>
 :root {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#19382f;background:#e4eee6;color-scheme:light}
 * {box-sizing:border-box} body {margin:0;min-height:100vh;background:linear-gradient(145deg,#dbe8dd,#e9ede2 55%,#c5dbd5);${background == null ? '' : 'background-image:linear-gradient(#edf4e755,#edf4e755),url("${_escape(background)}");background-size:cover;background-position:center;background-attachment:fixed;'}}
-main {max-width:1056px;margin:auto;padding:52px 24px} header {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;padding:16px;border-radius:20px;background:#ffffffde}
-h1 {font-size:30px;margin:0 0 8px;letter-spacing:-.7px} p {margin:0;line-height:1.5;color:#3f5b51} .settings {border:1px solid #abc2b7;border-radius:50%;width:44px;height:44px;font-size:24px;color:#245447;background:#ffffffd9;cursor:pointer}
-.grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:20px;align-items:start}
-.app {position:relative;text-align:center;border-radius:22px;background:#ffffffde;box-shadow:0 3px 14px #19382f0a;border:1px solid #ffffffbb;min-width:0;padding:12px 8px}
-button {font:inherit} .app-open {border:0;background:transparent;color:inherit;display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;min-height:168px;padding:14px 6px;cursor:pointer;border-radius:16px}
-.icon {position:relative;width:76px;height:76px;border-radius:20px;background:#e1efe8;display:grid;place-items:center;overflow:hidden;color:#286a5a;font-size:32px;font-weight:600;flex-shrink:0}
-.icon img {position:absolute;width:100%;height:100%;object-fit:contain;padding:8px;background:#f6faf7}.name {font-size:16px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;width:100%}
-.app:hover {border-color:#779e8b}.app-open:hover .icon {background:#d0e5d9} button:focus-visible {outline:3px solid #286a5a;outline-offset:3px}
+main {max-width:1056px;margin:auto;padding:88px 24px 32px}
+.settings {position:fixed;top:16px;right:16px;z-index:2;border:1px solid #ffffff88;border-radius:50%;width:44px;height:44px;font-size:24px;color:white;background:#19382f99;box-shadow:0 2px 8px #0006;cursor:pointer}
+.grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:28px 20px;align-items:start}
+.app {position:relative;text-align:center;min-width:0;padding:8px}
+button {font:inherit} .app-open {border:0;background:transparent;color:inherit;display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;min-height:164px;padding:0 4px 8px;cursor:pointer;border-radius:16px}
+.icon {position:relative;width:116px;height:116px;display:grid;place-items:center;font-size:48px;font-weight:600;flex-shrink:0}
+.fallback {width:100%;height:100%;display:grid;place-items:center;border-radius:24px;background:#19382fcc;color:white;box-shadow:0 3px 12px #0005}
+.icon img {position:absolute;width:100%;height:100%;object-fit:contain;border-radius:20px}.icon:has(img) .fallback {visibility:hidden}
+.name {color:${safeLabelColour(labelColour)};text-shadow:0 2px 4px #000,0 0 10px #0009;font-size:14px;font-weight:500;line-height:1.35;overflow-wrap:anywhere;width:100%}
+.app-open:hover .icon {filter:brightness(1.08)} button:focus-visible {outline:3px solid white;outline-offset:3px}
 .edit-control {display:none;cursor:pointer} .editing .edit-control {display:inline-block} .remove {position:absolute;top:-16px;right:-16px;width:44px;height:44px;border-radius:50%;border:0;background:radial-gradient(circle,#fff5f2 13px,transparent 14px);color:#843c33;font-size:22px;line-height:20px}.remove::after {content:"";position:absolute;inset:8px;border:1px solid #d9b5af;border-radius:50%;pointer-events:none}.edit {border:1px solid #a4c3b0;border-radius:20px;padding:5px 20px;background:#e6f1e9;color:#245447;min-height:44px}
+.star {position:absolute;top:-12px;left:-12px;width:44px;height:44px;border-radius:50%;border:1px solid #ffffff88;background:#19382fcc;color:#ffe29a;font-size:26px}.star[aria-pressed="true"] {color:#ffd45b}
 #settings-panel {margin-bottom:24px;padding:16px;border-radius:16px;background:#ffffffeb;display:flex;align-items:center;gap:12px;flex-wrap:wrap} #settings-panel[hidden] {display:none} #settings-panel button {background:#fff;border:1px solid #abc2b7;border-radius:20px;padding:8px 16px;cursor:pointer}
-@media(max-width:420px) {main {padding:28px 16px}.grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.app-open {min-height:160px}.icon {width:68px;height:68px}h1 {font-size:26px}}
+@media(max-width:420px) {main {padding:76px 16px}.grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.app-open {min-height:160px}.icon {width:100px;height:100px}}
 </style></head><body><main>
-<header><div><h1>Your apps</h1><p>Choose an app to open, or enter an address above.</p></div><button class="settings" aria-label="Edit apps and background" aria-expanded="false">⚙</button></header>
-<div id="settings-panel" hidden><span>Edit your saved apps</span><button data-action="chooseBackground">Choose background</button><button data-action="resetBackground">Default background</button></div>
+<button class="settings" aria-label="Edit apps and background" aria-expanded="false" aria-controls="settings-panel">⚙</button>
+<div id="settings-panel" hidden><span>Edit your saved apps</span><button data-action="chooseBackground">Choose background</button><button data-action="resetBackground">Default background</button><label>Label colour <input id="label-colour" type="color" value="${safeLabelColour(labelColour)}"></label></div>
 <section class="grid" aria-label="Saved apps">$cards</section>
 ${savedBookmarks.isEmpty ? '<p>No saved apps yet. Use Add bookmark from the browser menu.</p>' : ''}
 </main><script>(() => {
 let seq=0;
+const send=(method,params) => {if(window.WingmanSigner)window.WingmanSigner.postMessage(JSON.stringify({id:'home-tab-'+(++seq),method,params}));};
+document.getElementById('label-colour').addEventListener('change',event=>{
+ const colour=event.target.value;if(!/^#[0-9a-fA-F]{6}\$/.test(colour))return;
+ document.querySelectorAll('.name').forEach(label=>label.style.color=colour);
+ send('setLabelColour',{colour});
+});
 document.querySelectorAll('.icon img').forEach(img => img.addEventListener('error', () => img.remove()));
 document.addEventListener('click', event => {
  const target=event.target.closest('button'); if(!target)return;
  if(target.classList.contains('settings')) {const editing=document.body.classList.toggle('editing');target.setAttribute('aria-expanded',String(editing));document.getElementById('settings-panel').hidden=!editing;return;}
- const method=target.dataset.action || (target.classList.contains('remove')?'removeBookmark':target.classList.contains('edit')?'editBookmark':target.classList.contains('app-open')?'navigateTab':null);
+ const method=target.dataset.action || (target.classList.contains('star')?'setStartup':target.classList.contains('remove')?'removeBookmark':target.classList.contains('edit')?'editBookmark':target.classList.contains('app-open')?'navigateTab':null);
  if(!method || !window.WingmanSigner)return;
- window.WingmanSigner.postMessage(JSON.stringify({id:'home-tab-'+(++seq),method,params:{url:target.dataset.url}}));
+ const params={url:target.dataset.url};
+ if(method==='setStartup'){params.enabled=target.getAttribute('aria-pressed')!=='true';target.setAttribute('aria-pressed',String(params.enabled));target.textContent=params.enabled?'★':'☆';}
+ send(method,params);
 });
 })();</script></body></html>''';
 }
