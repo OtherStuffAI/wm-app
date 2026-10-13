@@ -41,6 +41,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a voice message when you choose to use the microphone.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose a photo to use as your profile avatar.</string>
 	<key>NSBonjourServices</key>

@@ -70,6 +70,10 @@ installation and unsigned compilation are not physical device delivery.
 
 ## Background and recovery
 
+The shell supplies the standard iOS microphone purpose string for Sol’s existing
+foreground voice input; WebKit and iOS keep their normal permission prompts.
+Physical capture, codec and upload acceptance must still be verified.
+
 There are no added audio, location, fetch, processing or notification background
 modes. WebKit JavaScript, sync and uploads may be suspended by iOS. No indefinite
 background sync, push delivery or voice recording is promised. A user-enabled
