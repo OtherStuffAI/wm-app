@@ -22,6 +22,27 @@ workspace configuration, device grant or keys do not automatically transfer.
 Create/import/unlock the native identity through the existing user interface;
 never extract a key from another application.
 
+## Phone layout and keyboard
+
+The native focus view reserves all four safe areas for Ambulando; Flutter owns
+the keyboard inset. The page retains its device-width viewport and user pinch
+zoom. For bundled Ambulando on iOS only, the shell applies explicit 100% text
+sizing and a 16 CSS-pixel minimum for editable controls. This overrides the
+frozen Sol iPhone marker's 87.5% text reduction without changing packaged bytes.
+That reduction makes a declared 16px input render at 14px: WKWebView focus zoom
+then narrows the visual viewport, and dismissing the keyboard retains the zoom.
+Smaller frontend input styles also receive the minimum. Larger inherited text
+is preserved. This display policy does not apply to external pages or WM App.
+
+When investigating clipping, measure `innerWidth`, document `scrollWidth`,
+`visualViewport.width`, `visualViewport.scale`, computed input font size and
+control bounds before focus, during keyboard entry and after blur. A correctly
+sized layout viewport does not exclude persistent focus zoom. Compare against
+the phone's logical size, rather than screenshot raster pixels. The native
+integration smoke test uses real WKWebView and the packaged frontend to exercise
+the delayed iPhone marker and focus/blur regression. Simulator fixtures verify
+layout, not live account or service acceptance.
+
 ## Build and provenance
 
 Confirm Sol's final source checkpoint and successful frontend validation before

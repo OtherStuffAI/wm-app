@@ -307,7 +307,7 @@ class BrowserScreenState extends State<BrowserScreen>
     );
     final content = EmbeddedContentFocus(child: stack);
     if (!_focusMode) return content;
-    return SafeArea(bottom: false, child: content);
+    return SafeArea(bottom: AppProduct.ambulando, child: content);
   }
 
   Widget _buildTabBar(BuildContext context) {
@@ -1766,6 +1766,29 @@ class BrowserScreenState extends State<BrowserScreen>
     if (pageOrigin.isEmpty ||
         (pageOrigin != flightDeckOrigin &&
             pageOrigin != localFlightDeckOrigin)) {
+      return;
+    }
+    if (AppProduct.ambulando &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        pageOrigin == localFlightDeckOrigin) {
+      await tab.controller.runJavaScript('''
+(() => {
+  const root = document.documentElement;
+  if (!root) return;
+  // Sol2396's iPhone marker reduces even declared 16px inputs to 14px.
+  // WKWebView then focus-zooms to 16/14 and retains that zoom after blur.
+  // Keep the packaged frontend intact and leave user pinch zoom available.
+  root.style.setProperty('-webkit-text-size-adjust', '100%', 'important');
+  root.style.setProperty('text-size-adjust', '100%', 'important');
+  const id = 'wingman-ambulando-input-size';
+  if (!document.getElementById(id)) {
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = 'input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable=true] { font-size: max(16px, 1em) !important; }';
+    (document.head || root).appendChild(style);
+  }
+})();
+''');
       return;
     }
     await tab.controller.runJavaScript('''
