@@ -34,11 +34,48 @@ class NightlyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):n.require_resume({**s,'stage':stage},'same',run)
             (run/'proof-signed.json').write_text('{}')
             with self.assertRaises(ValueError):n.require_resume(s,'same',run)
-    def test_scheduler_coordination_is_fail_closed(self):
-        self.assertTrue(n.testflight_active({'schema':1,'days':{'today':{'status':'active'}}}))
-        self.assertFalse(n.testflight_active({'schema':1,'days':{'today':{'status':'testing'}}}))
-        with self.assertRaises(ValueError):n.testflight_active({'days':{}})
-        with self.assertRaises(KeyError):n.testflight_active({'schema':1,'days':{'today':{}}})
+    def test_independent_lane_preserves_retained_apple_claim(self):
+        import tempfile,json
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();lock=root/'tmp/docs/handoffs/nightly-release-shared.lock';lock.mkdir(parents=True)
+            (lock/'owner.json').write_text(json.dumps({'SESSION_ID':'android','store':'zapstore','day':'today'}))
+            apple=root/'tmp/docs/handoffs/nightly-testflight/ledger.json';apple.parent.mkdir()
+            original=b'{"schema":1,"days":{"yesterday":{"status":"active","owner":"apple","recovery_run":"retained"}}}\n'
+            apple.write_bytes(original)
+            with patch.object(n,'ROOT',root),patch.object(n.subprocess,'run'),patch.object(n,'command',return_value=''):
+                n.require_shared_lock('android','today')
+                self.assertEqual(n.reserve({'schema':1,'runs':{}},'today','android',0,'1.2.3')['stage'],'reserved')
+            self.assertEqual(apple.read_bytes(),original)
+    def test_shared_lock_requires_exact_owner_store_day_and_real_path(self):
+        import tempfile,json
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();lock=root/'tmp/docs/handoffs/nightly-release-shared.lock';lock.parent.mkdir(parents=True)
+            with patch.object(n,'ROOT',root),patch.object(n.subprocess,'run'),patch.object(n,'command',return_value=''):
+                with self.assertRaisesRegex(ValueError,'missing or busy'):n.require_shared_lock('android','today')
+                lock.mkdir()
+                with self.assertRaisesRegex(ValueError,'missing or busy'):n.require_shared_lock('android','today')
+                record=lock/'owner.json'
+                for state in ({'SESSION_ID':'apple','store':'testflight','day':'today'},
+                              {'SESSION_ID':'android','store':'testflight','day':'today'},
+                              {'SESSION_ID':'android','store':'zapstore','day':'yesterday'}):
+                    record.write_text(json.dumps(state));before=record.read_bytes()
+                    with self.assertRaisesRegex(ValueError,'another'):n.require_shared_lock('android','today')
+                    self.assertEqual(record.read_bytes(),before)
+                record.unlink();target=root/'foreign.json';target.write_text('{}');record.symlink_to(target)
+                with self.assertRaisesRegex(ValueError,'missing or busy'):n.require_shared_lock('android','today')
+                record.unlink();lock.rmdir();lock.symlink_to(root,target_is_directory=True)
+                with self.assertRaisesRegex(ValueError,'Verified'):n.require_shared_lock('android','today')
+    def test_build_checks_shared_lock_before_history_or_reservation(self):
+        import tempfile,os,datetime
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            private=Path(temp);day=n.dt.datetime.now(n.ZoneInfo('Australia/Perth')).date().isoformat()
+            with patch.object(n,'PRIVATE',private),patch.object(n,'safe_private'),patch.object(n,'command') as command,patch.dict(os.environ,{'SESSION_ID':'android','FLIGHT_DECK_PG_APP_NPUB':'verified'}),patch.object(n.sys,'argv',['nightly','build','--day',day]),patch.object(n,'require_shared_lock',side_effect=ValueError('foreign shared lock')) as guard:
+                with self.assertRaisesRegex(ValueError,'foreign shared lock'):n.main()
+                guard.assert_called_once_with('android',day);command.assert_not_called()
+                self.assertFalse((private/'ledger.json').exists())
     def test_snapshot_has_real_source_index_and_preserves_shared_state(self):
         import tempfile,subprocess
         from unittest.mock import patch

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = ROOT / 'tmp/docs/handoffs/zapstore-nightly'
+EVIDENCE = PRIVATE
 PACKAGE = 'com.wingmanbefree.wingman_app.nightly'
 NPUB = 'npub1llwrq3rtah3rg3r2dyfyht55ek7aa0ey7z47ujju407pzfp38shqa7zcvr'
 JAVA = '/Applications/Android Studio.app/Contents/jbr/Contents/Home'
@@ -34,7 +35,7 @@ def digest(path):
 
 def safe_private(path):
     path = path.absolute()
-    if not path.is_relative_to(PRIVATE) or any(x.is_symlink() for x in [path, *path.parents]):
+    if not any(path.is_relative_to(base) for base in (PRIVATE, EVIDENCE)) or any(x.is_symlink() for x in [path, *path.parents]):
         raise ValueError('Evidence must remain under ignored private storage without symlinks.')
     subprocess.run(['git', '-C', str(ROOT), 'check-ignore', '-q', str(path.relative_to(ROOT))], check=True)
     if command(['git', 'ls-files', '--', str(path.relative_to(ROOT))]):
@@ -99,20 +100,42 @@ def require_resume(s, owner, run):
         raise ValueError('Resume allowed only before signing/delivery, for retained exact source snapshots.')
 
 
-def testflight_active(ledger):
-    if ledger.get('schema') != 1 or not isinstance(ledger.get('days'), dict):
-        raise ValueError('Invalid TestFlight coordination ledger.')
-    return any(x['status']=='active' for x in ledger['days'].values())
+def require_shared_lock(owner, day):
+    """The scheduler's atomic directory lock serializes source work across stores.
+
+    Delivery claims are lane-local and can outlive this lock on uncertainty.
+    Only the owner may proceed; never acquire, expire or remove a foreign lock.
+    """
+    path = ROOT / 'tmp/docs/handoffs/nightly-release-shared.lock'
+    if not owner or any(x.is_symlink() for x in (path, *path.parents)):
+        raise ValueError('Verified shared source lock owner required.')
+    subprocess.run(['git', '-C', str(ROOT), 'check-ignore', '-q', str(path)], check=True)
+    if command(['git', 'ls-files', '--', str(path)]):
+        raise ValueError('Shared source lock must be untracked.')
+    record = path / 'owner.json'
+    if not path.is_dir() or record.is_symlink() or not record.is_file():
+        raise ValueError('Shared source lock missing or busy; acquire it atomically first.')
+    state = json.loads(record.read_text())
+    if state.get('SESSION_ID') != owner or state.get('store') != 'zapstore' or state.get('day') != day:
+        raise ValueError('Shared source lock belongs to another session, store or day.')
 
 
 def main():
+    global EVIDENCE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'amend-listing', 'prepare-public', 'publish-public', 'resume-build', 'publish', 'readback', 'status'])
     parser.add_argument('--day', default=dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat())
     parser.add_argument('--committed-source', action='store_true', help='First-publication only: preserve incompatible active edits and validate exact committed snapshots.')
+    parser.add_argument('--evidence-root', type=Path, help='Ignored, untracked run storage under tmp/docs/handoffs; delivery ledger stays canonical.')
     parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
     a = parser.parse_args()
     if dt.date.fromisoformat(a.day).isoformat() != a.day: raise ValueError('Invalid day.')
+    if a.evidence_root:
+        candidate = a.evidence_root.absolute()
+        if not candidate.is_relative_to(ROOT / 'tmp/docs/handoffs'):
+            raise ValueError('Run evidence must remain under private handoff storage.')
+        EVIDENCE = candidate
+        safe_private(EVIDENCE); EVIDENCE.mkdir(parents=True, exist_ok=True, mode=0o700)
     safe_private(PRIVATE); PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name in ('.release.lock', 'ledger.json'):
         if (PRIVATE/name).is_symlink(): raise ValueError('Unsafe release storage.')
@@ -123,7 +146,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ledger_path = PRIVATE/'ledger.json'
         ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {'schema': 1, 'runs': {}}
-        run = PRIVATE/a.day
+        run = Path(ledger['runs'].get(a.day, {}).get('run_path', str(EVIDENCE/a.day)))
+        safe_private(run)
         env = {**os.environ, 'JAVA_HOME': JAVA, 'AUTOPILOT_REPO': str(ROOT.parent/'autopilot'), 'RUSTUP_TOOLCHAIN':'stable'}
         def logged(args, cwd, label):
             with (run/(label+'.log')).open('xb') as output:
@@ -134,11 +158,7 @@ def main():
         if a.action == 'build':
             if a.day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat(): raise ValueError('Build requires current Perth day.')
             if not env.get('FLIGHT_DECK_PG_APP_NPUB'): raise ValueError('Verified Flight Deck app identity required.')
-            # A single scheduler session prepares source for both lanes. Manual builds
-            # refuse an active TestFlight claim rather than compete with it.
-            ios_ledger = ROOT/'tmp/docs/handoffs/nightly-testflight/ledger.json'
-            if ios_ledger.exists() and testflight_active(json.loads(ios_ledger.read_text())):
-                raise ValueError('TestFlight nightly is active; finish/reconcile that lane first.')
+            require_shared_lock(os.environ.get('SESSION_ID'), a.day)
             for repo in (a.flightdeck, ROOT):
                 if command(['git','status','--porcelain'],repo) and not a.committed_source: raise ValueError('Commit validated compatible source first; preserve concurrent work.')
             private_key_reference(KEYSTORE); private_key_reference(PASSWORD)
@@ -146,7 +166,7 @@ def main():
             source_commit=command(['git','rev-parse','HEAD'])
             source_version=re.search(r'^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+',command(['git','show',source_commit+':app/pubspec.yaml']),re.MULTILINE)
             if not source_version: raise ValueError('Committed source version missing.')
-            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode'],source_version.group(1));s['planned_source_commit']=source_commit; s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
+            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode'],source_version.group(1));s['run_path']=str(run);s['planned_source_commit']=source_commit; s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
             run.mkdir(mode=0o700);update('building')
             fd=run/'flightdeck';wm=run/'wmapp'
             s['flightdeck_commit']=snapshot(a.flightdeck,fd);update('building')
@@ -173,6 +193,7 @@ def main():
             s=ledger['runs'][a.day]
             if a.action!='readback' and s['owner']!=os.environ.get('SESSION_ID'): raise ValueError('Only reservation owner can mutate release.')
             if a.action=='resume-build':
+                require_shared_lock(os.environ.get('SESSION_ID'), a.day)
                 require_resume(s,os.environ.get('SESSION_ID'),run)
                 fd=run/'flightdeck';wm=run/'wmapp'
                 for name,key in [('flightdeck','flightdeck_commit'),('wmapp','source_commit')]:

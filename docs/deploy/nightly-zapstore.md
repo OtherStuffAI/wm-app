@@ -17,14 +17,20 @@ These are Android credentials, separate from the Nostr identity. Never derive,
 export or provide a Nostr private key. Back up Android credentials privately;
 future APK updates require the same certificate.
 
-1. One existing 22:00 `Australia/Perth` scheduler session prepares validated,
-   compatible source checkpoints on main: Flight Deck first, WMAPP second.
-   Preserve incompatible/concurrent edits and report them. TestFlight executes
-   its existing private release contract, records its result and finishes its
-   claim before Android. An Apple failure does not silently skip Android.
+1. The independent 22:00 `Australia/Perth` store sessions serialize shared
+   source preparation with atomic directory creation at
+   `tmp/docs/handoffs/nightly-release-shared.lock`. Verify ignored/untracked
+   storage and reject symlinks before acquisition. Write `owner.json` with
+   `SESSION_ID`, `store: "zapstore"`, Perth `day` and creation time. Hold it
+   through source preparation, snapshots, delivery/readback and reporting.
+   A foreign lock or missing owner file is busy; never remove or expire it.
+   Release only your own verified owner file and exact directory after handoff.
+   Prepare validated compatible main checkpoints: Flight Deck first, WMAPP second.
+   TestFlight daily claims and uncertain Apple delivery remain Apple-only gates;
+   they do not block Android when Android owns the real shared source lock.
 2. Set the verified `FLIGHT_DECK_PG_APP_NPUB` from scoped Flight Deck context.
-   Run `python3 tools/nightly_zapstore.py build`. It checks no TestFlight claim
-   is active, queries relay history, reserves above all local/remote numbers,
+   Run `python3 tools/nightly_zapstore.py build`. It requires the matching shared
+   lock owner/store/day, queries relay history, reserves above local/remote numbers,
    derives the marketing version from the exact committed pubspec, and builds
    Flight Deck then Android from isolated committed archives. It validates
    Flight Deck public source/tests/dist, Flutter analysis/tests and ARM64 APK.
