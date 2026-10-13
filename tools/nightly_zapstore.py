@@ -89,6 +89,20 @@ def assets(directory):
     return {str(p.relative_to(directory)): digest(p) for p in sorted(directory.rglob('*')) if p.is_file()}
 
 
+def prepare_inactive_flavor_assets(wm):
+    """Flutter analyze checks flavor paths even when that flavor is not built.
+
+    Create only empty generated directories for the inactive Ambulando flavor;
+    never package its frontend into Wingman or alter the committed pubspec.
+    """
+    text = (wm/'app/pubspec.yaml').read_text()
+    for relative in re.findall(r'^    - path: (assets/ambulando/[^\n]*)\n      flavors:\n        - ambulando\s*$', text, re.MULTILINE):
+        path = wm/'app'/relative
+        if '..' in Path(relative).parts or any(x.is_symlink() for x in (path, *path.parents)):
+            raise ValueError('Unsafe inactive flavor asset directory.')
+        path.mkdir(parents=True, exist_ok=True)
+
+
 def private_key_reference(path):
     if not path.is_file() or any(x.is_symlink() for x in [path, *path.parents]) or path.stat().st_mode & 0o077:
         raise ValueError('Signing reference must be an owner-only regular file without symlinks.')
@@ -182,6 +196,7 @@ def main():
             logged([wm/'tools/update_flightdeck_bundle.sh','--use-existing-dist'],wm,'bundle')
             if assets(wm/'app/assets/flightdeck') != s['flightdeck_assets']: raise ValueError('Bundled assets differ.')
             env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly')
+            prepare_inactive_flavor_assets(wm)
             logged(['cargo','build','--locked','--release','-p','wmapp-drive-fs'],wm,'drive-fs-build')
             for args,label in [(['flutter','pub','get'],'pub'),(['flutter','analyze'],'analyze'),(['flutter','test'],'flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'apk-build')]: logged(args,wm/'app',label)
             import shutil
@@ -205,6 +220,7 @@ def main():
                 private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
                 env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly',RUSTUP_TOOLCHAIN='stable')
                 update('building')
+                prepare_inactive_flavor_assets(wm)
                 logged(['cargo','build','--locked','--release','-p','wmapp-drive-fs'],wm,'resume-drive-fs-build')
                 for args,label in [(['flutter','analyze'],'resume-analyze'),(['flutter','test'],'resume-flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'resume-apk-build')]: logged(args,wm/'app',label)
                 import shutil

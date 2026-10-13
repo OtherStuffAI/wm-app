@@ -76,6 +76,16 @@ class NightlyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'foreign shared lock'):n.main()
                 guard.assert_called_once_with('android',day);command.assert_not_called()
                 self.assertFalse((private/'ledger.json').exists())
+    def test_inactive_flavor_assets_are_empty_and_pubspec_is_unchanged(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            wm=Path(temp).resolve();(wm/'app').mkdir()
+            pubspec=wm/'app/pubspec.yaml';original=(n.ROOT/'app/pubspec.yaml').read_bytes();pubspec.write_bytes(original)
+            n.prepare_inactive_flavor_assets(wm)
+            self.assertTrue((wm/'app/assets/ambulando/napplets/org-data/v1').is_dir())
+            self.assertEqual(pubspec.read_bytes(),original)
+            self.assertFalse(any(p.is_file() for p in (wm/'app/assets/ambulando').rglob('*')))
+            self.assertFalse((wm/'app/assets/flightdeck').exists())
     def test_snapshot_has_real_source_index_and_preserves_shared_state(self):
         import tempfile,subprocess
         from unittest.mock import patch
