@@ -86,6 +86,18 @@ class NightlyTests(unittest.TestCase):
             self.assertEqual(pubspec.read_bytes(),original)
             self.assertFalse(any(p.is_file() for p in (wm/'app/assets/ambulando').rglob('*')))
             self.assertFalse((wm/'app/assets/flightdeck').exists())
+    def test_apk_requires_every_exact_nested_flightdeck_asset(self):
+        import tempfile,zipfile,hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            apk=Path(temp)/'app.apk';name='napplets/org-data/v1/index.html';expected={name:hashlib.sha256(b'current').hexdigest()}
+            for body in (b'current',b'stale',None):
+                with zipfile.ZipFile(apk,'w') as archive:
+                    if body is not None:archive.writestr('assets/flutter_assets/assets/flightdeck/'+name,body)
+                if body==b'current':n.verify_bundled_apk(apk,expected)
+                elif body is None:
+                    with self.assertRaises(KeyError):n.verify_bundled_apk(apk,expected)
+                else:
+                    with self.assertRaisesRegex(ValueError,'differs'):n.verify_bundled_apk(apk,expected)
     def test_snapshot_has_real_source_index_and_preserves_shared_state(self):
         import tempfile,subprocess
         from unittest.mock import patch

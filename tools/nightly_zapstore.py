@@ -103,6 +103,14 @@ def prepare_inactive_flavor_assets(wm):
         path.mkdir(parents=True, exist_ok=True)
 
 
+def verify_bundled_apk(apk, expected):
+    import zipfile
+    with zipfile.ZipFile(apk) as archive:
+        for name, sha256 in expected.items():
+            if hashlib.sha256(archive.read('assets/flutter_assets/assets/flightdeck/'+name)).hexdigest() != sha256:
+                raise ValueError('APK Flight Deck asset differs: '+name)
+
+
 def private_key_reference(path):
     if not path.is_file() or any(x.is_symlink() for x in [path, *path.parents]) or path.stat().st_mode & 0o077:
         raise ValueError('Signing reference must be an owner-only regular file without symlinks.')
@@ -202,6 +210,7 @@ def main():
             import shutil
             shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
             s['apk_sha256']=digest(run/'app-release.apk')
+            verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
             logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','android-unit-tests')
             update('built')
         else:
@@ -226,6 +235,7 @@ def main():
                 import shutil
                 shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
                 s['apk_sha256']=digest(run/'app-release.apk')
+                verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
                 logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','resume-android-unit-tests');update('built')
             elif a.action=='prepare':
                 if s['stage']!='built': raise ValueError('Preparation requires built state.')
