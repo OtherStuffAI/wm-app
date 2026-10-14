@@ -253,7 +253,12 @@ def main():
                 metadata=prep.ApkInspector().inspect(run/'app-release.apk',run/'icon.png')
                 if metadata.version_code!=s['version_code'] or metadata.version_name!=s['version_name']: raise ValueError('Reserved version mismatch.')
                 badging=command([prep.find_android_tools()[0],'dump','badging',run/'app-release.apk'])
-                if "application-label:'Wingman Nightly'" not in badging: raise ValueError('Nightly visible name mismatch.')
+                # Product branding belongs to the exact committed APK source;
+                # the existing Zapstore catalog identity remains Wingman Nightly.
+                gradle=(run/'wmapp/app/android/app/build.gradle.kts').read_text()
+                label=re.search(r'manifestPlaceholders\["wingmanAppLabel"\] = if \(nightly\) "([^"]+)"',gradle)
+                if not label or label.group(1) not in ('Wingman Nightly','Nostr Browser Nightly') or f"application-label:'{label.group(1)}'" not in badging:
+                    raise ValueError('Nightly visible name differs from committed source branding.')
                 notes=f"Wingman Nightly {a.day}\n\nWMAPP source: {s['source_commit']}\nFlight Deck source: {s['flightdeck_commit']}\nFlight Deck build: {s['flightdeck_version']['buildId']}\n"
                 (run/'notes.md').write_text(notes)
                 config=(ROOT/'zapstore-nightly.yaml').read_text().replace('./app/build/app/outputs/flutter-apk/app-release.apk',str(run/'app-release.apk')).replace('./docs/deploy/nightly-zapstore-notes.md',str(run/'notes.md'))

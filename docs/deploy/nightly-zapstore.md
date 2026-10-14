@@ -2,6 +2,9 @@
 
 Wingman Nightly uses `com.wingmanbefree.wingman_app.nightly`, installs alongside
 stable WMAPP and has its own private persistent Android signing keystore.
+The Zapstore catalog retains the name Wingman Nightly. The installed Android
+label follows the exact committed product branding (currently Nostr Browser
+Nightly); preparation verifies that label against the isolated source snapshot.
 Stable package, publisher and `zapstore.yaml` remain unchanged. Nightly's public
 catalog and repository ownership proof live at
 https://github.com/OtherStuffAI/wingman-nightly; the catalog's root `zapstore.yaml`
