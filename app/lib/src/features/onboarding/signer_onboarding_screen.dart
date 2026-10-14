@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/immediate_pin_field.dart';
 
 import '../../core/app_product.dart';
 
@@ -152,13 +153,10 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
                 ),
               const SizedBox(height: 14),
             ],
-            TextField(
+            ImmediatePinField(
               enabled: !_busy,
               controller: _pinController,
               obscureText: _obscurePin,
-              keyboardType: TextInputType.number,
-              enableSuggestions: false,
-              autocorrect: false,
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
                 labelText: 'PIN',
@@ -181,13 +179,10 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
             ),
             if (!_hasVault) ...[
               const SizedBox(height: 14),
-              TextField(
+              ImmediatePinField(
                 enabled: !_busy,
                 controller: _confirmPinController,
                 obscureText: _obscurePin,
-                keyboardType: TextInputType.number,
-                enableSuggestions: false,
-                autocorrect: false,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   labelText: 'Confirm PIN',
