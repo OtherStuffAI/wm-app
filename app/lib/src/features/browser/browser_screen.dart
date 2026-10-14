@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
+import '../../theme/browser_theme.dart';
 import '../../core/app_config.dart';
 import '../../core/app_product.dart';
 import '../../core/tower_fips_proxy.dart';
@@ -310,7 +311,14 @@ class BrowserScreenState extends State<BrowserScreen>
     return SafeArea(bottom: AppProduct.ambulando, child: content);
   }
 
-  Widget _buildTabBar(BuildContext context) {
+  Widget _buildTabBar(BuildContext context) => AppProduct.ambulando
+      ? _buildTabBarContents(context)
+      : Theme(
+          data: BrowserTheme.chrome(Theme.of(context)),
+          child: Builder(builder: _buildTabBarContents),
+        );
+
+  Widget _buildTabBarContents(BuildContext context) {
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
@@ -415,7 +423,14 @@ class BrowserScreenState extends State<BrowserScreen>
     );
   }
 
-  Widget _buildAddressBar(BuildContext context) {
+  Widget _buildAddressBar(BuildContext context) => AppProduct.ambulando
+      ? _buildAddressBarContents(context)
+      : Theme(
+          data: BrowserTheme.chrome(Theme.of(context)),
+          child: Builder(builder: _buildAddressBarContents),
+        );
+
+  Widget _buildAddressBarContents(BuildContext context) {
     final tab = _activeTab;
     final theme = Theme.of(context);
     return Material(
@@ -447,6 +462,9 @@ class BrowserScreenState extends State<BrowserScreen>
             Expanded(
               child: TextField(
                 controller: tab.addressController,
+                style: AppProduct.ambulando
+                    ? null
+                    : const TextStyle(color: BrowserTheme.ink),
                 focusNode: tab.addressFocusNode,
                 onSubmitted: _loadAddress,
                 decoration: const InputDecoration(
@@ -3705,10 +3723,18 @@ class _BrowserTabButton extends StatelessWidget {
       padding: const EdgeInsets.only(top: 6),
       child: Material(
         color: tabColour == null
-            ? (active ? colors.surface : Colors.transparent)
+            ? (active
+                ? (AppProduct.ambulando
+                    ? colors.surface
+                    : BrowserTheme.activeTab)
+                : Colors.transparent)
             : Color.alphaBlend(
                 tabColour!.withValues(alpha: active ? 0.28 : 0.14),
-                active ? colors.surface : colors.surfaceContainerHighest,
+                active
+                    ? (AppProduct.ambulando
+                        ? colors.surface
+                        : BrowserTheme.activeTab)
+                    : colors.surfaceContainerHighest,
               ),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
         child: InkWell(
@@ -3720,14 +3746,30 @@ class _BrowserTabButton extends StatelessWidget {
             height: 34,
             padding: const EdgeInsets.only(left: 12, right: 4),
             decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(6),
-              ),
-              border: Border.all(
-                color: tabColour ??
-                    (active ? colors.outlineVariant : Colors.transparent),
-                width: active && tabColour != null ? 2 : 1,
-              ),
+              borderRadius: AppProduct.ambulando
+                  ? const BorderRadius.vertical(top: Radius.circular(6))
+                  : null,
+              border: AppProduct.ambulando
+                  ? Border.all(
+                      color: tabColour ??
+                          (active ? colors.outlineVariant : Colors.transparent),
+                      width: active && tabColour != null ? 2 : 1,
+                    )
+                  : Border(
+                      top: BorderSide(
+                        color: active && !AppProduct.ambulando
+                            ? BrowserTheme.orange
+                            : (tabColour ?? Colors.transparent),
+                        width: active ? 3 : 1,
+                      ),
+                      bottom: BorderSide(
+                        color: tabColour ??
+                            (active
+                                ? colors.outlineVariant
+                                : Colors.transparent),
+                        width: active && tabColour != null ? 2 : 1,
+                      ),
+                    ),
             ),
             child: Row(
               children: [

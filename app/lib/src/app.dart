@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'theme/browser_theme.dart';
 import 'core/app_config.dart';
 import 'core/app_product.dart';
 import 'core/flight_deck_update_manager.dart';
@@ -178,17 +179,17 @@ class _WingmanAppState extends State<WingmanApp> {
     return MaterialApp(
       title: AppProduct.title,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor:
-              const Color(AppProduct.ambulando ? 0xFF17364A : 0xFF286A5A),
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor:
-            AppProduct.ambulando ? const Color(0xFFFAF8F1) : null,
-        useMaterial3: true,
-        visualDensity: VisualDensity.standard,
-      ),
+      theme: AppProduct.ambulando
+          ? ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFF17364A),
+                brightness: Brightness.light,
+              ),
+              scaffoldBackgroundColor: const Color(0xFFFAF8F1),
+              useMaterial3: true,
+              visualDensity: VisualDensity.standard,
+            )
+          : BrowserTheme.light(),
       home: _home(),
     );
   }
