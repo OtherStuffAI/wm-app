@@ -95,7 +95,7 @@ class FipsVpnService : VpnService() {
         // Deliberately no addDisallowedApplication(packageName): WM-App's own
         // WebView must enter this VPN. FIPS UDP sockets are protected below.
         val descriptor = Builder()
-            .setSession("Wingman FIPS mesh")
+            .setSession("${applicationInfo.loadLabel(packageManager)} FIPS mesh")
             .addAddress(ipv6, spec.ipv6Prefix)
             .addAddress(FipsPlatformContract.VPN_ADDRESS, spec.dnsPrefix)
             .addRoute(FipsPlatformContract.MESH_ROUTE, spec.meshPrefix)
@@ -219,7 +219,7 @@ class FipsVpnService : VpnService() {
             @Suppress("DEPRECATION") Notification.Builder(this)
         }
         return builder
-            .setContentTitle("Wingman FIPS VPN active")
+            .setContentTitle("${applicationInfo.loadLabel(packageManager)} FIPS VPN active")
             .setContentText(detail)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(openIntent)
@@ -288,7 +288,7 @@ class FipsVpnService : VpnService() {
             } catch (failure: Throwable) {
                 FipsVpnServiceFailure.record(
                     "service_launch_failed",
-                    "Android blocked the embedded FIPS VPN from starting. Please retry from WM-App.",
+                    "Android blocked the embedded FIPS VPN from starting. Please retry from Nostr Browser.",
                 )
                 Log.e(TAG, "service_launch_failed (${failure.javaClass.simpleName})")
                 FipsDiagnostics.record(context, "service_launch_failed", phase = "service", fipsStatus = "failed", errorCode = "service_launch_failed", serviceState = "failed", failure = failure, critical = true)

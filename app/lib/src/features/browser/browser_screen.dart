@@ -3623,8 +3623,8 @@ class BrowserScreenState extends State<BrowserScreen>
     signEvent: (event) => callNative('signEvent', event),
     getRelays: () => Promise.resolve({}),
     nip04: {
-      encrypt: () => Promise.reject(new Error('nip04 encryption is not enabled in WMApp yet')),
-      decrypt: () => Promise.reject(new Error('nip04 decryption is not enabled in WMApp yet')),
+      encrypt: () => Promise.reject(new Error('nip04 encryption is not enabled in ${AppProduct.title} yet')),
+      decrypt: () => Promise.reject(new Error('nip04 decryption is not enabled in ${AppProduct.title} yet')),
     },
     nip44: {
       encrypt: (peerPubkey, plaintext) => callNative('nip44.encrypt', { peerPubkey, payload: plaintext }),

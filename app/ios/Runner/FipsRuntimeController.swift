@@ -131,7 +131,8 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         config.disconnectOnSleep = false
         if #available(iOS 14.0, *) { config.includeAllNetworks = false }
         manager.protocolConfiguration = config
-        manager.localizedDescription = "Wingman FIPS"
+        let productName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Nostr Browser"
+        manager.localizedDescription = "\(productName) FIPS"
         manager.isEnabled = true
         // Do not install on-demand rules or silently replace a third-party config.
         self.manager = manager
@@ -223,7 +224,7 @@ final class FipsRuntimeController: NSObject, FlutterPlugin, UIDocumentPickerDele
         guard exportResult == nil else { result(["outcome": "failed", "detail": "An export is already open."]); return }
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         guard var presenter = scenes.flatMap({ $0.windows }).first(where: { $0.isKeyWindow })?.rootViewController else {
-            result(["outcome": "failed", "detail": "Open WMAPP to export diagnostics."]); return
+            result(["outcome": "failed", "detail": "Open the app to export diagnostics."]); return
         }
         while let presented = presenter.presentedViewController { presenter = presented }
         let safe: [String: Any] = ["schema": 1, "platform": "iOS", "coreVersion": "0.5.0",

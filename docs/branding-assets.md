@@ -1,6 +1,6 @@
-# WMApp branding assets
+# Nostr Browser branding assets
 
-WMApp uses the approved wayfinder hybrid: a purple compass and wing with an
+Nostr Browser uses the approved wayfinder hybrid: a purple compass and wing with an
 orange direction marker on white. The source is retained unchanged at
 `app/assets/branding/wayfinder-hybrid.png` (1254 × 1254 RGB PNG).
 Its SHA-256 is
@@ -46,10 +46,40 @@ There is no Windows runner in this repository, so no Windows application icon
 is claimed. The ICO files are browser favicons.
 The separate Ambulando iOS icon and launch resources remain its own branding.
 Internal bundle identifiers, repository and binary names retain their existing
-values; product display labels use WMApp (WMApp Nightly for Android nightlies).
+values. The canonical product name is **Nostr Browser**; use **NBrowser** only
+for compact labels such as manifest `short_name`. Android nightlies display
+**Nostr Browser Nightly**. Ambulando keeps its separate product name.
+The macOS bundle name and display name use Nostr Browser while the build
+product and executable remain `wingman_app`. The DMG volume and staged app
+display Nostr Browser; existing DMG artifact filenames stay unchanged. iOS display names come from
+`WMAPP_DISPLAY_NAME`, including the Ambulando configuration.
 
 For visual review, inspect normal and maskable exports at native 16/32/48 sizes,
 at 180/192 and 512, and against both light and dark surroundings. Confirm the
 compass, wing and orange marker match the master, and maskable crops keep the
 mark intact. Platform build and runtime checks remain necessary: this audit
 checks asset files and references, not OS launcher caches or installed apps.
+
+## Product-name validation
+
+Run the asset check above to validate both manifest names (`Nostr Browser` /
+`NBrowser`) and the web title and Apple web-app title along with the logo exports.
+Run Flutter analysis and tests from `app/`; the welcome/loading and onboarding
+widget tests cover visible default-product labels and narrow layouts.
+
+For macOS, build with `flutter build macos --debug`, then inspect
+`build/macos/Build/Products/Debug/wingman_app.app/Contents/Info.plist`.
+`CFBundleName` and `CFBundleDisplayName` must be `Nostr Browser`; the executable
+must remain `wingman_app` and the bundle ID `com.wingmanbefree.wmapp`.
+Inspect the compiled menu archive with `strings` (`ibtool` accepts the source
+XIB but cannot reopen compiled nibs):
+
+```sh
+strings -a \
+  build/macos/Build/Products/Debug/wingman_app.app/Contents/Resources/Base.lproj/MainMenu.nib
+```
+
+Verify the app menu, window title, About, Hide, Quit and Show Menu entries use
+Nostr Browser. Building and inspecting resources does not replace an installed
+app or validate launcher caches. Android stable/nightly launcher labels and iOS
+default/Ambulando display settings should also be inspected before release.

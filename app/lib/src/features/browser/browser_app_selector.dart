@@ -1,3 +1,4 @@
+import '../../core/app_product.dart';
 import 'browser_bookmark_store.dart';
 
 String _escape(String value) => value
@@ -29,7 +30,7 @@ String browserAppSelectorHtml(
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http://localhost:* http://127.0.0.1:* http://[::1]:* data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-<title>WMApp New Tab</title>
+<title>${AppProduct.title} New Tab</title>
 <style>
 :root {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#19382f;background:#e4eee6;color-scheme:light}
 * {box-sizing:border-box} body {margin:0;min-height:100vh;background:linear-gradient(145deg,#dbe8dd,#e9ede2 55%,#c5dbd5);${background == null ? '' : 'background-image:linear-gradient(#edf4e755,#edf4e755),url("${_escape(background)}");background-size:cover;background-position:center;background-attachment:fixed;'}}

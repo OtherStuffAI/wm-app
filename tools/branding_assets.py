@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce approved WMApp raster exports with ImageMagick 7; --check audits them."""
+"""Reproduce approved Nostr Browser raster exports with ImageMagick 7; --check audits them."""
 import argparse
 import hashlib
 import json
@@ -84,12 +84,17 @@ def main():
             assert frames.strip() == '16x16 32x32 48x48', frames
             print(f'{base}/favicon.ico: ICO 16/32/48')
             manifest = json.loads((ROOT / base / 'manifest.json').read_text())
+            assert manifest['name'] == 'Nostr Browser', (base, manifest['name'])
+            assert manifest['short_name'] == 'NBrowser', (base, manifest['short_name'])
             for icon in manifest['icons']:
                 dims = subprocess.check_output(['magick', 'identify', '-format', '%wx%h', str(ROOT / base / icon['src'])], text=True)
                 assert dims == icon['sizes'], (icon, dims)
                 assert icon['type'] == 'image/png', icon
                 assert icon.get('purpose', 'any') == ('maskable' if 'maskable' in icon['src'] else 'any'), icon
             html = (ROOT / base / 'index.html').read_text() if base == 'app/web' else ''
+            if html:
+                assert '<title>Nostr Browser</title>' in html
+                assert 'name="apple-mobile-web-app-title" content="Nostr Browser"' in html
             for reference in ('favicon.ico', 'favicon-32.png', 'apple-touch-icon.png', 'manifest.json'):
                 if html:
                     assert reference in html, reference

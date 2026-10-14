@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_product.dart';
+
 import '../browser/nostr_profile_store.dart';
 import 'welcome_surface.dart';
 
@@ -88,7 +90,7 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              _hasVault ? 'Welcome back' : 'Set Up WMApp Signer',
+              _hasVault ? 'Welcome back' : 'Set Up ${AppProduct.title} Signer',
               style: theme.textTheme.headlineMedium,
             ),
             const SizedBox(height: 12),

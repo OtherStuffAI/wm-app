@@ -6,6 +6,8 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_product.dart';
+
 typedef FipsProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -235,7 +237,7 @@ class FipsRuntimeService {
   FipsRuntimeStatus get disabledStatus => FipsRuntimeStatus(
         state: FipsRuntimeState.disabled,
         detail:
-            'FIPS is disabled in WMAPP. Enable it in Setup to use FIPS-only '
+            'FIPS is disabled in ${AppProduct.title}. Enable it in Setup to use FIPS-only '
             'services. Ordinary HTTPS browsing remains available.'
             '${_isMobile ? '' : ' An independently installed system FIPS service '
                 'is managed separately and is not stopped by this control.'}',
@@ -419,7 +421,7 @@ end run
           'the VPN; normal internet keeps its existing route. iOS may '
           'disconnect another active VPN when you enable FIPS.'
       : _isAndroid
-          ? 'Android will request VPN consent once. WM-App keeps normal internet '
+          ? 'Android will request VPN consent once. ${AppProduct.title} keeps normal internet '
               'routing outside the VPN and routes only FIPS mesh and .fips DNS '
               'traffic through its embedded runtime.'
           : _isLinux
@@ -621,7 +623,8 @@ end run
     if (!_isMacOS && !_isLinux) {
       return const FipsRuntimeStatus(
         state: FipsRuntimeState.notBundled,
-        detail: 'Bundled desktop FIPS is supported on macOS and Linux WMapp.',
+        detail:
+            'Bundled desktop FIPS is supported on macOS and Linux ${AppProduct.title}.',
       );
     }
     if (!await _fileExists(bundledPackagePath)) {
@@ -922,7 +925,8 @@ end run
   Future<ProcessResult> _run(String executable, List<String> arguments) async {
     try {
       if (!await isEnabled) {
-        return ProcessResult(0, 1, '', 'FIPS is disabled in WMAPP.');
+        return ProcessResult(
+            0, 1, '', 'FIPS is disabled in ${AppProduct.title}.');
       }
       return await _processRunner(executable, arguments);
     } catch (error) {

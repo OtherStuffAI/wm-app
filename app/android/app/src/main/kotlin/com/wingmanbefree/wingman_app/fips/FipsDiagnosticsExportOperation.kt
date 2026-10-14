@@ -19,7 +19,7 @@ internal class FipsDiagnosticsExportOperation(private val environment: FipsDiagn
     fun start(completion: FipsCompletion) {
         synchronized(this) {
             if (destroyed || !environment.hasActivity()) {
-                completion.complete(result("failed", "activity_unavailable", "WM-App is not ready to export diagnostics. Please retry.")); return
+                completion.complete(result("failed", "activity_unavailable", "Nostr Browser is not ready to export diagnostics. Please retry.")); return
             }
             if (pending != null) {
                 completion.complete(result("failed", "export_in_progress", "A diagnostics export is already in progress.")); return
@@ -65,7 +65,7 @@ internal class FipsDiagnosticsExportOperation(private val environment: FipsDiagn
             pending != null
         }
         if (hadPending) environment.record("export_activity_destroyed")
-        finish(result("failed", "activity_destroyed", "WM-App closed before diagnostics export completed. Please retry."))
+        finish(result("failed", "activity_destroyed", "Nostr Browser closed before diagnostics export completed. Please retry."))
     }
 
     private fun finish(value: Map<String, Any?>) {

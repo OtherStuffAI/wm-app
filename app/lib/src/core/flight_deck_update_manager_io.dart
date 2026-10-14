@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'app_product.dart';
+
 import 'flight_deck_update_models.dart';
 
 const _otaEnabled = bool.fromEnvironment(
@@ -181,7 +183,7 @@ class FlightDeckUpdateManifest {
     }
     if (_compareVersions(currentWmappVersion, minimumWmappVersion) < 0) {
       throw FlightDeckCompatibilityException(
-        'Flight Deck $buildNumber needs WMAPP $minimumWmappVersion or newer.',
+        'Flight Deck $buildNumber needs ${AppProduct.title} $minimumWmappVersion or newer.',
         version: buildNumber.toString(),
       );
     }
@@ -570,7 +572,7 @@ class IoFlightDeckUpdateController extends FlightDeckUpdateController {
       );
       if (manifest.archiveSizeBytes > maximumArchiveBytes) {
         throw const FormatException(
-            'Declared archive size exceeds the WMAPP limit');
+            'Declared archive size exceeds the ${AppProduct.title} limit');
       }
       if (manifest.buildNumber <= _activeBuildNumber) {
         _available = null;
@@ -1204,7 +1206,8 @@ int _compareVersions(String left, String right) {
   final a = parts(left);
   final b = parts(right);
   if (a == null || b == null) {
-    throw const FormatException('WMAPP compatibility version is invalid');
+    throw const FormatException(
+        '${AppProduct.title} compatibility version is invalid');
   }
   for (var index = 0; index < 3; index++) {
     final comparison = a[index].compareTo(b[index]);

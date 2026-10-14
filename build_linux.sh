@@ -8,4 +8,4 @@ cd "${ROOT}/app"
 flutter pub get
 flutter build linux --release "$@"
 
-echo "Linux WM-App bundles are below: ${ROOT}/app/build/linux/"
+echo "Linux Nostr Browser bundles are below: ${ROOT}/app/build/linux/"

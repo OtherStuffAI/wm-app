@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/app_product.dart';
+
 import '../../core/nostr_crypto.dart';
 
 class AvatarUploadException implements Exception {
@@ -57,7 +59,7 @@ class ProfileAvatarUpload {
       if (error.code == 'photo_access_denied' ||
           error.code == 'photo_access_restricted') {
         throw const AvatarUploadException(
-          'Photo library access is unavailable. Check WMApp permissions in Settings.',
+          'Photo library access is unavailable. Check ${AppProduct.title} permissions in Settings.',
         );
       }
       throw const AvatarUploadException(

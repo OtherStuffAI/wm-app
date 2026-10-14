@@ -1,6 +1,6 @@
 {
-  "name": "WMApp",
-  "short_name": "WMApp",
+  "name": "Nostr Browser",
+  "short_name": "NBrowser",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#ffffff",

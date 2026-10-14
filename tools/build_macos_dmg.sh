@@ -86,10 +86,10 @@ mkdir -p "$DIST_DIR"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/wmapp-dmg.XXXXXX")"
 cleanup() { rm -rf -- "$STAGE"; }
 trap cleanup EXIT INT TERM
-cp -R "$APP_PATH" "$STAGE/WMApp.app"
+cp -R "$APP_PATH" "$STAGE/Nostr Browser.app"
 ln -s /Applications "$STAGE/Applications"
 rm -f -- "$DMG_PATH"
-hdiutil create -quiet -volname WMApp -srcfolder "$STAGE" -format UDZO -ov "$DMG_PATH"
+hdiutil create -quiet -volname "Nostr Browser" -srcfolder "$STAGE" -format UDZO -ov "$DMG_PATH"
 
 if [[ "$MODE" == public ]]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"

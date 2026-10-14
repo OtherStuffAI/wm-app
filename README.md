@@ -1,11 +1,11 @@
-# WMApp — a Nostr browser
+# Nostr Browser
 
-![WMApp Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](public/logo.png)
+![Nostr Browser Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](public/logo.png)
 
-WMApp is a Nostr browser for opening multiple Nostr apps and mini apps with a
+Nostr Browser (NBrowser for short) opens multiple Nostr apps and mini apps with a
 local signer and FIPS connectivity. Browse ordinary HTTP/HTTPS pages in tabs,
 save web apps in the new-tab launcher, and open `.fips` WApps through the mesh.
-Here, mini apps are web apps opened inside the browser; WMApp does not provide a
+Here, mini apps are web apps opened inside the browser; Nostr Browser does not provide a
 separate native mini-app runtime.
 
 The browser injects `window.nostr` so compatible apps can request a public key
@@ -126,7 +126,7 @@ The current desktop build can register a device through Tower, validate a config
 
 ## Where your Nostr private key is stored
 
-WM-App does **not** put your raw `nsec` directly in Keychain, Android
+Nostr Browser does **not** put your raw `nsec` directly in Keychain, Android
 Keystore, or a Linux keyring. Instead, it uses a two-part local vault:
 
 - Your raw `nsec` is encrypted with AES-256-GCM. The ciphertext and public
@@ -142,21 +142,21 @@ Keystore, or a Linux keyring. Instead, it uses a two-part local vault:
 The secure-storage location for that random per-install secret depends on your
 device:
 
-- **iPhone and iPad:** Apple Keychain. WM-App uses the package defaults: the
+- **iPhone and iPad:** Apple Keychain. Nostr Browser uses the package defaults: the
   item is accessible while the device is unlocked and iCloud Keychain
   synchronisation is off.
 - **Android:** AES-GCM encrypted storage. Under the package defaults, its data
   encryption key is wrapped with RSA-OAEP using a wrapping key protected by
   Android Keystore. This is the extra protection for the random per-install
   secret, not storage of the raw `nsec` itself.
-- **macOS:** Apple Keychain. WM-App uses a WMAPP-specific secure-storage
+- **macOS:** Apple Keychain. Nostr Browser uses an app-specific secure-storage
   service name in the macOS data-protection keychain. Builds from before
   0.1.6 used the plugin's generic traditional-keychain service name; the app
   copies that legacy device secret forward on the next successful unlock.
 - **Linux:** `libsecret`, which talks to the desktop Secret Service—normally
   GNOME Keyring or KDE KWallet.
 
-These are the settings in the current app. WM-App does not currently request
+These are the settings in the current app. Nostr Browser does not currently request
 Secure Enclave protection or native biometric/user-presence enforcement. It
 also does not promise that vault data will survive uninstalling and
 reinstalling the app, or that secure-storage keys are hardware-backed on every
@@ -164,8 +164,8 @@ device.
 
 After upgrading from an older macOS build, unlock the signer once before
 removing any legacy `flutter_secure_storage_service` Keychain item. Cleanup is
-optional after a successful unlock because WM-App reads the migrated
-WMAPP-specific item first.
+optional after a successful unlock because Nostr Browser reads the migrated
+app-specific item first.
 
 The browser has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
@@ -204,7 +204,7 @@ $EDITOR .env.local
 Then launch through the root helper scripts:
 
 ```bash
-./build_runapp.sh  # pull WMApp, build Flight Deck, build app, launch
+./build_runapp.sh  # pull Nostr Browser, build Flight Deck, build app, launch
 ./runapp.sh        # launch the existing macOS build
 ```
 
@@ -263,7 +263,7 @@ Mobile status:
 
 FIPS runtime status:
 
-- Setup → FIPS transport includes a persisted WMapp FIPS on/off switch. Off
+- Setup → FIPS transport includes a persisted Nostr Browser FIPS on/off switch. Off
   cancels app mesh retries and transport resources; the separately installed
   desktop system daemon remains independently managed. See
   [Desktop FIPS control and diagnosis](docs/desktop-fips-control.md).
@@ -273,7 +273,7 @@ FIPS runtime status:
 - macOS bundles the pinned upstream package and activates it through the normal
   administrator authorization dialog.
 - Linux bundles the pinned upstream systemd release for x86_64 or aarch64. On
-  first `.fips` navigation WM-App uses `pkexec` to install/repair it, enable the
+  first `.fips` navigation Nostr Browser uses `pkexec` to install/repair it, enable the
   daemon and split-DNS service, preserve any existing identity, and connect the
   authenticated no-DNS bootstrap. This path supports Ubuntu and
   Arch/systemd-based Omarchy without a separate FIPS download.

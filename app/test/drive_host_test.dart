@@ -422,7 +422,7 @@ void main() {
       expect(host.endpoint, 'http://${service.npub}.fips:7345');
       expect(host.listeningPort, isNotNull);
       expect(host.message,
-          'Hosting selected folders while WM App is running and unlocked.');
+          'Hosting selected folders while Nostr Browser is running and unlocked.');
     } finally {
       await host.stop();
       host.dispose();
@@ -784,7 +784,7 @@ void main() {
       expect(runtime.ensureReadyCount, 1);
       expect(host.listeningPort, isNotNull);
       expect(host.message,
-          'Hosting selected folders while WM App is running and unlocked.');
+          'Hosting selected folders while Nostr Browser is running and unlocked.');
     } finally {
       await host.stop();
       host.dispose();
@@ -826,7 +826,7 @@ void main() {
 
       expect(host.listeningPort, activePort);
       expect(host.message,
-          'Hosting selected folders while WM App is running and unlocked.');
+          'Hosting selected folders while Nostr Browser is running and unlocked.');
     } finally {
       await host.stop();
       host.dispose();

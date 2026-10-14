@@ -1,6 +1,6 @@
-# WM-App Android FIPS bridge
+# Nostr Browser Android FIPS bridge
 
-This crate is WM-App's JNI bridge to the official FIPS embedded API. Its Cargo
+This crate is Nostr Browser's JNI bridge to the official FIPS embedded API. Its Cargo
 dependency is pinned to the peeled source commit for the annotated `v0.5.0`
 tag (`80f8f965aa872296edbce84ade9949ece2596602`); `Cargo.lock` records the same
 Git source. The annotated tag object is

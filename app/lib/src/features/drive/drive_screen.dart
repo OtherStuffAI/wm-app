@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import '../../core/app_product.dart';
 import '../../core/app_config.dart';
 import '../../core/fips_runtime_service.dart';
 import '../../core/native_core_bridge.dart';
@@ -76,7 +78,7 @@ class _DriveScreenState extends State<DriveScreen> {
                           ],
                           onChanged: (v) => set(() => audience = v!)),
                       const Text(
-                          'Select the folder in the next window. Hosting stops when you lock or exit WM App.')
+                          'Select the folder in the next window. Hosting stops when you lock or exit ${AppProduct.title}.')
                     ]),
                     actions: [
                       TextButton(

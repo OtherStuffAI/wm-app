@@ -1,6 +1,6 @@
-# Linux WM-App build and FIPS activation
+# Linux Nostr Browser build and FIPS activation
 
-WM-App supports Ubuntu and Arch/systemd-based Omarchy on x86_64 and aarch64.
+Nostr Browser supports Ubuntu and Arch/systemd-based Omarchy on x86_64 and aarch64.
 The Linux build bundles the checksum-pinned FIPS v0.5.0 systemd release; users
 do not download or install FIPS separately.
 
@@ -22,7 +22,7 @@ the executable.
 
 ## First FIPS app
 
-Opening an exact `http://<npub>.fips:<port>/` URL causes WM-App to inspect the
+Opening an exact `http://<npub>.fips:<port>/` URL causes Nostr Browser to inspect the
 local runtime. If installation or repair is required, the desktop's PolicyKit
 agent displays a normal administrator authorization prompt through `pkexec`.
 The bundled installer then:

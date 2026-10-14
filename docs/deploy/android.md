@@ -66,7 +66,7 @@ is generated at build time.
 
 ## First Launch
 
-On first launch WMApp asks for:
+On first launch Nostr Browser asks for:
 
 - the nsec to use for signing;
 - a local PIN.
@@ -78,29 +78,29 @@ The nsec is encrypted into the Android app's local secure storage backed vault.
 - The debug APK is for personal testing, not Play Store distribution.
 - Android application id is currently `com.wingmanbefree.wingman_app`.
 - Browser and signer flows are the main mobile test target right now.
-- FIPS is embedded in WM-App; no separate FIPS app or daemon is installed.
+- FIPS is embedded in Nostr Browser; no separate FIPS app or daemon is installed.
 - The first exact `.fips` app open asks for Android VPN consent. Android may
   show this again after consent is revoked or the app is reinstalled.
 - A persistent foreground-service notification is posted while the FIPS VPN is
   active (Android 13+ may require notification permission to show it in the
   notification drawer). Stopping or repairing FIPS tears down both the Rust
   node and the app-owned TUN.
-- Android permits one active VPN per user/profile. Starting WM-App's FIPS VPN
+- Android permits one active VPN per user/profile. Starting Nostr Browser's FIPS VPN
   replaces, or can be blocked by, another VPN. Public destination traffic remains
-  outside WM-App's split tunnel; only `fd00::/8` and `10.1.1.1/32` are routed
+  outside Nostr Browser's split tunnel; only `fd00::/8` and `10.1.1.1/32` are routed
   into it. DNS is separate: Android sends system queries to the advertised
-  `10.1.1.1`, where WM-App sends all-`.fips` questions only to the embedded FIPS
+  `10.1.1.1`, where Nostr Browser sends all-`.fips` questions only to the embedded FIPS
   resolver and sends all-public questions through Android's resolver on the
   selected non-VPN underlying network. Mixed questions receive local `REFUSED`.
 - Safe public-DNS forwarding uses `DnsResolver.rawQuery`, which is available on
   Android 10 (API 29) and newer. On older Android versions, or when no
   internet-capable non-VPN network is available at startup, FIPS fails closed
   before it can become the device DNS path.
-- WM-App itself is intentionally not excluded from the VPN. Every UDP socket
+- Nostr Browser itself is intentionally not excluded from the VPN. Every UDP socket
   published by FIPS is protected with `VpnService.protect(fd)` before packet
   loops begin, while WebView mesh traffic continues through the TUN.
 - The FIPS machine key is app-private, mode `0600`, and separate from the
-  WM-App Nostr signer. Clearing app storage replaces it; upgrades preserve it.
+  Nostr Browser Nostr signer. Clearing app storage replaces it; upgrades preserve it.
 
 ## FIPS Device Validation
 
@@ -149,7 +149,7 @@ adds a DNS server to the VPN (and does not say that public names bypass it),
 whereas `Builder.addRoute()` controls destination routes. `DnsResolver.rawQuery`
 accepts a specific `Network`, and `LinkProperties.isPrivateDnsActive()` warns
 that applications must not send unencrypted DNS while Private DNS is active.
-Consequently WM-App delegates public packets to Android's network-scoped resolver
+Consequently Nostr Browser delegates public packets to Android's network-scoped resolver
 instead of choosing or directly contacting a public DNS server:
 
 - https://developer.android.com/reference/android/net/VpnService.Builder#addDnsServer(java.net.InetAddress)

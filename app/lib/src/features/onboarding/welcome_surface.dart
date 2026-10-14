@@ -63,15 +63,17 @@ class WelcomeSurface extends StatelessWidget {
                                           width: 40,
                                           height: 40,
                                           semanticLabel:
-                                              'WMApp wayfinder logo'),
+                                              '${AppProduct.title} wayfinder logo'),
                                       const SizedBox(width: 10),
-                                      Text(AppProduct.title,
-                                          style: theme.textTheme.labelLarge
-                                              ?.copyWith(
-                                                  color:
-                                                      const Color(0xFF7040AA),
-                                                  letterSpacing: 2.5,
-                                                  fontWeight: FontWeight.w700))
+                                      Flexible(
+                                          child: Text(AppProduct.title,
+                                              style: theme.textTheme.labelLarge
+                                                  ?.copyWith(
+                                                      color: const Color(
+                                                          0xFF7040AA),
+                                                      letterSpacing: 2.5,
+                                                      fontWeight:
+                                                          FontWeight.w700)))
                                     ]),
                                     const SizedBox(height: 26),
                                     child,

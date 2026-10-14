@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_product.dart';
+
 import '../../core/app_config.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
@@ -272,7 +274,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
                 if (widget.relayDiagnosticsSaved !=
                     widget.relayDiagnosticsAtLaunch)
-                  const Text('Restart WMapp to apply'),
+                  const Text('Restart ${AppProduct.title} to apply'),
                 const Text(
                   'Turning this off stops new records after restart. Existing trace files remain until cleared.',
                 ),
@@ -376,7 +378,7 @@ class _SetupScreenState extends State<SetupScreen> {
             const SizedBox(height: 12),
             SwitchListTile(
               key: const ValueKey('fips-enabled'),
-              title: const Text('Enable FIPS in WMAPP'),
+              title: const Text('Enable FIPS in ${AppProduct.title}'),
               subtitle: const Text(
                   'FIPS-only services require this. HTTPS browsing works when disabled.'),
               value: widget.fipsRuntime.enabledSnapshot ?? false,

@@ -242,15 +242,15 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -250));
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(switchFinder).value, isFalse);
-    expect(find.text('Restart WMapp to apply'), findsNothing);
+    expect(find.text('Restart Nostr Browser to apply'), findsNothing);
     await tester.tap(switchFinder);
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(switchFinder).value, isTrue);
-    expect(find.text('Restart WMapp to apply'), findsOneWidget);
+    expect(find.text('Restart Nostr Browser to apply'), findsOneWidget);
     expect(RelayDiagnostics.enabled, isFalse);
     await tester.tap(switchFinder);
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(switchFinder).value, isFalse);
-    expect(find.text('Restart WMapp to apply'), findsNothing);
+    expect(find.text('Restart Nostr Browser to apply'), findsNothing);
   });
 }

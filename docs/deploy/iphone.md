@@ -110,7 +110,7 @@ changing the identifier creates a different app and breaks the release path.
 
 ## First Launch
 
-On first launch WMApp asks for:
+On first launch Nostr Browser asks for:
 
 - the nsec to use for signing;
 - a local PIN.

@@ -1,8 +1,8 @@
-# WMApp — a Nostr browser
+# Nostr Browser
 
-![WMApp Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](../public/logo.png)
+![Nostr Browser Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](../public/logo.png)
 
-This Flutter application opens Nostr apps and mini apps in browser tabs, with
+Nostr Browser (NBrowser for short) opens Nostr apps and mini apps in browser tabs, with
 local Nostr signing and FIPS connectivity. Mini apps are saved web apps launched
 inside the browser. Compatible pages use `window.nostr` for approved signing;
 HTTPS or approved local apps use `window.fipsTransport` for consented access to

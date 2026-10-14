@@ -219,14 +219,14 @@ internal class FipsStartOperation(
 
     companion object {
         private const val OPERATION_IN_PROGRESS = "Embedded FIPS startup is already in progress."
-        private const val ACTIVITY_UNAVAILABLE = "WM-App is not ready to request Android VPN consent. Please retry."
-        private const val ACTIVITY_DESTROYED = "WM-App closed before Android VPN startup completed. Please retry."
+        private const val ACTIVITY_UNAVAILABLE = "Nostr Browser is not ready to request Android VPN consent. Please retry."
+        private const val ACTIVITY_DESTROYED = "Nostr Browser closed before Android VPN startup completed. Please retry."
         private const val RESET_FAILED = "Embedded FIPS could not reset safely. Please retry."
         private const val PREPARE_FAILED = "Embedded FIPS preparation failed. Please retry."
         private const val CONSENT_PREPARE_FAILED = "Android VPN consent could not be prepared. Please retry."
         private const val CONSENT_LAUNCH_FAILED = "Android VPN consent could not be opened. Please retry."
         private const val CONSENT_CANCELLED = "Android VPN consent was cancelled. You can retry."
-        private const val SERVICE_LAUNCH_FAILED = "Android blocked the embedded FIPS VPN from starting. Please retry from WM-App."
+        private const val SERVICE_LAUNCH_FAILED = "Android blocked the embedded FIPS VPN from starting. Please retry from Nostr Browser."
         private const val NATIVE_START_FAILED = "Embedded FIPS could not become ready. Please retry."
         private const val INSPECT_FAILED = "Embedded FIPS readiness could not be checked. Please retry."
         private const val STARTUP_TIMEOUT = "Embedded FIPS did not become ready in time. Please retry."

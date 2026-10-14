@@ -102,7 +102,7 @@ internal class FipsDiagnosticJournal(
 
     @Synchronized
     fun exportText(): String = buildString {
-        appendLine("WM-App FIPS diagnostics")
+        appendLine("Nostr Browser FIPS diagnostics")
         appendLine("Release: ${safeMetadata(release)}")
         appendLine("Privacy: allowlisted lifecycle metadata only; no keys, tokens, payloads, URLs, paths, stack traces, or system logcat.")
         appendLine("Retention: newest $maxRecords records, maximum $maxBytes bytes; Clear diagnostics removes all retained records.")

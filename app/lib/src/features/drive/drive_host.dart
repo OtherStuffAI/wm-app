@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../core/app_product.dart';
 import '../../core/app_config.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/nostr_crypto.dart';
@@ -190,7 +192,7 @@ class DriveHost extends ChangeNotifier {
           const Duration(seconds: 30), (_) => unawaited(refreshPolicies()));
       await refreshPolicies();
       message =
-          'Hosting selected folders while WM App is running and unlocked.';
+          'Hosting selected folders while ${AppProduct.title} is running and unlocked.';
     } on DriveHostStartupException catch (error) {
       if (generation != _generation) return;
       await stop();

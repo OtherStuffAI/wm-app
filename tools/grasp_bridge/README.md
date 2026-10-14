@@ -4,7 +4,7 @@ This tool runs the production Dart bridge/transport through a separate stock mac
 WKWebView and its production native frame policy. The WebView uses nonpersistent
 storage and no signer. The test harness approves only its command-line endpoint;
 it does not exercise the product's native consent dialog or establish member UX.
-It never connects to the running WMapp profile or keychain.
+It never connects to the running Nostr Browser profile or keychain.
 
 From the repository root, resolve dependencies in `app/`, then:
 

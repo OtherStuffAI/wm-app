@@ -515,7 +515,7 @@
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				WMAPP_DISPLAY_NAME = WMApp;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				WMAPP_LAUNCH_SCREEN = LaunchScreen;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
@@ -608,6 +608,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.wingmanApp.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -735,7 +736,7 @@
 			baseConfigurationReference = 9740EEB21CF90195004384FC /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				WMAPP_DISPLAY_NAME = WMApp;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				WMAPP_LAUNCH_SCREEN = LaunchScreen;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
@@ -761,7 +762,7 @@
 			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				WMAPP_DISPLAY_NAME = WMApp;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				WMAPP_LAUNCH_SCREEN = LaunchScreen;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
@@ -804,6 +805,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.wingmanApp.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -838,6 +840,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.wingmanApp.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = "Nostr Browser";
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -998,6 +1001,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.ambulando.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = Ambulando;
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -1194,6 +1198,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.ambulando.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = Ambulando;
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -1228,6 +1233,7 @@
 					"-lresolv",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.wingmanbefree.ambulando.FipsPacketTunnel;
+				WMAPP_DISPLAY_NAME = Ambulando;
 				PRODUCT_NAME = FipsPacketTunnel;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;

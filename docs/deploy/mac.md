@@ -2,7 +2,7 @@
 
 ## Fastest Path
 
-Use the root helper script. It pulls WMApp with `git pull --ff-only`, downloads, builds and bundles the latest Flight Deck from GitHub, fetches Flutter dependencies, builds the macOS debug app, and launches it. See the [shared prerequisites](../../README.md#repository-checkout) for Flight Deck source and tooling setup.
+Use the root helper script. It pulls Nostr Browser with `git pull --ff-only`, downloads, builds and bundles the latest Flight Deck from GitHub, fetches Flutter dependencies, builds the macOS debug app, and launches it. See the [shared prerequisites](../../README.md#repository-checkout) for Flight Deck source and tooling setup.
 
 ```bash
 cd ~/code/wm/wmapp
@@ -60,7 +60,7 @@ codesign -dvv --entitlements - \
 ```
 
 Only `com.apple.security.cs.allow-jit` is requested by Debug/Profile because
-Flutter's debug runtime needs JIT execution. WMApp is deliberately not sandboxed
+Flutter's debug runtime needs JIT execution. Nostr Browser is deliberately not sandboxed
 for its local core bridge, so sandbox network entitlements are neither required
 nor claimed. Packaging applies the selected distribution signature after the
 certificate-free Flutter staging build.
@@ -85,7 +85,7 @@ when a self-signed certificate must be trusted on another Mac.
 
 On the target Mac, verify the reported SHA-256 before opening the DMG. An Apple
 Development build normally needs no certificate import, but it is not a public
-Developer ID release: after copying WMApp to Applications, Control-click it,
+Developer ID release: after copying Nostr Browser to Applications, Control-click it,
 choose **Open**, and confirm once. For a private self-signed identity, first
 import its public certificate into the login Keychain and set that certificate
 to **Always Trust** for Code Signing, then use the same Control-click **Open**
@@ -94,7 +94,7 @@ only do this for a certificate received and fingerprint-checked out of band.
 
 The bundled FIPS 0.5.0 installers remain checksum-pinned upstream packages in
 private mode. Open the matching package from
-`WMApp.app/Contents/Resources/FIPS` with Control-click **Open**, approve the
+`Nostr Browser.app/Contents/Resources/FIPS` with Control-click **Open**, approve the
 installer, and use arm64 on Apple silicon or x86_64 on Intel. This is a
 per-package local trust decision and does not disable Gatekeeper globally.
 
@@ -102,8 +102,8 @@ Ad-hoc signing (`--ad-hoc`) has no persistent signer identity and can cause
 Keychain ACL prompts after every rebuild. It remains a diagnostic mode, not the
 private cross-Mac installation path.
 
-WMApp stores its vault secret in the traditional macOS Keychain under the
-WMApp-specific service `com.wingmanbefree.wmapp.signer-vault`. It does not claim
+Nostr Browser stores its vault secret in the traditional macOS Keychain under the
+Nostr Browser-specific service `com.wingmanbefree.wmapp.signer-vault`. It does not claim
 `keychain-access-groups`: Apple treats that as a restricted entitlement that
 must be authorized by a provisioning profile, whereas this app does not share
 the item with another target. The stable bundle ID and stable signing identity
@@ -137,7 +137,7 @@ For local packaging diagnostics only, `./tools/build_macos_dmg.sh --ad-hoc`
 creates a clearly non-notarized artifact. It is not suitable for a public
 release or normal installation on another Mac. It is the certificate-free DMG
 mode and is expected to fail Gatekeeper assessment after download. To test it
-locally without changing system-wide security settings, mount it, copy WMApp to
+locally without changing system-wide security settings, mount it, copy Nostr Browser to
 Applications, then Control-click **Open** and approve that exact app once.
 
 An Apple Development-signed `--local` DMG is also not notarized and therefore
@@ -154,12 +154,12 @@ binaries are not committed.
 
 ## FIPS WApp PoC
 
-After unlocking WMapp, open **Setup → FIPS transport**:
+After unlocking Nostr Browser, open **Setup → FIPS transport**:
 
 1. Choose **Open FIPS app** and paste the exact
    `http://<autopilot-npub>.fips:<port>/` URL or matching JSON descriptor.
    If the bundled runtime has not been activated, or its Wingman mesh setup is
-   outdated, WMapp performs the repair automatically and macOS requests one
+   outdated, Nostr Browser performs the repair automatically and macOS requests one
    administrator authorization. The separate **Install or repair** control
    remains available for diagnostics and explicit repair.
 2. Activation preserves any existing FIPS key and unrelated configuration. The
@@ -171,16 +171,16 @@ After unlocking WMapp, open **Setup → FIPS transport**:
    encrypted Nostr traversal offers. An initial config backup is kept alongside
    `fips.yaml`.
 3. The optional diagnostic probe is off by default and does not establish a
-   route. Approve trust for the exact origin; WMapp never trusts `*.fips`.
+   route. Approve trust for the exact origin; Nostr Browser never trusts `*.fips`.
 
-FIPS machine identity is separate from the WMapp user signer. No FIPS private
+FIPS machine identity is separate from the Nostr Browser user signer. No FIPS private
 key is copied into Flutter settings, command arguments, or logs.
 
 The upstream v0.5.0 `.pkg` files are unsigned. Public release packaging verifies
 each original package checksum, expands it, signs only its three executable
 payloads with a Developer ID Application identity, flattens it, applies the
 Developer ID Installer signature, notarizes it, and staples Apple's ticket
-before embedding it in WMApp. The provenance manifest records the transformation.
+before embedding it in Nostr Browser. The provenance manifest records the transformation.
 Private and ad-hoc builds retain the checksum-pinned unsigned upstream packages.
 Private builds use a stable signing identity for direct Mac-to-Mac installation;
 ad-hoc builds are suitable only for local diagnostics. Do not disable
@@ -188,13 +188,13 @@ Gatekeeper globally to work around a signature or notarization failure.
 
 ## First Launch
 
-On first launch WMApp asks for:
+On first launch Nostr Browser asks for:
 
 - the nsec to use for signing;
 - a local PIN.
 
 The nsec is encrypted into the app's local signer vault. Do not put signer keys in `.env.local`.
-The macOS vault device secret is stored under WMAPP's own Keychain service name.
+The macOS vault device secret is stored under Nostr Browser's own Keychain service name.
 Older local builds may have a legacy `flutter_secure_storage_service` item; the
 app migrates it on the next successful unlock, so manual cleanup should wait
 until after that unlock has succeeded.

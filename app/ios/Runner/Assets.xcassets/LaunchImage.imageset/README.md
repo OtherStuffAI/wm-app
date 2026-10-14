@@ -1,6 +1,6 @@
 # Launch Screen Assets
 
-The centered launch mark reuses the existing Wingman app icon without changing
+The centered launch mark reuses the existing Nostr Browser icon without changing
 the app icon set. All three images have a logical size of 60 × 60 points:
 
 | Launch asset | Existing source in `../AppIcon.appiconset/` |

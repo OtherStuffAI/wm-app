@@ -29,7 +29,7 @@ stop_existing_app() {
     return
   fi
 
-  echo "Stopping existing Wingman app process..."
+  echo "Stopping existing Nostr Browser process..."
   kill $pids 2>/dev/null || true
   for _ in {1..20}; do
     if ! pgrep -x wingman_app >/dev/null 2>&1; then
@@ -49,7 +49,7 @@ fi
 
 stop_existing_app
 
-echo "Starting Wingman app..."
+echo "Starting Nostr Browser..."
 echo "Repo: $REPO_DIR"
 echo "Rev:  $GIT_REV"
 echo "Log:  $LOG_FILE"

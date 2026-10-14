@@ -64,7 +64,7 @@ class NativeCoreBridge {
     return DriveListing(
       items: const [
         DriveItem(
-          name: 'Wingman App',
+          name: 'Nostr Browser',
           path: '/Wingman Suite/Wingman App',
           kind: DriveItemKind.folder,
           localState: 'online_only',
