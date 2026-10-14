@@ -1,6 +1,6 @@
 # Nostr Browser
 
-![Nostr Browser Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](public/logo.png)
+![Nostr Browser Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow on near-black](public/logo.png)
 
 Nostr Browser (NBrowser for short) opens multiple Nostr apps and mini apps with a
 local signer and FIPS connectivity. Browse ordinary HTTP/HTTPS pages in tabs,

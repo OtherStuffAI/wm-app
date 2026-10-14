@@ -1,10 +1,14 @@
 # Nostr Browser branding assets
 
 Nostr Browser uses the approved wayfinder hybrid: a purple compass and wing with an
-orange direction marker on white. The source is retained unchanged at
-`app/assets/branding/wayfinder-hybrid.png` (1254 × 1254 RGB PNG).
+orange direction marker on near-black. The approved dark source is retained unchanged at
+`app/assets/branding/wayfinder-hybrid-dark.png` (1254 × 1254 RGB PNG).
 Its SHA-256 is
+`af5c3fdcd25d922e1a35500ba6c413924c64e4719c220e078819bde6783f7ba3`.
+The historical white source remains byte-for-byte at
+`app/assets/branding/wayfinder-hybrid.png`, SHA-256
 `4d647569a15b0d20a8392b615fdaf2029dbdcec48342a2a874667cfc310a5cc2`.
+The generator pins both hashes and fails if either master changes.
 Exports resize or pad that approved image; they do not redraw the artwork.
 
 Run from the repository root with Python 3 and ImageMagick 7 installed:
@@ -36,8 +40,12 @@ between versions can require reviewing and regenerating the exports.
 | Linux | 256 icon installed as `data/wmapp.png` and loaded by GTK relative to the executable |
 
 Maskable exports place the complete approved square at 70% of the canvas width
-and centre it on white. The coloured mark stays within the central safe circle
+and centre it on near-black `#131014`, matching the dark master’s corner.
+The approved background contains subtle tonal variation, which exports preserve.
+The coloured mark stays within the central safe circle
 with diameter 80% of the output. Normal exports preserve the approved framing.
+Both manifests use `#131014` for theme and background; the existing iOS launch
+canvas uses the same colour. The in-app dusk theme remains unchanged.
 All generated PNGs are opaque RGB, including the iOS store icon.
 
 The `public/` directory is a reusable publication asset set; the Flutter build
@@ -59,6 +67,9 @@ at 180/192 and 512, and against both light and dark surroundings. Confirm the
 compass, wing and orange marker match the master, and maskable crops keep the
 mark intact. Platform build and runtime checks remain necessary: this audit
 checks asset files and references, not OS launcher caches or installed apps.
+Check maskable crops as circles and rounded squares; the audit requires visible
+purple/orange artwork, the complete coloured mark inside the safe circle, and
+exact dark padding at the canvas corner. README continues to use `public/logo.png`.
 
 ## Product-name validation
 

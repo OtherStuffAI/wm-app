@@ -9,7 +9,11 @@ import tempfile
 import struct
 
 ROOT = Path(__file__).resolve().parents[1]
-MASTER = ROOT / 'app/assets/branding/wayfinder-hybrid.png'
+MASTER = ROOT / 'app/assets/branding/wayfinder-hybrid-dark.png'
+MASTER_SHA256 = 'af5c3fdcd25d922e1a35500ba6c413924c64e4719c220e078819bde6783f7ba3'
+HISTORICAL = ROOT / 'app/assets/branding/wayfinder-hybrid.png'
+HISTORICAL_SHA256 = '4d647569a15b0d20a8392b615fdaf2029dbdcec48342a2a874667cfc310a5cc2'
+BACKGROUND = '#131014'
 EXPORTS = {}
 
 def add(path, size, maskable=False):
@@ -42,7 +46,7 @@ def render(path, size, maskable):
     # coloured mark then stays inside the central 80%-diameter safe circle.
     inner = round(size * .70) if maskable else size
     subprocess.run(['magick', str(MASTER), '-resize', f'{inner}x{inner}',
-                    '-background', 'white', '-alpha', 'remove', '-alpha', 'off',
+                    '-background', BACKGROUND, '-alpha', 'remove', '-alpha', 'off',
                     '-gravity', 'center', '-extent', f'{size}x{size}',
                     '-strip', 'PNG24:' + str(path)], check=True)
 
@@ -51,6 +55,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='Compare each export and audit dimensions and references without writing assets')
     args = parser.parse_args()
+    assert hashlib.sha256(MASTER.read_bytes()).hexdigest() == MASTER_SHA256, 'Approved dark master changed'
+    assert hashlib.sha256(HISTORICAL.read_bytes()).hexdigest() == HISTORICAL_SHA256, 'Historical white master changed'
+    master_info = subprocess.check_output(['magick', 'identify', '-format', '%wx%h %[channels]', str(MASTER)], text=True)
+    assert master_info.split()[:2] == ['1254x1254', 'srgb'], master_info
+    assert '(public/logo.png)' in (ROOT / 'README.md').read_text(), 'README logo reference'
+    launch = (ROOT / 'app/ios/Runner/Base.lproj/LaunchScreen.storyboard').read_text()
+    assert 'red="0.07450980392" green="0.06274509804" blue="0.07843137255"' in launch, 'iOS launch background'
     failures = []
     with tempfile.TemporaryDirectory(prefix='wmapp-branding-') as temp:
         for relative, (size, maskable) in EXPORTS.items():
@@ -66,13 +77,17 @@ def main():
             assert (width, height, depth, colour) == (size, size, 8, 2), relative
             if maskable:
                 pixels = subprocess.check_output(['magick', str(target), '-depth', '8', 'RGB:-'])
+                coloured_count = 0
                 for offset in range(0, len(pixels), 3):
                     red, green, blue = pixels[offset:offset+3]
                     coloured = (red < 180 and blue > red + 30) or (red > 180 and green < 200 and blue < 150)
                     if coloured:
+                        coloured_count += 1
                         index = offset // 3
                         x, y = index % size, index // size
                         assert ((x + .5 - size / 2) ** 2 + (y + .5 - size / 2) ** 2) ** .5 <= size * .4, relative
+                assert coloured_count > size * size * .05, (relative, 'Missing coloured artwork')
+                assert tuple(pixels[:3]) == (19, 16, 20), (relative, 'Incorrect dark padding')
             print(f'{relative}: PNG RGB {size}x{size}' + (' maskable safe padding' if maskable else ''))
         for base in ('public', 'app/web'):
             target = ROOT / base / 'favicon.ico'
@@ -86,6 +101,9 @@ def main():
             manifest = json.loads((ROOT / base / 'manifest.json').read_text())
             assert manifest['name'] == 'Nostr Browser', (base, manifest['name'])
             assert manifest['short_name'] == 'NBrowser', (base, manifest['short_name'])
+            assert manifest['background_color'] == BACKGROUND, (base, 'Background')
+            assert manifest['theme_color'] == BACKGROUND, (base, 'Theme')
+            assert len(manifest['icons']) == 4, (base, 'Icon inventory')
             for icon in manifest['icons']:
                 dims = subprocess.check_output(['magick', 'identify', '-format', '%wx%h', str(ROOT / base / icon['src'])], text=True)
                 assert dims == icon['sizes'], (icon, dims)
