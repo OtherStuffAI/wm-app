@@ -15,6 +15,7 @@ import 'features/browser/relay_diagnostics.dart';
 import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 import 'features/onboarding/signer_onboarding_screen.dart';
+import 'features/onboarding/welcome_surface.dart';
 
 class WingmanApp extends StatefulWidget {
   const WingmanApp({
@@ -194,9 +195,7 @@ class _WingmanAppState extends State<WingmanApp> {
 
   Widget _home() {
     if (_checkingVault) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const WelcomeLoadingScreen();
     }
     if (_startupVault != null) {
       return SignerOnboardingScreen(
