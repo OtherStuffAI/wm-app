@@ -1588,13 +1588,13 @@ void main() {
       }
 
       await invokeNativeMenuCommand();
-      expect(find.text('Wingman'), findsOneWidget);
+      expect(find.text('WMApp'), findsOneWidget);
       expect(find.text('Show controls'), findsOneWidget);
       expect(activeBrowserStackIndex(tester), 1);
       expect(fakeWebViewControllerCreationCount, 2);
 
       await invokeNativeMenuCommand();
-      expect(find.text('Wingman'), findsOneWidget);
+      expect(find.text('WMApp'), findsOneWidget);
       expect(activeBrowserStackIndex(tester), 1);
       expect(fakeWebViewControllerCreationCount, 2);
     } finally {
@@ -2009,7 +2009,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Create identity / Import key'));
     await tester.pumpAndSettle();
-    expect(find.text('Set Up Wingman Signer'), findsOneWidget);
+    expect(find.text('Set Up WMApp Signer'), findsOneWidget);
     expect(find.text('Create identity'), findsOneWidget);
     await tester.tap(find.text('Import key'));
     await tester.pumpAndSettle();

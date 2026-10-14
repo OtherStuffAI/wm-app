@@ -1,14 +1,52 @@
-# Wingman App
+# WMApp — a Nostr browser
 
-Wingman App is the planned native edge client for Wingman Be Free.
+![WMApp Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](public/logo.png)
 
-The initial product combines:
+WMApp is a Nostr browser for opening multiple Nostr apps and mini apps with a
+local signer and FIPS connectivity. Browse ordinary HTTP/HTTPS pages in tabs,
+save web apps in the new-tab launcher, and open `.fips` WApps through the mesh.
+Here, mini apps are web apps opened inside the browser; WMApp does not provide a
+separate native mini-app runtime.
 
-- Wingman Drive: a desktop/mobile file surface backed by Tower HTTP storage.
-- Wingman Browser: an embedded browser for Flight Deck and WApps with native Nostr signing.
-- Wingman Signer: local per-device Nostr key custody for NIP-98 and approved app signing.
+The browser injects `window.nostr` so compatible apps can request a public key
+and approved NIP-07 event signatures without receiving the private key. NIP-98
+request signing is also available with origin and operation policy checks.
+Your identity is held in a PIN-encrypted local vault, and signer approvals can
+be reviewed and revoked. Different apps share the selected identity while
+permissions remain scoped to the requesting app and operation.
 
-Tower remains the source of truth for workspace identity, scopes, channels, groups, file metadata, and object storage.
+FIPS service access from an HTTPS or approved local app uses the generic
+`window.fipsTransport` capability with explicit transport consent, pinned
+endpoints and lifecycle revocation. Signing approval is separate from transport
+consent. Direct `.fips` navigation is its own browser route. Built-in Flight Deck
+and optional Tower-backed Drive integrate with these foundations; Tower remains
+the authority for its workspace and file records.
+
+## Current functionality and platform limits
+
+The native browser, local signer, saved-app launcher and FIPS integration are
+implemented, rather than a product plan. The WebView integration targets macOS,
+Android and iOS. macOS/Linux FIPS use a bundled system daemon; Android/iOS use
+embedded runtimes with platform VPN consent. Linux packaging and the native core
+exist, but the declared WebView plugins do not establish Linux browser support.
+The Flutter web target currently cannot compile because the native FIPS runtime
+imports `dart:ffi` unconditionally. The browser favicon and manifest assets are
+available under `app/web/` and `public/`; a hosted web page cannot provide this
+application's native signer, embedded browser or FIPS runtime.
+
+NIP-07 event signing and NIP-98 signing use Dart on native desktop/mobile.
+NIP-44 encryption/decryption, Drive sync, device registration, channel validation
+and local mounting still require the desktop Rust core process. Mobile reports
+these process-backed operations as unavailable. NIP-04 is not implemented;
+Windows is not a generated Flutter application target in this repository.
+Platform folders and build commands below describe available source/build
+paths, not a claim of validation on every device or operating system.
+
+The implementation can be inspected in the [browser and signer](app/lib/src/features/browser/browser_screen.dart),
+[saved-app launcher](app/lib/src/features/browser/browser_app_selector.dart),
+[FIPS provider](app/lib/src/features/browser/grasp_fips_bridge_script.dart),
+[platform runtime](app/lib/src/core/fips_runtime_service.dart), and
+[native core bridge](app/lib/src/core/native_core_bridge.dart).
 
 ## Repository Checkout
 
@@ -41,12 +79,6 @@ use whichever assets are already bundled.
 
 The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
 should not be used for new changes.
-
-## Current Status
-
-Phase 1 contracts and the Phase 2 headless native core are complete.
-
-Latest package: `WP-02-05: Sync CLI And Local Control API`.
 
 ## Native Core
 
@@ -135,7 +167,7 @@ removing any legacy `flutter_secure_storage_service` Keychain item. Cleanup is
 optional after a successful unlock because WM-App reads the migrated
 WMAPP-specific item first.
 
-The browser prototype has an address bar for loading arbitrary `http` and
+The browser has an address bar for loading arbitrary `http` and
 `https` websites. The injected NIP-07 surface supports `getPublicKey`,
 prompt-backed `signEvent`, empty `getRelays`, and prompt-backed
 `nip44.encrypt`/`nip44.decrypt` on desktop through `wmapp-core`. NIP-44 is not
@@ -155,8 +187,10 @@ with Flight Deck and Rick Autopilot bookmarks:
 - Rick Autopilot URL: `https://rick.runwingman.com`
 - Trusted origins: local Tower/dev Flight Deck, `kind-net-duck.rick.runwingman.com`, `near-tea-crab.rick.runwingman.com`, and `rick.runwingman.com`
 
-On first launch, the app asks for the `nsec` to sign with and a local PIN, then
-creates the local signer vault described above.
+On first launch, browsing is available without Tower configuration. Use the
+avatar menu’s **Create identity / Import key** action to generate or import a
+Nostr identity and choose a PIN for the local signer vault. An existing vault
+requires its PIN before saved browser tabs open and authenticate.
 
 Do not put signer nsecs in `.env.local` anymore. That file is only for local
 development overrides such as `WMAPP_CORE_BIN`:
@@ -227,12 +261,15 @@ Mobile status:
 - Browser shell, home bookmarks, WebView browsing, policy prompts, encrypted local signer onboarding, NIP-07 `signEvent`, and NIP-98 signing are mobile-ready.
 - Drive sync, device registration, channel validation, local file mounting, and NIP-44 encryption/decryption still use the desktop `wmapp-core` process path and need a mobile-native bridge in a later package.
 
-Desktop FIPS status:
+FIPS runtime status:
 
 - Setup → FIPS transport includes a persisted WMapp FIPS on/off switch. Off
   cancels app mesh retries and transport resources; the separately installed
   desktop system daemon remains independently managed. See
   [Desktop FIPS control and diagnosis](docs/desktop-fips-control.md).
+- Android and iOS include embedded FIPS runtimes. Enabling FIPS requests
+  platform VPN consent and routes mesh and `.fips` DNS traffic through the
+  runtime while ordinary internet traffic keeps its existing route.
 - macOS bundles the pinned upstream package and activates it through the normal
   administrator authorization dialog.
 - Linux bundles the pinned upstream systemd release for x86_64 or aarch64. On

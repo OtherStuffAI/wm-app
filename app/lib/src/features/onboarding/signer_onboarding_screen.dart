@@ -88,7 +88,7 @@ class _SignerOnboardingScreenState extends State<SignerOnboardingScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              _hasVault ? 'Welcome back' : 'Set Up Wingman Signer',
+              _hasVault ? 'Welcome back' : 'Set Up WMApp Signer',
               style: theme.textTheme.headlineMedium,
             ),
             const SizedBox(height: 12),

@@ -57,7 +57,7 @@ class ProfileAvatarUpload {
       if (error.code == 'photo_access_denied' ||
           error.code == 'photo_access_restricted') {
         throw const AvatarUploadException(
-          'Photo library access is unavailable. Check Wingman App permissions in Settings.',
+          'Photo library access is unavailable. Check WMApp permissions in Settings.',
         );
       }
       throw const AvatarUploadException(

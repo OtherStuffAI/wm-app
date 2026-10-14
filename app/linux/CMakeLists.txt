@@ -170,3 +170,7 @@ add_custom_target(drive_fs ALL
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/build_drive_fs.sh ${CMAKE_CURRENT_BINARY_DIR}/drive-fs
   VERBATIM)
 install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/drive-fs/wmapp-drive-fs" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}")
+
+# Approved application icon, loaded by the GTK runner from the bundle.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/resources/wmapp.png"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)

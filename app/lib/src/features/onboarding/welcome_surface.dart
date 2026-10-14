@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_product.dart';
+
 ThemeData welcomeTheme(BuildContext context) => Theme.of(context).copyWith(
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7040AA)),
       filledButtonTheme: FilledButtonThemeData(
@@ -56,10 +58,14 @@ class WelcomeSurface extends StatelessWidget {
                                       if (allowBack &&
                                           Navigator.of(context).canPop())
                                         const BackButton(),
-                                      const Icon(Icons.explore_outlined,
-                                          color: Color(0xFFC45D16), size: 24),
+                                      Image.asset(
+                                          'assets/branding/wmapp-logo.png',
+                                          width: 40,
+                                          height: 40,
+                                          semanticLabel:
+                                              'WMApp wayfinder logo'),
                                       const SizedBox(width: 10),
-                                      Text('WINGMAN',
+                                      Text(AppProduct.title,
                                           style: theme.textTheme.labelLarge
                                               ?.copyWith(
                                                   color:
@@ -88,6 +94,7 @@ class WelcomeLoadingScreen extends StatelessWidget {
         const Text('Preparing your local identity…'),
         const SizedBox(height: 24),
         Semantics(
-            label: 'Loading Wingman', child: const LinearProgressIndicator()),
+            label: 'Loading ${AppProduct.title}',
+            child: const LinearProgressIndicator()),
       ]));
 }

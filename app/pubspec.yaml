@@ -1,5 +1,5 @@
 name: wingman_app
-description: Native Wingman App shell for Drive, WApps, and signing.
+description: WMApp Nostr browser with native signing, FIPS, and saved web apps.
 publish_to: "none"
 version: 0.1.7+9
 
@@ -44,6 +44,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/branding/
     - path: assets/ambulando/
       flavors:
         - ambulando

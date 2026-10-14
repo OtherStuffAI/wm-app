@@ -1,14 +1,31 @@
-# Wingman App Flutter Shell
+# WMApp — a Nostr browser
 
-This is the first Flutter shell shape for Wingman App.
+![WMApp Wayfinder logo: a purple wing within a compass ring with an orange northeast arrow](../public/logo.png)
 
-It is intentionally thin:
+This Flutter application opens Nostr apps and mini apps in browser tabs, with
+local Nostr signing and FIPS connectivity. Mini apps are saved web apps launched
+inside the browser. Compatible pages use `window.nostr` for approved signing;
+HTTPS or approved local apps use `window.fipsTransport` for consented access to
+pinned FIPS endpoints. Direct `.fips` navigation is a separate browser route.
+
+The application includes:
 
 - Setup manages browser approvals and optional Tower configuration. Identity fields come from the encrypted signer vault.
 - Status calls a bridge abstraction for `wmapp-core` where the local process is available.
 - Drive shows the expected workspace/scope/channel/file surface.
-- Browser provides the embedded WApp/WebView signer area.
+- Browser provides tabs, saved-app bookmarks, an app launcher and the embedded
+  WApp/WebView signer area for multiple apps using the selected identity.
 - Encrypted signer onboarding, NIP-07 `signEvent`, and NIP-98 signing are implemented in Dart for desktop and mobile.
+
+The native WebView plugins target macOS, Android and iOS. Linux FIPS packaging
+and core tooling exist, but Linux browser support is not established by the
+current plugin set. The web target currently cannot compile because
+`fips_runtime_service.dart` imports native `dart:ffi` unconditionally; web assets
+do not substitute for the native browser, signer or FIPS runtime.
+Android/iOS FIPS use embedded runtimes with VPN consent;
+macOS/Linux use a system daemon. NIP-04 is not implemented, and NIP-44 remains
+process-backed on desktop. These source paths do not imply validation on every
+platform.
 
 Flutter platform folders have been generated for macOS, Linux, web, Android,
 and iOS. To run the current shell locally:
@@ -17,12 +34,15 @@ and iOS. To run the current shell locally:
 ../tools/update_flightdeck_bundle.sh
 flutter pub get
 flutter test
-flutter build web
 flutter build macos --debug
 flutter run -d macos
 flutter build apk --debug
 flutter build ios --debug --no-codesign
 ```
+
+`flutter build web` currently reports the native `dart:ffi` platform limitation
+described above. The favicon and manifest can be audited independently with
+`python3 ../tools/branding_assets.py --check`.
 
 The root repo also has convenience scripts:
 
