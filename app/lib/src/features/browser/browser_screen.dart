@@ -29,6 +29,7 @@ import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
 import 'bookmark_editor.dart';
 import 'browser_app_selector.dart';
+import 'browser_download.dart';
 import 'nostr_profile_publisher.dart';
 import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
@@ -108,6 +109,8 @@ class BrowserScreenState extends State<BrowserScreen>
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v3.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
+  late final BrowserDownloadCoordinator _downloadCoordinator;
+  final Map<String, int> _downloadProgress = {};
   final NostrProfileStore _profileStore = NostrProfileStore();
   late final NostrProfileRelayClient _profileRelayClient =
       widget.profileRelayClient ?? NostrProfileRelayClient();
@@ -139,6 +142,14 @@ class BrowserScreenState extends State<BrowserScreen>
   @override
   void initState() {
     super.initState();
+    _downloadCoordinator = BrowserDownloadCoordinator(
+      cookieManager: _cookieManager,
+      onStarted: _onDownloadStarted,
+      onProgress: _onDownloadProgress,
+      onCompleted: _onDownloadCompleted,
+      onCancelled: _onDownloadCancelled,
+      onFailed: _onDownloadFailed,
+    );
     WidgetsBinding.instance.addObserver(this);
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
     unawaited(_diagnosticsStore.prune().catchError((Object _) {}));
@@ -194,6 +205,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   @override
   void dispose() {
+    _downloadCoordinator.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_fipsEnabledSubscription?.cancel());
     HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
@@ -934,6 +946,7 @@ class BrowserScreenState extends State<BrowserScreen>
       await GraspAndroidChannel.remove(id);
       return false;
     }
+    await _downloadCoordinator.installAndroid(id);
     return installed;
   }
 
@@ -1603,6 +1616,14 @@ class BrowserScreenState extends State<BrowserScreen>
     int tabId,
     NavigationRequest request,
   ) async {
+    if (request.isMainFrame &&
+        BrowserDownloadPolicy.isDirectFileUrl(request.url)) {
+      final accepted = await _downloadCoordinator.start(BrowserDownloadRequest(
+        url: request.url,
+        signal: BrowserDownloadSignal.directLink,
+      ));
+      if (accepted) return NavigationDecision.prevent;
+    }
     if (request.isMainFrame) {
       final tab = _tabById(tabId);
       if (tab != null) {
@@ -1636,6 +1657,78 @@ class BrowserScreenState extends State<BrowserScreen>
       }
     }
     return NavigationDecision.prevent;
+  }
+
+  void _onDownloadStarted(String filename) {
+    if (!mounted) return;
+    _downloadProgress[filename] = -1;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(days: 1),
+      content: Text('Downloading $filename…'),
+      action: SnackBarAction(
+        label: 'Cancel',
+        onPressed: _downloadCoordinator.cancelAll,
+      ),
+    ));
+  }
+
+  void _onDownloadProgress(String filename, BrowserDownloadProgress progress) {
+    if (!mounted) return;
+    final fraction = progress.fraction;
+    if (fraction == null) return;
+    final percent = (fraction * 100).clamp(0, 100).floor();
+    final step = percent ~/ 10;
+    if (_downloadProgress[filename] == step) return;
+    _downloadProgress[filename] = step;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(days: 1),
+      content: Text('Downloading $filename… $percent%'),
+      action: SnackBarAction(
+        label: 'Cancel',
+        onPressed: _downloadCoordinator.cancelAll,
+      ),
+    ));
+  }
+
+  void _onDownloadCompleted(BrowserDownloadResult result) {
+    if (!mounted) return;
+    _downloadProgress.remove(result.filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content: Text('${result.filename} saved to ${result.destination}.'),
+    ));
+  }
+
+  void _onDownloadCancelled(String filename) {
+    if (!mounted) return;
+    _downloadProgress.remove(filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+        SnackBar(content: Text('Download cancelled: $filename.')));
+  }
+
+  void _onDownloadFailed(String filename, Object error) {
+    if (!mounted) return;
+    _downloadProgress.remove(filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content:
+          Text('Could not download $filename: ${_downloadErrorMessage(error)}'),
+    ));
+  }
+
+  String _downloadErrorMessage(Object error) {
+    if (error is HttpException) return error.message;
+    if (error is StateError) return error.message;
+    if (error is FormatException) return error.message;
+    return 'Please try again.';
   }
 
   bool _isFipsAppUrl(String url) {
