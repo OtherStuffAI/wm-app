@@ -56,7 +56,7 @@ The separate Ambulando iOS icon and launch resources remain its own branding.
 Internal bundle identifiers, repository and binary names retain their existing
 values. The canonical product name is **Nostr Browser**; use **NBrowser** only
 for compact labels such as manifest `short_name`. Android nightlies display
-**Nostr Browser Nightly**. Ambulando keeps its separate product name.
+**Nostr Browser**. Ambulando keeps its separate product name.
 The macOS bundle name and display name use Nostr Browser while the build
 product and executable remain `wingman_app`. The DMG volume and staged app
 display Nostr Browser; existing DMG artifact filenames stay unchanged. iOS display names come from

@@ -51,3 +51,12 @@ test("release download metadata only allows the verified CDN redirect read path"
  expect(()=>validate(e,cert)).not.toThrow();e.tags=e.tags.map(t=>t[0]==="url"?["url",t[1].replace("redirect=true","delete=true")]:t);expect(()=>validate(e,cert)).toThrow();
  const h=asset();h.tags.push(["version_code","13"]);expect(()=>historyMax([h],()=>true)).toThrow();
 });
+
+// Display branding may change; package/repository/publisher update identity stays pinned.
+test("Nostr Browser catalog keeps the existing nightly update identity",()=>{
+ const app={kind:32267,pubkey:PUBLISHER,created_at:1,content:"Nostr Browser nightly preview",tags:[["d",PACKAGE],["name","Nostr Browser"],["repository","https://github.com/OtherStuffAI/wingman-nightly"]]};
+ expect(()=>validate(app,cert)).not.toThrow();
+ for(const name of ["Wingman Nightly","Nostr Browser Nightly","NBrowser"]){
+  expect(()=>validate({...app,tags:app.tags.map(t=>t[0]==="name"?["name",name]:t)},cert)).toThrow("Wrong app metadata");
+ }
+});

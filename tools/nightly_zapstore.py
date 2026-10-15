@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded Wingman Nightly release from committed, isolated sources; broker only."""
+"""Bounded Nostr Browser release from committed, isolated sources; broker only."""
 import argparse
 import datetime as dt
 import fcntl
@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = ROOT / 'tmp/docs/handoffs/zapstore-nightly'
 EVIDENCE = PRIVATE
 PACKAGE = 'com.wingmanbefree.wingman_app.nightly'
+CERTIFICATE_SHA256 = '5edec981796544b29118b53d424ed5067b54cbb0b871d5c37b1cc9ccbc807be0'
 NPUB = 'npub1llwrq3rtah3rg3r2dyfyht55ek7aa0ey7z47ujju407pzfp38shqa7zcvr'
 JAVA = '/Applications/Android Studio.app/Contents/jbr/Contents/Home'
 KEYROOT = Path.home() / '.config/wmapp'
@@ -243,6 +244,7 @@ def main():
                 env.update(SIGN_WITH=NPUB,KEYSTORE_PASSWORD=PASSWORD.read_text())
                 command([JAVA+'/bin/keytool','-exportcert','-keystore',KEYSTORE,'-storepass:file',PASSWORD,'-alias','wingman-nightly','-file',run/'certificate.der'],env=env)
                 s['certificate_sha256']=digest(run/'certificate.der')
+                if s['certificate_sha256'] != CERTIFICATE_SHA256: raise ValueError('Original nightly signing certificate required.')
                 command([ZSP,'utils','extract-apk',run/'app-release.apk'],env=env)
                 import shutil
                 shutil.copyfile(run/'app-release_icon.png',run/'icon.png')
@@ -254,12 +256,12 @@ def main():
                 if metadata.version_code!=s['version_code'] or metadata.version_name!=s['version_name']: raise ValueError('Reserved version mismatch.')
                 badging=command([prep.find_android_tools()[0],'dump','badging',run/'app-release.apk'])
                 # Product branding belongs to the exact committed APK source;
-                # the existing Zapstore catalog identity remains Wingman Nightly.
+                # the catalog and installed product use the canonical Nostr Browser name.
                 gradle=(run/'wmapp/app/android/app/build.gradle.kts').read_text()
-                label=re.search(r'manifestPlaceholders\["wingmanAppLabel"\] = if \(nightly\) "([^"]+)"',gradle)
-                if not label or label.group(1) not in ('Wingman Nightly','Nostr Browser Nightly') or f"application-label:'{label.group(1)}'" not in badging:
+                label=re.search(r'manifestPlaceholders\["wingmanAppLabel"\] = "([^"]+)"',gradle)
+                if not label or label.group(1) not in ('Nostr Browser',) or f"application-label:'{label.group(1)}'" not in badging:
                     raise ValueError('Nightly visible name differs from committed source branding.')
-                notes=f"Wingman Nightly {a.day}\n\nWMAPP source: {s['source_commit']}\nFlight Deck source: {s['flightdeck_commit']}\nFlight Deck build: {s['flightdeck_version']['buildId']}\n"
+                notes=f"Nostr Browser {a.day}\n\nWMAPP source: {s['source_commit']}\nFlight Deck source: {s['flightdeck_commit']}\nFlight Deck build: {s['flightdeck_version']['buildId']}\n"
                 (run/'notes.md').write_text(notes)
                 config=(ROOT/'zapstore-nightly.yaml').read_text().replace('./app/build/app/outputs/flutter-apk/app-release.apk',str(run/'app-release.apk')).replace('./docs/deploy/nightly-zapstore-notes.md',str(run/'notes.md'))
                 (run/'zapstore.yaml').write_text(config)
@@ -285,7 +287,7 @@ def main():
                 existing=subprocess.run(['gh','release','view',release,'--repo','OtherStuffAI/wingman-nightly'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 if existing.returncode==0: raise ValueError('GitHub release already exists; reconcile exact hashes, never overwrite.')
                 update('public_assets_pending')
-                logged(['gh','release','create',release,'--repo','OtherStuffAI/wingman-nightly','--title','Wingman Nightly '+a.day,'--notes-file',run/'notes.md',run/'app-release.apk',run/'wmapp.tar',run/'flightdeck.tar',run/'build-proof.json'],ROOT, 'github-assets')
+                logged(['gh','release','create',release,'--repo','OtherStuffAI/wingman-nightly','--title','Nostr Browser '+a.day,'--notes-file',run/'notes.md',run/'app-release.apk',run/'wmapp.tar',run/'flightdeck.tar',run/'build-proof.json'],ROOT, 'github-assets')
                 s['public_release_url']='https://github.com/OtherStuffAI/wingman-nightly/releases/tag/'+release
                 public=run/'github-readback';public.mkdir(mode=0o700)
                 logged(['gh','release','download',release,'--repo','OtherStuffAI/wingman-nightly','--dir',public],ROOT,'github-assets-readback')

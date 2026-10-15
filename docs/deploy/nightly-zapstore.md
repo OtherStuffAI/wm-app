@@ -1,14 +1,27 @@
-# Wingman Nightly on Zapstore
+# Nostr Browser nightly on Zapstore
 
-Wingman Nightly uses `com.wingmanbefree.wingman_app.nightly`, installs alongside
+Nostr Browser nightly uses `com.wingmanbefree.wingman_app.nightly`, installs alongside
 stable WMAPP and has its own private persistent Android signing keystore.
-The Zapstore catalog retains the name Wingman Nightly. The installed Android
-label follows the exact committed product branding (currently Nostr Browser
-Nightly); preparation verifies that label against the isolated source snapshot.
-Stable package, publisher and `zapstore.yaml` remain unchanged. Nightly's public
+The Zapstore catalog and installed Android label both use Nostr Browser.
+Preparation verifies the label against the isolated source snapshot. The nightly
+channel and version suffix distinguish this release stream; NBrowser is reserved
+for compact labels.
+The stable release configuration remains separate. The nightly package,
+publisher, Android signing certificate and public repository retain their existing
+identities so installed updates continue. Nightly's public
 catalog and repository ownership proof live at
 https://github.com/OtherStuffAI/wingman-nightly; the catalog's root `zapstore.yaml`
 pins Rick's publisher. `zapstore-nightly.yaml` is the reusable source configuration.
+The catalog uses the APK-extracted approved launcher icon. No screenshots are
+currently maintained or referenced; do not reuse screenshots with stale branding.
+The recurring Android job reads these committed inputs on every release.
+
+If the shared Flight Deck checkout has diverged from public main, preserve it.
+Fetch a fresh `main` clone from the supported
+`https://github.com/OtherStuffAI/wm-flightdeck.git` source into verified ignored,
+untracked handoff storage and pass its absolute path with `--flightdeck` to
+`build`. The helper validates and archives that exact committed main without
+merging unrelated local work. Record the source choice in the task.
 
 ## Release procedure
 
