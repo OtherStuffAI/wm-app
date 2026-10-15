@@ -75,6 +75,7 @@ flutter:
     - assets/app-selector/
     - assets/flightdeck/
     - assets/flightdeck/assets/
+    - assets/flightdeck/legal/
     - assets/flightdeck/ambulando/
     - assets/flightdeck/ambulando/icons/
     - assets/flightdeck/napplets/message-activity/
