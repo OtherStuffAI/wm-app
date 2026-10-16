@@ -113,6 +113,43 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(recovery.subprocess, 'run', return_value=Mock(stdout=json.dumps({'session': {'id':'prior'}}))):
             with self.assertRaises(ValueError): recovery.stopped_session('prior')
 
+    def test_current_owner_recovery_reuses_active_claim_without_transfer(self):
+        from types import SimpleNamespace
+        self.client.preflight.return_value = self.h
+        args = SimpleNamespace(export_logs=self.logs, previous_owner=None)
+        with patch.object(nightly, 'safe_private'), \
+                patch.object(recovery, 'export_proof', return_value={'upload_id': ID}), \
+                patch.object(recovery, 'recovery_history', return_value={'id': ID}), \
+                patch.object(api, 'delivery_barrier'), patch.object(r, 'no_other_delivery'), \
+                patch.object(api, 'require_daily_claim') as claim, \
+                patch.object(nightly, 'recover_claim') as transfer:
+            r.write(self.run / 'state.json', self.s)
+            recovery.recover(r, self.client, self.run, self.s, args)
+        claim.assert_called_once_with(self.run, 'api-upload')
+        transfer.assert_not_called()
+        proof = r.read(self.run / 'export-recovery.json')
+        self.assertEqual(proof['claim_mode'], 'current_active_claim')
+
+    def test_archived_owner_recovery_still_transfers_exact_failed_claim(self):
+        from types import SimpleNamespace
+        self.client.preflight.return_value = self.h
+        args = SimpleNamespace(export_logs=self.logs, previous_owner='prior')
+        with patch.object(nightly, 'safe_private'), \
+                patch.object(recovery, 'export_proof', return_value={'upload_id': ID}), \
+                patch.object(recovery, 'recovery_history', return_value={'id': ID}), \
+                patch.object(api, 'delivery_barrier'), patch.object(r, 'no_other_delivery'), \
+                patch.object(recovery, 'stopped_session', return_value={'id': 'prior'}), \
+                patch.object(api, 'require_daily_claim') as claim, \
+                patch.object(nightly, 'recover_claim') as transfer, \
+                patch.dict(os.environ, {'SESSION_ID': 'current'}):
+            r.write(self.run / 'state.json', self.s)
+            recovery.recover(r, self.client, self.run, self.s, args)
+        claim.assert_not_called()
+        transfer.assert_called_once_with(nightly.PRIVATE, 'current', 'prior', self.run.name,
+                                         r.read(self.run / 'export-recovery.json')['state_sha256'])
+        self.assertEqual(r.read(self.run / 'export-recovery.json')['claim_mode'],
+                         'transferred_failed_claim')
+
     def test_recovery_upload_pins_proof_and_retained_ipa(self):
         proof = self.proof(); proof.update(schema=1, app_id=APP, basis='same_run_native_export_reservation',
             run=self.run.name, reservation=recovery.recovery_history(r, self.client, self.h, self.s, proof))

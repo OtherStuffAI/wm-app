@@ -171,8 +171,15 @@ ownership. Preserve the native `.xcdistributionlogs` bundle named in that run's
 `export.log` under ignored operational storage, without changing its bytes or
 file timestamps; make the retained log files owner-only.
 
+When the same active claim owns the run, use:
+
+```sh
+"$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-recover-export \
+  --run "$RUN" --export-logs "$RETAINED_NATIVE_EXPORT_LOGS"
+```
+
 For an explicitly authorized immediate release whose worker is archived and
-whose current Perth-day claim finished `failed`, use:
+whose current Perth-day claim finished `failed`, transfer that exact claim with:
 
 ```sh
 "$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-recover-export \
@@ -184,7 +191,8 @@ This command uploads nothing. It verifies the successful private export policy,
 exact native creation request and `201 Created` reservation ID, absence of
 subsequent native activity, original complete preflight, signed retained IPA
 with `TFInternalTestingOnly=true`, archive/IPA hashes, fresh complete Apple
-history and empty reservation files. Any unrelated pending upload, processing
+history and empty reservation files. The same-owner route verifies the current
+active claim without replacing it. Any unrelated pending upload, processing
 build, existing exact build, higher reservation, prior upload intent, changed
 proof or uncertain evidence blocks recovery. It reads the prior worker's archive
 through the supported session CLI and transfers only its exact failed current-day
