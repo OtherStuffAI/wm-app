@@ -511,6 +511,23 @@ class ReleaseTests(unittest.TestCase):
         r.options()
         r.project_settings()
 
+    def test_project_settings_rejects_unexpected_bundle_among_known_flavors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / 'app/ios/Runner.xcodeproj/project.pbxproj'
+            project.parent.mkdir(parents=True)
+            bundles = {
+                r.BUNDLE, r.BUNDLE + '.FipsPacketTunnel', r.BUNDLE + '.RunnerTests',
+                r.AMBULANDO_BUNDLE, r.AMBULANDO_BUNDLE + '.FipsPacketTunnel',
+                r.AMBULANDO_BUNDLE + '.RunnerTests', 'com.example.unexpected',
+            }
+            project.write_text('\n'.join(
+                [f'DEVELOPMENT_TEAM = {r.TEAM};']
+                + [f'PRODUCT_BUNDLE_IDENTIFIER = {bundle};' for bundle in sorted(bundles)]
+            ))
+            with patch.object(r, 'ROOT', root), self.assertRaisesRegex(ValueError, 'Project bundle mismatch'):
+                r.project_settings()
+
 
 if __name__ == '__main__':
     unittest.main()

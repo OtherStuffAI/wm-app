@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PRIVATE = ROOT / 'tmp/docs/handoffs/testflight'
 TEAM = 'N5DRUM6S94'
 BUNDLE = 'com.wingmanbefree.wingmanApp'
+AMBULANDO_BUNDLE = 'com.wingmanbefree.ambulando'
 GROUP = 'Pete Private'
 OPTIONS = ROOT / 'docs/deploy/TestFlightExportOptions.plist'
 EXTERNAL_OPTIONS = ROOT / 'docs/deploy/TestFlightExternalExportOptions.plist'
@@ -137,9 +138,12 @@ def project_settings():
     text = (ROOT / 'app/ios/Runner.xcodeproj/project.pbxproj').read_text()
     teams = set(re.findall(r'DEVELOPMENT_TEAM = ([^;]+);', text))
     bundles = set(re.findall(r'PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);', text))
+    expected_bundles = {
+        BUNDLE, BUNDLE + '.FipsPacketTunnel', BUNDLE + '.RunnerTests',
+        AMBULANDO_BUNDLE, AMBULANDO_BUNDLE + '.FipsPacketTunnel', AMBULANDO_BUNDLE + '.RunnerTests',
+    }
     require(teams == {TEAM}, 'Project Apple team mismatch.')
-    require(bundles == {BUNDLE, BUNDLE + '.FipsPacketTunnel', BUNDLE + '.RunnerTests'},
-            'Project bundle mismatch.')
+    require(bundles == expected_bundles, 'Project bundle mismatch.')
 
 
 def command(args):
