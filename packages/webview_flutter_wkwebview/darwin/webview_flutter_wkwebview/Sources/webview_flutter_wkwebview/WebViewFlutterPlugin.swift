@@ -13,6 +13,7 @@
 public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
   var proxyApiRegistrar: ProxyAPIRegistrar?
   var browserDownloadBridge: BrowserDownloadBridge?
+  var browserSnapshotBridge: BrowserSnapshotBridge?
 
   init(binaryMessenger: FlutterBinaryMessenger) {
     proxyApiRegistrar = ProxyAPIRegistrar(
@@ -20,6 +21,11 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
     proxyApiRegistrar?.setUp()
     browserDownloadBridge = BrowserDownloadBridge(binaryMessenger: binaryMessenger)
     BrowserDownloadBridge.shared = browserDownloadBridge
+    super.init()
+    browserSnapshotBridge = BrowserSnapshotBridge(binaryMessenger: binaryMessenger) {
+      [weak self] identifier in
+      self?.proxyApiRegistrar?.instanceManager.instance(forIdentifier: identifier)
+    }
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -49,6 +55,8 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
     browserDownloadBridge?.dispose()
     if BrowserDownloadBridge.shared === browserDownloadBridge { BrowserDownloadBridge.shared = nil }
     browserDownloadBridge = nil
+    browserSnapshotBridge?.dispose()
+    browserSnapshotBridge = nil
     proxyApiRegistrar?.ignoreCallsToDart = true
     proxyApiRegistrar?.tearDown()
     try? proxyApiRegistrar?.instanceManager.removeAllObjects()

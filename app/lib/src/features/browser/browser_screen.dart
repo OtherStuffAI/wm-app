@@ -30,6 +30,8 @@ import 'browser_bookmark_store.dart';
 import 'bookmark_editor.dart';
 import 'browser_app_selector.dart';
 import 'browser_download.dart';
+import 'browser_navigation_state.dart';
+import 'browser_snapshot.dart';
 import 'nostr_profile_publisher.dart';
 import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
@@ -111,6 +113,7 @@ class BrowserScreenState extends State<BrowserScreen>
   bool _focusMode = AppProduct.ambulando;
   static const _nip44PolicyTarget = '*';
   static const _tabClickAddressReveal = Duration(seconds: 3);
+  static const _mobileChromeBreakpoint = 600.0;
   static const _homeTitle = 'New Tab';
   static const _flightDeckTitle = AppProduct.bundledTitle;
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
@@ -352,6 +355,9 @@ class BrowserScreenState extends State<BrowserScreen>
         );
 
   Widget _buildTabBarContents(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < _mobileChromeBreakpoint) {
+      return _buildMobileTabHeader(context);
+    }
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
@@ -400,6 +406,7 @@ class BrowserScreenState extends State<BrowserScreen>
                     final button = _BrowserTabButton(
                       title: tab.label,
                       active: active,
+                      loading: tab.navigation.isLoading,
                       tabColour: _tabColours[tab.colour],
                       onSecondaryTapUp: (details) =>
                           _showTabMenu(tab, details.globalPosition),
@@ -456,6 +463,182 @@ class BrowserScreenState extends State<BrowserScreen>
     );
   }
 
+  Widget _buildMobileTabHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final tab = _activeTab;
+    return Material(
+      key: const ValueKey('browser-mobile-tab-header'),
+      color: theme.colorScheme.surfaceContainerHighest,
+      shape: Border(
+        bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Open menu',
+                onPressed: widget.onOpenDrawer,
+                icon: const Icon(Icons.menu),
+              ),
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: 'Current tab: ${tab.label}',
+                  child: InkWell(
+                    key: const ValueKey('browser-mobile-current-tab'),
+                    onTap: () => _activateTab(tab.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          if (tab.navigation.isLoading) ...[
+                            const _BrowserLoadingIndicator(
+                              key: ValueKey('mobile-tab-loading'),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Expanded(
+                            child: Text(
+                              tab.label,
+                              key: const ValueKey('browser-mobile-tab-title'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.zero,
+                child: BrowserTabCountButton(
+                  key: const ValueKey('browser-mobile-tab-count'),
+                  count: _tabs.length,
+                  onPressed: _showMobileTabOverview,
+                ),
+              ),
+              Semantics(
+                label: 'Enter Focus Mode',
+                button: true,
+                excludeSemantics: true,
+                child: IconButton(
+                  key: const ValueKey('enter-focus-mode-button'),
+                  tooltip: 'Enter Focus Mode',
+                  onPressed: _enterFocusMode,
+                  icon: const Icon(Icons.fullscreen),
+                ),
+              ),
+              _BrowserAvatarMenu(
+                deviceNpub: widget.config.deviceNpub,
+                profile: _profile,
+                onEditProfile: widget.config.hasDeviceSecret
+                    ? _editProfile
+                    : widget.onOpenIdentity ?? widget.onOpenSigner,
+                identityActionLabel: widget.config.hasDeviceSecret
+                    ? 'Edit profile'
+                    : widget.config.hasDeviceNpub
+                        ? 'Unlock identity'
+                        : 'Create identity / Import key',
+                onOpenSetup: widget.onOpenSetup,
+                onOpenSigner: widget.onOpenSigner,
+                onOpenStatus: widget.onOpenStatus,
+                onLogOut: widget.onLogOut,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showMobileTabOverview() async {
+    await _captureTabPreview(_activeTab);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, updateOverview) => Dialog.fullscreen(
+          child: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AppBar(
+                  automaticallyImplyLeading: false,
+                  title: Text('Tabs (${_tabs.length})'),
+                  actions: [
+                    IconButton(
+                      tooltip: 'New tab',
+                      onPressed: () {
+                        _createHomeTab();
+                        Navigator.of(dialogContext).pop();
+                      },
+                      icon: const Icon(Icons.add),
+                    ),
+                    IconButton(
+                      tooltip: 'Close tab overview',
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 720 ? 3 : 2;
+                      return GridView.builder(
+                        key: const ValueKey('browser-mobile-tab-overview'),
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio:
+                              constraints.maxWidth > constraints.maxHeight
+                                  ? 1.55
+                                  : 0.82,
+                        ),
+                        itemCount: _tabs.length,
+                        itemBuilder: (context, index) {
+                          final tab = _tabs[index];
+                          return _MobileTabOverviewCard(
+                            key: ValueKey('tab-overview-${tab.id}'),
+                            title: tab.label,
+                            url: tab.currentUrl ?? tab.addressController.text,
+                            active: tab.id == _activeTabId,
+                            isHome: tab.isHome,
+                            isFips: tab.isFips,
+                            loading: tab.navigation.isLoading,
+                            previewBytes: tab.previewBytes,
+                            onSelect: () {
+                              Navigator.of(dialogContext).pop();
+                              if (tab.id != _activeTabId) _activateTab(tab.id);
+                            },
+                            onClose: () {
+                              _closeTab(tab.id);
+                              updateOverview(() {});
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAddressBar(BuildContext context) => AppProduct.ambulando
       ? _buildAddressBarContents(context)
       : Theme(
@@ -488,9 +671,12 @@ class BrowserScreenState extends State<BrowserScreen>
               icon: const Icon(Icons.arrow_forward),
             ),
             IconButton(
-              tooltip: 'Reload',
+              key: const ValueKey('browser-reload-button'),
+              tooltip: tab.navigation.isLoading ? 'Refreshing page' : 'Reload',
               onPressed: _reload,
-              icon: const Icon(Icons.refresh),
+              icon: tab.navigation.isLoading
+                  ? const _BrowserLoadingIndicator(size: 20)
+                  : const Icon(Icons.refresh),
             ),
             Expanded(
               child: TextField(
@@ -943,6 +1129,8 @@ class BrowserScreenState extends State<BrowserScreen>
           onPageStarted: (url) {
             final tab = _tabById(id);
             if (tab != null) {
+              _updateNavigationState(
+                  tab, () => tab.navigation.pageStarted(url));
               _captureDiagnosticsTransition(tab, url);
               tab.revokeSigningDocument();
             }
@@ -951,6 +1139,10 @@ class BrowserScreenState extends State<BrowserScreen>
             if (error.isForMainFrame == true) {
               final tab = _tabById(id);
               if (tab != null) {
+                _updateNavigationState(
+                  tab,
+                  () => tab.navigation.pageFailed(error.url),
+                );
                 _recordWebViewDiagnostic(tab, error);
               }
             }
@@ -979,6 +1171,7 @@ class BrowserScreenState extends State<BrowserScreen>
       final controller = tab.controller.platform;
       if (controller is WebKitWebViewController &&
           (Platform.isIOS || Platform.isMacOS)) {
+        tab.nativeWebViewIdentifier = controller.webViewIdentifier;
         await controller.addMainFrameJavaScriptAtDocumentStart(
             nstackDocumentStartBootstrapScript);
       }
@@ -987,7 +1180,7 @@ class BrowserScreenState extends State<BrowserScreen>
     final controller = tab.controller.platform;
     if (controller is! AndroidWebViewController) return false;
     final id = controller.webViewIdentifier;
-    tab.androidWebViewIdentifier = id;
+    tab.nativeWebViewIdentifier = id;
     final installed = await GraspAndroidChannel.install(
       webViewIdentifier: id,
       documentStartScript: nstackDocumentStartBootstrapScript,
@@ -1430,12 +1623,22 @@ class BrowserScreenState extends State<BrowserScreen>
   void _reload() {
     final tab = _activeTab;
     if (tab.isHome) {
+      tab.navigation.beginRequested('https://wingman.local/');
+      setState(() {});
       _loadHomeForTab(tab);
       return;
     }
     final uri = Uri.tryParse(tab.currentUrl ?? tab.addressController.text);
     if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
-      tab.controller.reload();
+      final requestId = tab.navigation.beginRequested(uri.toString());
+      setState(() {});
+      unawaited(tab.controller.reload().catchError((Object _) {
+        if (!mounted || tab.disposed) return;
+        _updateNavigationState(
+          tab,
+          () => tab.navigation.requestFailed(requestId),
+        );
+      }));
     } else {
       _loadAddress(tab.addressController.text);
     }
@@ -1538,7 +1741,7 @@ class BrowserScreenState extends State<BrowserScreen>
     unawaited(tab.nativeChannelsReady.then<void>((_) async {
       if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
       final html = _homePageHtml(savedBookmarks: _visibleBookmarks);
-      final nativeId = tab.androidWebViewIdentifier;
+      final nativeId = tab.nativeWebViewIdentifier;
       if (nativeId != null) {
         // Keep Android's native current URL and document origin aligned for
         // local home actions, without weakening frame checks for web pages.
@@ -1832,6 +2035,7 @@ class BrowserScreenState extends State<BrowserScreen>
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
+    _updateNavigationState(tab, () => tab.navigation.pageFinished(url));
     tab.clearDiagnosticsTransition();
     if (tab.isHome &&
         (url == 'about:blank' || url == 'https://wingman.local/')) {
@@ -1852,6 +2056,8 @@ class BrowserScreenState extends State<BrowserScreen>
       tab.addressController.text = url;
       tab.title = _resolvedPageTitle(title, url);
     });
+    await _captureTabPreview(tab);
+    if (!currentDocument()) return;
     await _refreshNavigationState(tab);
     if (!currentDocument()) return;
     await _applyFlightDeckDisplayDefaults(tab, url);
@@ -1871,6 +2077,28 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
+  }
+
+  Future<void> _captureTabPreview(BrowserTab tab) async {
+    if (tab.id != _activeTabId || tab.disposed) return;
+    final identifier = tab.nativeWebViewIdentifier;
+    if (identifier == null) return;
+    final epoch = tab.signerDocumentEpoch;
+    final bytes = await BrowserSnapshot.capture(identifier);
+    if (!mounted ||
+        tab.disposed ||
+        _tabById(tab.id) != tab ||
+        tab.signerDocumentEpoch != epoch ||
+        bytes == null) {
+      return;
+    }
+    setState(() => tab.previewBytes = bytes);
+  }
+
+  void _updateNavigationState(BrowserTab tab, VoidCallback update) {
+    final wasLoading = tab.navigation.isLoading;
+    update();
+    if (mounted && wasLoading != tab.navigation.isLoading) setState(() {});
   }
 
   String _resolvedPageTitle(String? title, String url) {
@@ -4027,6 +4255,234 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 }
 
+class BrowserTabCountButton extends StatelessWidget {
+  const BrowserTabCountButton({
+    required this.count,
+    required this.onPressed,
+    super.key,
+  });
+
+  final int count;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(48, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Text(
+        '$count',
+        semanticsLabel: '$count open ${count == 1 ? 'tab' : 'tabs'}',
+      ),
+    );
+  }
+}
+
+class _BrowserLoadingIndicator extends StatelessWidget {
+  const _BrowserLoadingIndicator({required this.size, super.key});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      label: 'Page loading',
+      liveRegion: true,
+      child: SizedBox.square(
+        dimension: size,
+        child: reducedMotion
+            ? Icon(Icons.sync, size: size)
+            : TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 600),
+                builder: (context, turns, child) => Transform.rotate(
+                  angle: turns * 2 * 3.141592653589793,
+                  child: child,
+                ),
+                child: Icon(Icons.sync, size: size),
+              ),
+      ),
+    );
+  }
+}
+
+class _MobileTabOverviewCard extends StatelessWidget {
+  const _MobileTabOverviewCard({
+    required this.title,
+    required this.url,
+    required this.active,
+    required this.isHome,
+    required this.isFips,
+    required this.loading,
+    required this.previewBytes,
+    required this.onSelect,
+    required this.onClose,
+    super.key,
+  });
+
+  final String title;
+  final String url;
+  final bool active;
+  final bool isHome;
+  final bool isFips;
+  final bool loading;
+  final Uint8List? previewBytes;
+  final VoidCallback onSelect;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final uri = Uri.tryParse(url);
+    final identity = uri?.host.isNotEmpty == true ? uri!.host : url;
+    final fallback = identity.trim().isEmpty ? 'New tab' : identity;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: active ? '$title, active tab' : title,
+      child: Material(
+        color: colors.surfaceContainerLow,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: active ? colors.primary : colors.outlineVariant,
+            width: active ? 3 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: onSelect,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ColoredBox(
+                  color: colors.surfaceContainerHighest,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (previewBytes != null)
+                        Image.memory(
+                          previewBytes!,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _MobileTabPreviewFallback(
+                            isHome: isHome,
+                            isFips: isFips,
+                            label: fallback,
+                          ),
+                        )
+                      else
+                        _MobileTabPreviewFallback(
+                          isHome: isHome,
+                          isFips: isFips,
+                          label: fallback,
+                        ),
+                      if (loading)
+                        const Positioned(
+                          left: 12,
+                          top: 12,
+                          child: _BrowserLoadingIndicator(size: 18),
+                        ),
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: IconButton.filledTonal(
+                          tooltip: 'Close $title',
+                          onPressed: onClose,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: active ? FontWeight.w700 : null,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      fallback,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileTabPreviewFallback extends StatelessWidget {
+  const _MobileTabPreviewFallback({
+    required this.isHome,
+    required this.isFips,
+    required this.label,
+  });
+
+  final bool isHome;
+  final bool isFips;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isHome
+                ? Icons.home_outlined
+                : isFips
+                    ? Icons.hub_outlined
+                    : Icons.public,
+            size: 42,
+            color: colors.onSurfaceVariant,
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TabReorderHandle extends StatelessWidget {
   const _TabReorderHandle({
     required this.index,
@@ -4069,6 +4525,7 @@ class _BrowserTabButton extends StatelessWidget {
   const _BrowserTabButton({
     required this.title,
     required this.active,
+    required this.loading,
     required this.fipsTransport,
     required this.closeable,
     required this.onPressed,
@@ -4080,6 +4537,7 @@ class _BrowserTabButton extends StatelessWidget {
 
   final String title;
   final bool active;
+  final bool loading;
   final bool fipsTransport;
   final bool closeable;
   final VoidCallback onPressed;
@@ -4146,19 +4604,23 @@ class _BrowserTabButton extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Tooltip(
-                  message: fipsTransport
-                      ? 'Encrypted FIPS mesh transport'
-                      : 'Web transport',
-                  child: Icon(
-                    fipsTransport ? Icons.hub_outlined : Icons.public,
-                    key: fipsTransport
-                        ? const ValueKey('fips-transport-indicator')
-                        : null,
-                    size: 16,
-                    color: active ? colors.onSurface : colors.onSurfaceVariant,
+                if (loading)
+                  const _BrowserLoadingIndicator(size: 16)
+                else
+                  Tooltip(
+                    message: fipsTransport
+                        ? 'Encrypted FIPS mesh transport'
+                        : 'Web transport',
+                    child: Icon(
+                      fipsTransport ? Icons.hub_outlined : Icons.public,
+                      key: fipsTransport
+                          ? const ValueKey('fips-transport-indicator')
+                          : null,
+                      size: 16,
+                      color:
+                          active ? colors.onSurface : colors.onSurfaceVariant,
+                    ),
                   ),
-                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -4804,6 +5266,8 @@ class BrowserTab {
   String? currentUrl;
   String? message;
   String? fipsDisabledUrl;
+  Uint8List? previewBytes;
+  final BrowserNavigationState navigation = BrowserNavigationState();
   bool isHome;
   GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;
@@ -4833,7 +5297,7 @@ class BrowserTab {
 
   bool meshAuthPending = false;
   Future<bool> nativeChannelsReady = Future.value(false);
-  int? androidWebViewIdentifier;
+  int? nativeWebViewIdentifier;
   bool disposed = false;
 
   void revokeSigningDocument() {
@@ -4887,7 +5351,7 @@ class BrowserTab {
     disposed = true;
     clearDiagnosticsTransition();
     revokeSigningDocument();
-    final nativeId = androidWebViewIdentifier;
+    final nativeId = nativeWebViewIdentifier;
     if (nativeId != null) unawaited(GraspAndroidChannel.remove(nativeId));
     addressController.dispose();
     addressFocusNode.dispose();

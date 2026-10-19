@@ -3,6 +3,7 @@ package com.wingmanbefree.wingman_app
 import android.app.Activity
 import com.wingmanbefree.wingman_app.grasp.GraspChannelCoordinator
 import com.wingmanbefree.wingman_app.download.BrowserDownloadCoordinator
+import com.wingmanbefree.wingman_app.snapshot.BrowserSnapshotCoordinator
 import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
 import androidx.activity.result.contract.ActivityResultContracts
 import com.wingmanbefree.wingman_app.filepicker.FilePickerPlatformContract
@@ -22,6 +23,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var filePickerChannel: MethodChannel? = null
     private var downloadCoordinator: BrowserDownloadCoordinator? = null
     private var downloadChannel: MethodChannel? = null
+    private var snapshotChannel: MethodChannel? = null
 
     private val vpnConsentLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -102,6 +104,16 @@ class MainActivity : FlutterFragmentActivity() {
             },
             launchLegacyDestination = downloadDestinationLauncher::launch,
         ).also { nativeDownloadChannel.setMethodCallHandler(it) }
+
+        snapshotChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            BrowserSnapshotCoordinator.CHANNEL,
+        ).also {
+            it.setMethodCallHandler(BrowserSnapshotCoordinator { id ->
+                (flutterEngine.plugins.get(WebViewFlutterPlugin::class.java) as? WebViewFlutterPlugin)
+                    ?.instanceManager?.getInstance(id) as? android.webkit.WebView
+            })
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -115,6 +127,8 @@ class MainActivity : FlutterFragmentActivity() {
         filePickerCoordinator = null
         downloadChannel?.setMethodCallHandler(null)
         downloadChannel = null
+        snapshotChannel?.setMethodCallHandler(null)
+        snapshotChannel = null
         downloadCoordinator?.destroy()
         downloadCoordinator = null
         fipsChannel?.setMethodCallHandler(null)

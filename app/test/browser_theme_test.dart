@@ -125,16 +125,22 @@ void main() {
           .focusNode!
           .unfocus();
       await tester.pumpAndSettle();
-      final mouse = await tester.createGesture(
-          kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
-      await mouse.down(tester.getCenter(find.text('New Tab')));
-      await mouse.up();
-      await mouse.removePointer();
-      await tester.pumpAndSettle();
-      expect(find.text('Set tab prefix…'), findsOneWidget);
-      await capture(tester, 'tab-menu-${width.toInt()}');
-      await tester.tapAt(const Offset(8, 800));
-      await tester.pumpAndSettle();
+      if (width >= 600) {
+        final mouse = await tester.createGesture(
+            kind: PointerDeviceKind.mouse, buttons: kSecondaryMouseButton);
+        await mouse.down(tester.getCenter(find.text('New Tab')));
+        await mouse.up();
+        await mouse.removePointer();
+        await tester.pumpAndSettle();
+        expect(find.text('Set tab prefix…'), findsOneWidget);
+        await capture(tester, 'tab-menu-${width.toInt()}');
+        await tester.tapAt(const Offset(8, 800));
+        await tester.pumpAndSettle();
+      } else {
+        expect(find.byKey(const ValueKey('browser-mobile-tab-count')),
+            findsOneWidget);
+        expect(find.byKey(const ValueKey('browser-tab-strip')), findsNothing);
+      }
       await tester.tap(find.byTooltip('Profile'));
       await tester.pumpAndSettle();
       expect(find.text('Setup'), findsOneWidget);
