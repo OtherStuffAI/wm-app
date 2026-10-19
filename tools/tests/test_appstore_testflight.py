@@ -324,6 +324,29 @@ class RunnerTests(unittest.TestCase):
             proof.write_text('{}')
             with self.assertRaises(ValueError):c.evidence(rule)
 
+    def test_completed_delivery_reconciliation_requires_exact_terminal_readback(self):
+        import hashlib
+        c=client()
+        with tempfile.TemporaryDirectory() as d, patch.object(nightly,'safe_private'):
+            root=Path(d).resolve();run=root/'build13';run.mkdir();state=run/'state.json'
+            value={'app_id':APP,'version':'0.1.7','build':13,'stage':'api_action_required',
+                   'api_readback':{'build_id':'build-id','internal_status':'MISSING_EXPORT_COMPLIANCE'}}
+            release.write(state,value);digest=hashlib.sha256(state.read_bytes()).hexdigest()
+            delivered={'state_sha256':digest,'app_id':APP,'version':'0.1.7','build':13,
+                       'stage':'api_action_required','build_id':'build-id',
+                       'internal_status':'MISSING_EXPORT_COMPLIANCE'}
+            proof=root/'proof';proof.write_text(json.dumps({'schema':1,'app_id':APP,
+                'basis':'reviewed_inactive_legacy_reservations','delivered_local_runs':{'build13':delivered}}));proof.chmod(0o600)
+            rule={'state_sha256':digest,'evidence_path':str(proof),
+                  'evidence_sha256':hashlib.sha256(proof.read_bytes()).hexdigest()}
+            c.config['reconciled_local_runs']={'build13':rule}
+            self.assertTrue(c.local_reconciled(state))
+            delivered['internal_status']='READY_FOR_BETA_TESTING'
+            proof.write_text(json.dumps({'schema':1,'app_id':APP,
+                'basis':'reviewed_inactive_legacy_reservations','delivered_local_runs':{'build13':delivered}}))
+            rule['evidence_sha256']=hashlib.sha256(proof.read_bytes()).hexdigest()
+            with self.assertRaises(ValueError):c.local_reconciled(state)
+
     def test_daily_mutation_requires_exact_owner_active_day(self):
         with tempfile.TemporaryDirectory() as d, patch.object(nightly,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'), patch.dict(os.environ,{'SESSION_ID':'owner'}):
             day=dt.datetime.now(nightly.ZoneInfo('Australia/Perth')).date().isoformat()

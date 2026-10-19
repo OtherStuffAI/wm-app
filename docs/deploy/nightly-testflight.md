@@ -49,9 +49,14 @@ The optional private reference fields `inactive_uploads` and
 `build`, `created_at`, `evidence_path`, and `evidence_sha256`; each local run rule
 has `state_sha256` and the two evidence fields. Evidence schema 1 pins `app_id`,
 `basis: reviewed_inactive_legacy_reservations`, `inactive_uploads` (IDs mapped to
-exact version/build/creation facts) and `cancelled_local_runs` (run names mapped
-to state hashes). An operator must establish the cancellation facts before
-creating a rule; an empty file list alone does not establish cancellation.
+exact version/build/creation facts), `cancelled_local_runs` (run names mapped to
+state hashes), and optional `delivered_local_runs`. A delivered-run entry pins
+the exact state hash, app, version, build, local terminal stage, Apple build ID,
+and internal status; only `api_testing` and `api_action_required` qualify. This
+allows a known completed delivery to stop blocking newer source without calling
+the build Testing or erasing a compliance action. An operator must establish
+the cancellation or completed-delivery facts before creating a rule; an empty
+file list, elapsed time, or a newer build alone establishes neither.
 
 ## Release execution contract
 
