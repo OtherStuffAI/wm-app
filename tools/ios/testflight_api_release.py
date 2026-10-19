@@ -34,14 +34,16 @@ def require_daily_claim(run=None, action=None):
     from nightly_testflight import PRIVATE, safe_private
     path = PRIVATE / 'ledger.json'
     safe_private(path)
-    ledger = json.loads(path.read_text())
+    from nightly_testflight import _ledger, active_claim
+    ledger = _ledger(json.loads(path.read_text()))
     owner = os.environ.get('SESSION_ID')
     day = dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat()
-    entry = ledger.get('days', {}).get(day, {})
-    if ledger.get('schema') != 1 or not owner or entry.get('owner') != owner or entry.get('status') != 'active':
+    entry = active_claim(ledger, day)
+    if not owner or not entry or entry.get('owner') != owner:
         raise ValueError('Nightly API mutation requires this session’s active Perth daily claim.')
     if entry.get('recovery_run') and (run is None or entry['recovery_run'] != run.name or action not in ('api-upload', 'api-readback')):
         raise ValueError('Recovered claim authorizes only exact retained-run upload/readback.')
+    return entry
 
 
 def local_states(r):
@@ -67,8 +69,10 @@ def reserve(r, run, client):
                   'Local pending delivery blocks all new uploads; reconcile exact run first.')
     r.require(not run.exists(), 'Run already reserved; resume without a new upload.')
     version = latest_version(r, h)
+    claim = require_daily_claim(run, 'api-reserve')
     s = {'schema': 1, 'version': version, 'build': max(numbers(h) + local + [0]) + 1,
          'app_id': APP, 'stage': 'initialized', 'audience': 'internal', 'group': r.GROUP, 'api': True}
+    s['source'] = claim['source']
     run.mkdir(mode=0o700)
     r.write(run / 'state.json', s)
     r.write(run / 'api-preflight.json', h)
@@ -115,6 +119,9 @@ def execute(r, a, run):
     if a.action == 'api-build':
         r.require(s['stage'] == 'initialized', 'Build already attempted; preserve evidence.')
         r.require(os.environ.get('FLIGHT_DECK_PG_APP_NPUB'), 'Verified FLIGHT_DECK_PG_APP_NPUB required.')
+        from nightly_testflight import source_identity
+        r.require(s.get('source') == source_identity(a.flightdeck),
+                  'Committed source changed after the daily claim; preserve evidence and claim the new pair explicitly.')
         h = client.preflight()
         reservation_gate(r, h, s)
         delivery_barrier(r, run, client)

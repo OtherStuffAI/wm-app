@@ -58,16 +58,11 @@ creating a rule; an empty file list alone does not establish cancellation.
 1. Set a session completion goal and `nextAction=reflect`. Read the task and
    complete current thread, latest comments, all repository agent guides and
    the current release-tool implementation before acting.
-2. Run `"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py claim`. Save the returned Perth
-   day. Duplicate daily claims and any prior active claim fail closed, even
-   for the same session. A crash never automatically expires a claim. The
-   operator reconciles its session, Apple receipts and run state before any
-   explicitly authorized repair. Do not edit the ledger to bypass a gate.
-3. Inspect both working trees, staged changes, branch and upstream. Default
+2. Inspect both working trees, staged changes, branch and upstream. Default
    to `main`; stop on another branch, conflicts, incompatible work or moving
    inputs. Preserve unrelated and concurrent files. Never stash, reset,
    rebase, force-push or bypass hooks.
-4. Flight Deck comes first. Review all compatible nonignored software and
+3. Flight Deck comes first. Review all compatible nonignored software and
    reusable documentation, run focused tests and required public-source,
    unit, release-note, build and distribution checks. Follow its release-note
    numbering rules for source changes. Build in an isolated snapshot with
@@ -77,10 +72,20 @@ creating a rule; an empty file list alone does not establish cancellation.
    Push the configured authoritative upstream only as a normal fast-forward
    when safely permitted; divergence/auth failures are blockers, never a reason
    to substitute stale remote source for the newer local commit.
-5. Validate WMAPP analysis/tests sequentially and release tooling tests. Review
+4. Validate WMAPP analysis/tests sequentially and release tooling tests. Review
    and commit all compatible tested nonignored source/docs on `main`, checking
    for concurrent edits before committing. Ignore operational evidence and
    generated bundles. Never stage everything without inspecting the candidates.
+5. After both validated source checkpoints are committed and stable, run
+   `"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py claim`. The helper
+   pins the exact clean WMAPP and Flight Deck commits. Save the returned Perth
+   day and source pair. Any active claim fails closed globally. A finished
+   same-day attempt blocks the same source pair, but a later attempt may claim
+   genuinely newer committed source. This permits the scheduled lane to release
+   source committed after an earlier failed/manual recovery without repeating
+   a Testing, Processing, action-required or failed build of the same source.
+   Legacy same-day claims without pinned source require explicit reconciliation.
+   A crash never expires a claim; uncertain delivery retains its active claim.
 6. Check authentication and release gates before expensive packaging. Run
    `nightly_testflight.py dry-run` with the private virtual environment. On
    failure report the exact prerequisite and both source commits, finish as
@@ -123,7 +128,7 @@ creating a rule; an empty file list alone does not establish cancellation.
     required or failure; never call a receipt or IPA a published release.
 11. Write one readable result on the originating task and same thread, including
     commits, FD build/assets, Apple build/receipt if any and exact blocker/status.
-    Finish with the exact claimed `--day` and `--result blocked_auth|failed|processing|testing`.
+    Finish with the exact claimed `--day` and `--result blocked_auth|failed|processing|action_required|testing`.
     Set `nextAction=stop` only after reporting and handoff. If reporting or upload
     outcome is uncertain, retain the active claim for reconciliation.
 
@@ -143,7 +148,8 @@ git diff --check
 The dry run reads branches, commits, status and upstream configuration, checks
 required tool availability and the private storage boundary, and reports actual
 auth readiness. It never claims a real day, changes a release state or uploads.
-Guard tests exercise duplicate claims, overlapping days, owner-only completion
+Guard tests exercise source-aware same-day claims, the 19 October failed-recovery
+sequence, duplicate source claims, overlapping active work, owner-only completion
 and failure-closed outcomes using temporary fixtures. Read back the live enabled
 schedule, timezone, next run, identity, paths and full reporting contract after
 activation; do not manually fire a duplicate release merely to test scheduling.

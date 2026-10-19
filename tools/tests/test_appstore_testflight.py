@@ -148,13 +148,14 @@ class AppleTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     def test_reservation_uses_upload_version_and_local_number(self):
         c=client(); history(c,[upload('30','0.2.0','COMPLETE')]);c.audience=Mock(return_value={})
-        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'local_states',return_value=iter([(Path(d)/'old/state.json',{'build':40,'stage':'initialized'})])):
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'local_states',return_value=iter([(Path(d)/'old/state.json',{'build':40,'stage':'initialized'})])), patch.object(api,'require_daily_claim',return_value={'source':{'wmapp':'a'*40,'flightdeck':'b'*40}}):
             s=api.reserve(release,Path(d)/'new',c)
             self.assertEqual((s['build'],s['version']),(41,'0.2.0'))
+            self.assertEqual(s['source']['flightdeck'],'b'*40)
 
     def test_pending_barriers_do_not_create_reservation(self):
         c=client();history(c,[upload()]);c.audience=Mock(return_value={})
-        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)):
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'require_daily_claim',return_value={'source':{'wmapp':'a'*40,'flightdeck':'b'*40}}):
             run=Path(d)/'new'
             with self.assertRaises(ValueError):api.reserve(release,run,c)
             self.assertFalse(run.exists())
@@ -249,11 +250,30 @@ class RunnerTests(unittest.TestCase):
     def test_build_requires_app_identity_before_any_snapshot(self):
         c=client()
         with tempfile.TemporaryDirectory() as d:
+            source={'wmapp':'a'*40,'flightdeck':'a'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
-                'build':11,'version':'0.1.7','stage':'initialized'})
+                'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused')
             with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(release,'project_settings'), patch.dict(os.environ,{},clear=True), patch.object(api,'snapshot') as snapshot:
                 with self.assertRaises(ValueError):api.execute(release,a,run)
+                snapshot.assert_not_called()
+                self.assertEqual(release.read(run/'state.json')['stage'],'initialized')
+
+    def test_build_refuses_source_changed_after_claim_before_apple_or_snapshot(self):
+        c=client(); c.preflight=Mock(); claimed={'wmapp':'a'*40,'flightdeck':'b'*40}
+        moved={'wmapp':'c'*40,'flightdeck':'b'*40}
+        with tempfile.TemporaryDirectory() as d:
+            run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
+                'build':11,'version':'0.1.7','stage':'initialized','source':claimed})
+            a=SimpleNamespace(action='api-build',auth_reference='unused',flightdeck=Path('/fd'))
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), \
+                    patch.object(release,'project_settings'), \
+                    patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), \
+                    patch.object(nightly,'source_identity',return_value=moved), \
+                    patch.object(api,'snapshot') as snapshot:
+                with self.assertRaisesRegex(ValueError, 'changed after the daily claim'):
+                    api.execute(release,a,run)
+                c.preflight.assert_not_called()
                 snapshot.assert_not_called()
                 self.assertEqual(release.read(run/'state.json')['stage'],'initialized')
 
@@ -261,8 +281,9 @@ class RunnerTests(unittest.TestCase):
         c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],'uploads':[]})
         c.xcode_args=Mock(return_value=[])
         with tempfile.TemporaryDirectory() as d:
+            source={'wmapp':'a'*40,'flightdeck':'a'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
-                'build':11,'version':'0.1.7','stage':'initialized'})
+                'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused',flightdeck=Path('/fd'))
             actions=[]
             def snapshot(r,repo,target):
@@ -281,7 +302,7 @@ class RunnerTests(unittest.TestCase):
                     shutil.copytree(run/'flightdeck/dist',run/'wmapp/app/assets/flightdeck')
                 return SimpleNamespace(returncode=0)
             def signatures(*args):actions.append('signed-both-targets')
-            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',return_value=b'100'), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}):
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',return_value=b'100'), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}):
                 api.execute(release,a,run)
             self.assertLess(actions.index('bun run verify:dist'),actions.index('snapshot-wmapp'))
             self.assertLess(actions.index('signed-both-targets'),next(i for i,x in enumerate(actions) if '-exportArchive' in x))

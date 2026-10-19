@@ -96,10 +96,11 @@ class RecoveryTests(unittest.TestCase):
 
     def test_claim_recovery_preserves_failed_history_and_refuses_active_or_wrong_owner(self):
         day = dt.datetime.now(nightly.ZoneInfo('Australia/Perth')).date().isoformat()
-        d = self.run / 'claim'; nightly.transition(d, 'claim', 'prior', day)
+        source = {'wmapp': 'a' * 40, 'flightdeck': 'b' * 40}
+        d = self.run / 'claim'; nightly.transition(d, 'claim', 'prior', day, source=source)
         with self.assertRaises(ValueError): nightly.recover_claim(d, 'new', 'prior', 'run', 'a'*64)
         nightly.transition(d, 'finish', 'prior', day, 'failed')
-        before = json.loads((d / 'ledger.json').read_text())['days'][day]
+        before = json.loads((d / 'ledger.json').read_text())['days'][day]['attempts'][0]
         with self.assertRaises(ValueError): nightly.recover_claim(d, 'new', 'wrong', 'run', 'a'*64)
         got = nightly.recover_claim(d, 'new', 'prior', 'run', 'a'*64)
         self.assertEqual(got['prior_claim'], before); self.assertEqual(got['recovery_run'], 'run')
