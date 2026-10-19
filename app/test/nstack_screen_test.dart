@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wingman_app/src/core/app_config.dart';
+import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/nstack/nstack_access.dart';
 import 'package:wingman_app/src/features/nstack/nstack_discovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_models.dart';
@@ -120,6 +125,105 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('stack.example'), findsOneWidget);
     expect(find.text('No accessible workspaces'), findsOneWidget);
+  });
+
+  testWidgets(
+      'first save accepts live-shaped proxy downgrade and lists every usable workspace',
+      (tester) async {
+    const secret =
+        '0000000000000000000000000000000000000000000000000000000000000001';
+    final identity = NostrCrypto.importIdentity(secret);
+    final workspaceService = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000002');
+    final towerService = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000003');
+    final registry = NStackRegistryStore();
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/v4/workspaces') {
+        return http.Response(jsonEncode({'workspaces': []}), 200);
+      }
+      return http.Response(
+          jsonEncode({
+            'identity': {
+              'tower_service_npub': null,
+              'workspace_service_npub': null,
+              'workspace_owner_npub': null,
+              'workspace_id': null,
+              'app_npub': towerService.npub,
+            },
+            'workspaces': [
+              {
+                'identity': {
+                  'workspace_id': 'workspace-owner',
+                  'workspace_owner_npub': identity.npub,
+                  'workspace_service_npub': workspaceService.npub,
+                  'tower_service_npub': towerService.npub,
+                },
+                'label': 'Owner workspace',
+                'tower_base_url': 'http://stack.example',
+                'v4_workspace_id': null,
+                'membership': {'role': 'owner'},
+              },
+              {
+                'identity': {
+                  'workspace_id': 'workspace-member',
+                  'workspace_owner_npub': towerService.npub,
+                  'workspace_service_npub': workspaceService.npub,
+                  'tower_service_npub': towerService.npub,
+                },
+                'label': 'Member workspace',
+                'tower_base_url': 'http://stack.example',
+                'v4_workspace_id': null,
+                'membership': {'role': 'member'},
+              },
+            ],
+            'next_cursor': null,
+          }),
+          200);
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: NStackScreen(
+          config: AppConfig.defaults().copyWith(
+            deviceNpub: identity.npub,
+            devicePublicKeyHex: identity.publicKeyHex,
+            deviceSecret: secret,
+          ),
+          registryStore: registry,
+          grantStore: grants,
+          accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+            registryStore: registry,
+            discovery: TowerNStackWorkspaceDiscovery(client: client),
+          ),
+          recoveryService: NStackRecoveryService(
+            registryStore: registry,
+            storage: _NoStorage(),
+            relay: _NoRelay(),
+          ),
+          onRegistryChanged: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('add-nstack')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'https://stack.example');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Owner workspace'), findsOneWidget);
+    expect(find.text('Member workspace'), findsOneWidget);
+    final saved = (await registry.load(identity.npub)).stacks.single;
+    expect(saved.workspaces, hasLength(2));
+    expect(
+        saved.workspaces.map((workspace) => workspace.directHttpsUrl).toSet(),
+        {'https://stack.example'});
+    expect(saved.workspaceDiscovery?.stale, isFalse);
   });
 
   testWidgets('identity switch never presents the previous identity registry',

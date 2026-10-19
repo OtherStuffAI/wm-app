@@ -28,14 +28,21 @@ exposed through `window.nostr`:
 Logging into a website inside a tab does not select or replace this native
 identity. NBrowser validates and merges both response shapes, allowlists only
 the safe connection fields, and ignores wrapped secrets or other response
-fields. An explicit PG `v4_workspace_id` identifies the same logical workspace
-across both lists; the PG descriptor is retained because it carries the
-canonical PG workspace ID, while the legacy link is retained only as private
-registry merge metadata so existing origin-scoped aliases remain stable. That
-merge metadata is not part of `window.NStack` results. For a legacy descriptor,
-`creator_npub` is the human
-workspace owner while `workspace_service_npub` (or its `workspace_npub` alias)
-remains the distinct workspace service identity.
+fields. For Flight Deck summaries, `directHttpsUrl` is always the canonical
+address that successfully carried the freshly signed discovery request,
+including its configured base path. Tower's serialized `tower_base_url` is
+checked as a routing hint, not trusted as replacement authority. A reverse
+proxy's HTTP downgrade is tolerated only for the same host, a standard
+proxy-side HTTP port, and a compatible path; a different authority, custom
+port, or path fails closed, and the downgraded URL is
+never persisted or disclosed. An explicit PG `v4_workspace_id` identifies the
+same logical workspace across both lists; the PG descriptor is retained because
+it carries the canonical PG workspace ID, while the legacy link is retained
+only as private registry merge metadata so existing origin-scoped aliases
+remain stable. That merge metadata is not part of `window.NStack` results. For
+a legacy descriptor, `creator_npub` is the human workspace owner while
+`workspace_service_npub` (or its `workspace_npub` alias) remains the distinct
+workspace service identity.
 
 A Tower that clearly does not implement the Flight Deck collection route (HTTP
 404, 405, or 501 on the first PG request) remains a valid legacy-only NStack.
@@ -43,6 +50,9 @@ Authentication/authorization failures, server failures, malformed responses,
 and failures after pagination has begun fail the combined refresh visibly and
 retain the previous list as stale; they are never treated as a successful
 partial discovery.
+An individually unusable historical PG summary can be omitted when valid,
+unambiguous siblings remain. Duplicate workspace or linked identities and
+pages containing records but no usable identity still fail the refresh.
 First-save failure stores nothing. A later transient failure retains the last
 successful list, visibly marks it stale, and never invents a workspace.
 
@@ -82,7 +92,7 @@ interface WorkspaceSummary {
   workspaceId: string; // real remote workspace identity used by app setup
   workspaceOwnerNpub: string;
   workspaceServiceNpub: string;
-  directHttpsUrl: string; // Tower value when supplied, otherwise NStack URL
+  directHttpsUrl: string; // verified canonical NStack discovery address
   serviceNpub?: string; // Tower service identity when supplied by Tower
   nstack: {
     id: string;     // same origin-scoped NStack alias

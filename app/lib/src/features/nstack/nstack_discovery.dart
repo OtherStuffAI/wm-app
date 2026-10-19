@@ -124,7 +124,10 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
         }
         rethrow;
       }
-      final page = _validateFlightDeckWorkspaceDiscoveryResponse(response);
+      final page = _validateFlightDeckWorkspaceDiscoveryResponse(
+        response,
+        verifiedTowerRoot: rootUri,
+      );
       for (final item in page.workspaces) {
         if (!workspaceIds.add(item.workspace.remoteId)) {
           throw const NStackDiscoveryException('invalid_response',
@@ -303,7 +306,9 @@ class _FlightDeckWorkspacePage {
 }
 
 _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
-    Object? value) {
+  Object? value, {
+  required Uri verifiedTowerRoot,
+}) {
   if (value is! Map<String, dynamic> || value['workspaces'] is! List) {
     throw const NStackDiscoveryException('invalid_response',
         'NStack Flight Deck workspace response has an invalid shape.');
@@ -321,33 +326,49 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
         'invalid_response', 'NStack returned an oversized workspace page.');
   }
   final result = <_FlightDeckWorkspace>[];
+  final workspaceIds = <String>{};
   final stableIds = <String>{};
+  var omitted = 0;
   for (final raw in rawWorkspaces) {
     if (raw is! Map<String, dynamic> ||
         raw['identity'] is! Map<String, dynamic>) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned an invalid Flight Deck workspace.');
+      omitted++;
+      continue;
     }
     final identity = raw['identity'] as Map<String, dynamic>;
     final workspaceId = _safeText(identity['workspace_id'], 128);
+    if (workspaceId != null && !workspaceIds.add(workspaceId)) {
+      throw const NStackDiscoveryException('invalid_response',
+          'NStack returned a duplicate Flight Deck workspace identity.');
+    }
     final name = _safeText(raw['label'], 256);
     final owner = _validNpub(identity['workspace_owner_npub']);
     final workspaceService = _validNpub(identity['workspace_service_npub']);
     final service = _validNpub(identity['tower_service_npub']);
-    final directUrl = canonicalNStackUrl(raw['tower_base_url']?.toString());
     final v4WorkspaceId = raw['v4_workspace_id'] == null
         ? null
         : _safeText(raw['v4_workspace_id'], 128);
+    final stableId = v4WorkspaceId ?? workspaceId;
+    if (stableId != null && !stableIds.add(stableId)) {
+      throw const NStackDiscoveryException('invalid_response',
+          'NStack returned a duplicate linked Flight Deck workspace identity.');
+    }
     if (workspaceId == null ||
         name == null ||
         owner == null ||
         workspaceService == null ||
         service == null ||
-        directUrl == null ||
-        (raw['v4_workspace_id'] != null && v4WorkspaceId == null) ||
-        !stableIds.add(workspaceId)) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned incomplete, invalid, or duplicate Flight Deck workspace identity.');
+        (raw['v4_workspace_id'] != null && v4WorkspaceId == null)) {
+      omitted++;
+      continue;
+    }
+    final directUrl = _boundFlightDeckTowerUrl(
+      raw['tower_base_url'],
+      verifiedTowerRoot: verifiedTowerRoot,
+    );
+    if (directUrl == null) {
+      omitted++;
+      continue;
     }
     result.add(_FlightDeckWorkspace(
       v4WorkspaceId: v4WorkspaceId,
@@ -363,10 +384,56 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
       ),
     ));
   }
+  if (result.isEmpty && omitted > 0) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned no usable Flight Deck workspace identities.');
+  }
   return _FlightDeckWorkspacePage(
     workspaces: List.unmodifiable(result),
     nextCursor: nextCursor,
   );
+}
+
+String? _boundFlightDeckTowerUrl(
+  Object? value, {
+  required Uri verifiedTowerRoot,
+}) {
+  final raw = _safeText(value, 2048);
+  if (raw == null) return null;
+  final reported = Uri.tryParse(raw);
+  if (reported == null ||
+      reported.host.isEmpty ||
+      reported.userInfo.isNotEmpty ||
+      reported.query.isNotEmpty ||
+      reported.fragment.isNotEmpty) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
+  }
+  final verifiedScheme = verifiedTowerRoot.scheme.toLowerCase();
+  final reportedScheme = reported.scheme.toLowerCase();
+  final sameScheme = reportedScheme == verifiedScheme;
+  final proxyDowngrade = verifiedScheme == 'https' && reportedScheme == 'http';
+  final compatiblePort = sameScheme
+      ? reported.port == verifiedTowerRoot.port
+      : !verifiedTowerRoot.hasPort &&
+          (!reported.hasPort || reported.port == 80);
+  if ((!sameScheme && !proxyDowngrade) ||
+      reported.host.toLowerCase() != verifiedTowerRoot.host.toLowerCase() ||
+      !compatiblePort) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
+  }
+  final verifiedPath = verifiedTowerRoot.path == '/'
+      ? ''
+      : verifiedTowerRoot.path.replaceFirst(RegExp(r'/+$'), '');
+  final reportedPath = reported.path == '/'
+      ? ''
+      : reported.path.replaceFirst(RegExp(r'/+$'), '');
+  if (reportedPath.isNotEmpty && reportedPath != verifiedPath) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
+  }
+  return canonicalNStackUrl(verifiedTowerRoot.toString());
 }
 
 List<NStackWorkspace> _mergeWorkspaceSources(

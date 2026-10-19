@@ -108,6 +108,203 @@ void main() {
     );
   });
 
+  test(
+      'binds proxy-downgraded Flight Deck summaries to the verified HTTPS root',
+      () async {
+    final workspaceService = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000002');
+    final towerService = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000003');
+    final client = MockClient((request) async {
+      if (request.url.path == '/base/api/v4/workspaces') {
+        return http.Response(jsonEncode({'workspaces': []}), 200);
+      }
+      expect(request.url.toString(),
+          'https://stack.example/base/api/v4/flightdeck-pg/workspaces?limit=200');
+      return http.Response(
+          jsonEncode({
+            'identity': {
+              'tower_service_npub': null,
+              'workspace_service_npub': null,
+              'workspace_owner_npub': null,
+              'workspace_id': null,
+              'app_npub': towerService.npub,
+            },
+            'workspaces': [
+              _flightDeckWorkspace(
+                'workspace-owner',
+                'Owner workspace',
+                owner: identity.npub,
+                workspaceService: workspaceService.npub,
+                towerService: towerService.npub,
+                role: 'owner',
+                extra: const {
+                  'tower_base_url': 'http://stack.example',
+                },
+              ),
+              _flightDeckWorkspace(
+                'workspace-member',
+                'Member workspace',
+                owner: towerService.npub,
+                workspaceService: workspaceService.npub,
+                towerService: towerService.npub,
+                role: 'member',
+                extra: const {
+                  'tower_base_url': 'http://stack.example',
+                },
+              ),
+            ],
+            'next_cursor': null,
+          }),
+          200);
+    });
+
+    final result = await TowerNStackWorkspaceDiscovery(client: client).discover(
+      address: 'https://stack.example/base/',
+      identityNpub: identity.npub,
+      secret: secret,
+    );
+
+    expect(result.map((workspace) => workspace.remoteId),
+        ['workspace-owner', 'workspace-member']);
+    expect(result.map((workspace) => workspace.directHttpsUrl).toSet(),
+        {'https://stack.example/base'});
+  });
+
+  for (final reportedTowerUrl in [
+    'http://other.example',
+    'http://stack.example:8080',
+    'http://stack.example/other',
+  ]) {
+    test('rejects proxy-reported Tower mismatch $reportedTowerUrl', () async {
+      final other = NostrCrypto.importIdentity(
+          '0000000000000000000000000000000000000000000000000000000000000002');
+      final discovery = TowerNStackWorkspaceDiscovery(
+        client: MockClient((request) async {
+          if (request.url.path == '/base/api/v4/workspaces') {
+            return http.Response(jsonEncode({'workspaces': []}), 200);
+          }
+          return http.Response(
+              jsonEncode({
+                'workspaces': [
+                  _flightDeckWorkspace(
+                    'workspace-a',
+                    'Workspace A',
+                    owner: identity.npub,
+                    workspaceService: other.npub,
+                    towerService: other.npub,
+                    role: 'owner',
+                    extra: {'tower_base_url': reportedTowerUrl},
+                  ),
+                ],
+                'next_cursor': null,
+              }),
+              200);
+        }),
+      );
+
+      await expectLater(
+        discovery.discover(
+          address: 'https://stack.example/base',
+          identityNpub: identity.npub,
+          secret: secret,
+        ),
+        throwsA(isA<NStackDiscoveryException>()
+            .having((error) => error.code, 'code', 'invalid_response')),
+      );
+    });
+  }
+
+  test('omits an unusable Flight Deck summary without hiding usable siblings',
+      () async {
+    final other = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000002');
+    final discovery = TowerNStackWorkspaceDiscovery(
+      client: MockClient((request) async {
+        if (request.url.path == '/api/v4/workspaces') {
+          return http.Response(jsonEncode({'workspaces': []}), 200);
+        }
+        return http.Response(
+            jsonEncode({
+              'workspaces': [
+                _flightDeckWorkspace(
+                  'workspace-usable',
+                  'Usable',
+                  owner: identity.npub,
+                  workspaceService: other.npub,
+                  towerService: other.npub,
+                  role: 'owner',
+                  extra: const {'tower_base_url': 'http://stack.example'},
+                ),
+                _flightDeckWorkspace(
+                  'workspace-unusable',
+                  'Historical incomplete row',
+                  owner: identity.npub,
+                  workspaceService: other.npub,
+                  towerService: other.npub,
+                  role: 'member',
+                  extra: const {
+                    'tower_base_url': 'http://stack.example',
+                    'identity': {
+                      'workspace_id': 'workspace-unusable',
+                      'workspace_owner_npub': null,
+                      'workspace_service_npub': null,
+                      'tower_service_npub': null,
+                    },
+                  },
+                ),
+              ],
+              'next_cursor': null,
+            }),
+            200);
+      }),
+    );
+
+    final result = await discovery.discover(
+      address: 'https://stack.example',
+      identityNpub: identity.npub,
+      secret: secret,
+    );
+
+    expect(result.map((workspace) => workspace.remoteId), ['workspace-usable']);
+  });
+
+  test('duplicate Flight Deck identities remain fatal', () async {
+    final other = NostrCrypto.importIdentity(
+        '0000000000000000000000000000000000000000000000000000000000000002');
+    final discovery = TowerNStackWorkspaceDiscovery(
+      client: MockClient((request) async {
+        if (request.url.path == '/api/v4/workspaces') {
+          return http.Response(jsonEncode({'workspaces': []}), 200);
+        }
+        final duplicate = _flightDeckWorkspace(
+          'workspace-duplicate',
+          'Duplicate',
+          owner: identity.npub,
+          workspaceService: other.npub,
+          towerService: other.npub,
+          role: 'owner',
+        );
+        return http.Response(
+            jsonEncode({
+              'workspaces': [duplicate, duplicate],
+              'next_cursor': null,
+            }),
+            200);
+      }),
+    );
+
+    await expectLater(
+      discovery.discover(
+        address: 'https://stack.example',
+        identityNpub: identity.npub,
+        secret: secret,
+      ),
+      throwsA(isA<NStackDiscoveryException>()
+          .having((error) => error.code, 'code', 'invalid_response')),
+    );
+  });
+
   test('follows bounded opaque Flight Deck cursors and signs every exact page',
       () async {
     final other = NostrCrypto.importIdentity(
