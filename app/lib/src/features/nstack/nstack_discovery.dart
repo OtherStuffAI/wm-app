@@ -9,6 +9,10 @@ import 'nstack_store.dart';
 
 const nstackWorkspaceResponseMaxBytes = 256 * 1024;
 const nstackWorkspaceDiscoveryTimeout = Duration(seconds: 10);
+const nstackFlightDeckWorkspacePageSize = 200;
+const nstackFlightDeckWorkspaceTotalLimit = 1000;
+const nstackFlightDeckWorkspacePageLimit = 10;
+const nstackFlightDeckCursorMaxLength = 4096;
 
 class NStackDiscoveryException implements Exception {
   const NStackDiscoveryException(this.code, this.message);
@@ -62,10 +66,100 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
 
     final rootUri = Uri.parse(root);
     final basePath = rootUri.path.replaceFirst(RegExp(r'/+$'), '');
-    final url = rootUri.replace(
+    final legacyUrl = rootUri.replace(
       path: '$basePath/api/v4/workspaces',
       queryParameters: {'member_npub': identityNpub},
     );
+    try {
+      final legacy = validateWorkspaceDiscoveryResponse(
+        await _getJson(legacyUrl, secret),
+      );
+      final flightDeck = await _discoverFlightDeckWorkspaces(
+        rootUri: rootUri,
+        basePath: basePath,
+        secret: secret,
+      );
+      return _mergeWorkspaceSources(legacy, flightDeck);
+    } on NStackDiscoveryException {
+      rethrow;
+    } on TimeoutException {
+      throw const NStackDiscoveryException(
+          'timeout', 'Workspace discovery timed out.');
+    } catch (_) {
+      throw const NStackDiscoveryException(
+          'network_error', 'NStack workspace discovery failed.');
+    }
+  }
+
+  Future<List<_FlightDeckWorkspace>> _discoverFlightDeckWorkspaces({
+    required Uri rootUri,
+    required String basePath,
+    required String secret,
+  }) async {
+    final result = <_FlightDeckWorkspace>[];
+    final workspaceIds = <String>{};
+    final stableRemoteIds = <String>{};
+    final cursors = <String>{};
+    String? cursor;
+    for (var pageNumber = 0;
+        pageNumber < nstackFlightDeckWorkspacePageLimit;
+        pageNumber++) {
+      final url = rootUri.replace(
+        path: '$basePath/api/v4/flightdeck-pg/workspaces',
+        queryParameters: {
+          'limit': '$nstackFlightDeckWorkspacePageSize',
+          if (cursor != null) 'cursor': cursor,
+        },
+      );
+      Object? response;
+      try {
+        response = await _getJson(
+          url,
+          secret,
+          allowUnsupportedEndpoint: pageNumber == 0,
+        );
+      } on NStackDiscoveryException catch (error) {
+        if (pageNumber == 0 && error.code == 'unsupported_endpoint') {
+          return const [];
+        }
+        rethrow;
+      }
+      final page = _validateFlightDeckWorkspaceDiscoveryResponse(response);
+      for (final item in page.workspaces) {
+        if (!workspaceIds.add(item.workspace.remoteId)) {
+          throw const NStackDiscoveryException('invalid_response',
+              'NStack returned a duplicate Flight Deck workspace.');
+        }
+        if (!stableRemoteIds.add(item.workspace.stableRemoteId!)) {
+          throw const NStackDiscoveryException('invalid_response',
+              'NStack returned a duplicate linked workspace identity.');
+        }
+        result.add(item);
+        if (result.length > nstackFlightDeckWorkspaceTotalLimit) {
+          throw const NStackDiscoveryException('invalid_response',
+              'NStack returned too many Flight Deck workspaces.');
+        }
+      }
+      cursor = page.nextCursor;
+      if (cursor == null) return List.unmodifiable(result);
+      if (!cursors.add(cursor)) {
+        throw const NStackDiscoveryException('invalid_response',
+            'NStack repeated a Flight Deck workspace cursor.');
+      }
+      if (result.length >= nstackFlightDeckWorkspaceTotalLimit) {
+        throw const NStackDiscoveryException('invalid_response',
+            'NStack Flight Deck workspace response exceeded the total limit.');
+      }
+    }
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack Flight Deck workspace response exceeded the page limit.');
+  }
+
+  Future<Object?> _getJson(
+    Uri url,
+    String secret, {
+    bool allowUnsupportedEndpoint = false,
+  }) async {
     final authorization = NostrCrypto.signNip98(
       secret: secret,
       method: 'GET',
@@ -81,18 +175,19 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
       ..headers['accept'] = 'application/json'
       ..headers['authorization'] = authorization;
     try {
-      final bytes = await _read(request).timeout(timeout, onTimeout: () {
+      final bytes = await _read(
+        request,
+        allowUnsupportedEndpoint: allowUnsupportedEndpoint,
+      ).timeout(timeout, onTimeout: () {
         abort.complete();
         throw TimeoutException('Workspace discovery timed out.');
       });
-      Object? decoded;
       try {
-        decoded = jsonDecode(utf8.decode(bytes));
+        return jsonDecode(utf8.decode(bytes));
       } catch (_) {
         throw const NStackDiscoveryException(
             'invalid_response', 'NStack returned malformed workspace data.');
       }
-      return validateWorkspaceDiscoveryResponse(decoded);
     } on NStackDiscoveryException {
       rethrow;
     } on TimeoutException {
@@ -104,9 +199,17 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
     }
   }
 
-  Future<List<int>> _read(http.BaseRequest request) async {
+  Future<List<int>> _read(
+    http.BaseRequest request, {
+    required bool allowUnsupportedEndpoint,
+  }) async {
     final response = await _client.send(request);
     if (response.statusCode != 200) {
+      if (allowUnsupportedEndpoint &&
+          const {404, 405, 501}.contains(response.statusCode)) {
+        throw const NStackDiscoveryException('unsupported_endpoint',
+            'This NStack does not expose Flight Deck workspace discovery.');
+      }
       throw NStackDiscoveryException('http_error',
           'NStack returned HTTP ${response.statusCode} during discovery.');
     }
@@ -146,7 +249,8 @@ List<NStackWorkspace> validateWorkspaceDiscoveryResponse(Object? value) {
     }
     final workspaceId = _safeText(raw['workspace_id'], 128);
     final name = _safeText(raw['name'], 256);
-    final owner = _validNpub(raw['workspace_owner_npub']);
+    final owner =
+        _validNpub(raw['creator_npub'] ?? raw['workspace_owner_npub']);
     final workspaceService =
         _validNpub(raw['workspace_service_npub'] ?? raw['workspace_npub']);
     final directUrl = raw['direct_https_url'] == null
@@ -168,6 +272,7 @@ List<NStackWorkspace> validateWorkspaceDiscoveryResponse(Object? value) {
       id: '',
       name: name,
       remoteId: workspaceId,
+      stableRemoteId: workspaceId,
       workspaceOwnerNpub: owner,
       workspaceServiceNpub: workspaceService,
       directHttpsUrl: directUrl,
@@ -176,6 +281,129 @@ List<NStackWorkspace> validateWorkspaceDiscoveryResponse(Object? value) {
   }
   return List.unmodifiable(result);
 }
+
+class _FlightDeckWorkspace {
+  const _FlightDeckWorkspace({
+    required this.workspace,
+    this.v4WorkspaceId,
+  });
+
+  final NStackWorkspace workspace;
+  final String? v4WorkspaceId;
+}
+
+class _FlightDeckWorkspacePage {
+  const _FlightDeckWorkspacePage({
+    required this.workspaces,
+    required this.nextCursor,
+  });
+
+  final List<_FlightDeckWorkspace> workspaces;
+  final String? nextCursor;
+}
+
+_FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
+    Object? value) {
+  if (value is! Map<String, dynamic> || value['workspaces'] is! List) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack Flight Deck workspace response has an invalid shape.');
+  }
+  final nextCursor = value['next_cursor'] == null
+      ? null
+      : _safeText(value['next_cursor'], nstackFlightDeckCursorMaxLength);
+  if (value['next_cursor'] != null && nextCursor == null) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned an invalid Flight Deck workspace cursor.');
+  }
+  final rawWorkspaces = value['workspaces'] as List;
+  if (rawWorkspaces.length > nstackFlightDeckWorkspacePageSize) {
+    throw const NStackDiscoveryException(
+        'invalid_response', 'NStack returned an oversized workspace page.');
+  }
+  final result = <_FlightDeckWorkspace>[];
+  final stableIds = <String>{};
+  for (final raw in rawWorkspaces) {
+    if (raw is! Map<String, dynamic> ||
+        raw['identity'] is! Map<String, dynamic>) {
+      throw const NStackDiscoveryException('invalid_response',
+          'NStack returned an invalid Flight Deck workspace.');
+    }
+    final identity = raw['identity'] as Map<String, dynamic>;
+    final workspaceId = _safeText(identity['workspace_id'], 128);
+    final name = _safeText(raw['label'], 256);
+    final owner = _validNpub(identity['workspace_owner_npub']);
+    final workspaceService = _validNpub(identity['workspace_service_npub']);
+    final service = _validNpub(identity['tower_service_npub']);
+    final directUrl = canonicalNStackUrl(raw['tower_base_url']?.toString());
+    final v4WorkspaceId = raw['v4_workspace_id'] == null
+        ? null
+        : _safeText(raw['v4_workspace_id'], 128);
+    if (workspaceId == null ||
+        name == null ||
+        owner == null ||
+        workspaceService == null ||
+        service == null ||
+        directUrl == null ||
+        (raw['v4_workspace_id'] != null && v4WorkspaceId == null) ||
+        !stableIds.add(workspaceId)) {
+      throw const NStackDiscoveryException('invalid_response',
+          'NStack returned incomplete, invalid, or duplicate Flight Deck workspace identity.');
+    }
+    result.add(_FlightDeckWorkspace(
+      v4WorkspaceId: v4WorkspaceId,
+      workspace: NStackWorkspace(
+        id: '',
+        name: name,
+        remoteId: workspaceId,
+        stableRemoteId: v4WorkspaceId ?? workspaceId,
+        workspaceOwnerNpub: owner,
+        workspaceServiceNpub: workspaceService,
+        directHttpsUrl: directUrl,
+        serviceNpub: service,
+      ),
+    ));
+  }
+  return _FlightDeckWorkspacePage(
+    workspaces: List.unmodifiable(result),
+    nextCursor: nextCursor,
+  );
+}
+
+List<NStackWorkspace> _mergeWorkspaceSources(
+  List<NStackWorkspace> legacy,
+  List<_FlightDeckWorkspace> flightDeck,
+) {
+  final merged = <String, NStackWorkspace>{};
+  final legacyByRemoteId = <String, NStackWorkspace>{};
+  for (final workspace in legacy) {
+    final stableId = _workspaceStableIdentity(
+        workspace.stableRemoteId!, workspace.workspaceOwnerNpub!);
+    merged[stableId] = workspace;
+    legacyByRemoteId[workspace.remoteId] = workspace;
+  }
+  for (final item in flightDeck) {
+    final workspace = item.workspace;
+    final linkedLegacy = item.v4WorkspaceId == null
+        ? null
+        : legacyByRemoteId[item.v4WorkspaceId];
+    if (linkedLegacy != null &&
+        linkedLegacy.workspaceOwnerNpub != workspace.workspaceOwnerNpub) {
+      throw const NStackDiscoveryException('invalid_response',
+          'NStack returned conflicting linked workspace ownership.');
+    }
+    merged[_workspaceStableIdentity(
+        workspace.stableRemoteId!, workspace.workspaceOwnerNpub!)] = workspace;
+  }
+  final remoteIds = <String>{};
+  if (merged.values.any((workspace) => !remoteIds.add(workspace.remoteId))) {
+    throw const NStackDiscoveryException('invalid_response',
+        'NStack returned conflicting workspace identities.');
+  }
+  return List.unmodifiable(merged.values);
+}
+
+String _workspaceStableIdentity(String remoteId, String ownerNpub) =>
+    '$remoteId\u0000$ownerNpub';
 
 class NStackWorkspaceDiscoveryService {
   NStackWorkspaceDiscoveryService({

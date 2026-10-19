@@ -121,6 +121,112 @@ void main() {
     expect(find.text('stack.example'), findsOneWidget);
     expect(find.text('No accessible workspaces'), findsOneWidget);
   });
+
+  testWidgets('identity switch never presents the previous identity registry',
+      (tester) async {
+    const identityA = 'npub-a';
+    const identityB = 'npub-b';
+    final registry = NStackRegistryStore();
+    await registry.addOrUpdate(
+      identityA,
+      const NStackEntry(
+          id: 'stack-a', name: 'Identity A stack', url: 'https://a.example'),
+    );
+    await registry.addOrUpdate(
+      identityB,
+      const NStackEntry(
+          id: 'stack-b', name: 'Identity B stack', url: 'https://b.example'),
+    );
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    late StateSetter updateHost;
+    var activeIdentity = identityA;
+
+    await tester.pumpWidget(MaterialApp(
+      home: StatefulBuilder(builder: (context, setState) {
+        updateHost = setState;
+        return Scaffold(
+          body: NStackScreen(
+            config: AppConfig.defaults().copyWith(
+              deviceNpub: activeIdentity,
+              devicePublicKeyHex: '1'.padLeft(64, '0'),
+              deviceSecret: 'secret-present',
+            ),
+            registryStore: registry,
+            grantStore: grants,
+            accessService: access,
+            discoveryService: NStackWorkspaceDiscoveryService(
+              registryStore: registry,
+              discovery: _NoDiscovery(),
+            ),
+            recoveryService: NStackRecoveryService(
+              registryStore: registry,
+              storage: _NoStorage(),
+              relay: _NoRelay(),
+            ),
+            onRegistryChanged: () {},
+          ),
+        );
+      }),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Identity A stack'), findsOneWidget);
+
+    updateHost(() => activeIdentity = identityB);
+    await tester.pump();
+    expect(find.text('Identity A stack'), findsNothing,
+        reason: 'the old registry must clear synchronously on identity change');
+    await tester.pumpAndSettle();
+    expect(find.text('Identity B stack'), findsOneWidget);
+    expect(find.text('Identity A stack'), findsNothing);
+  });
+
+  testWidgets('locked native identity cannot add or refresh NStacks',
+      (tester) async {
+    const identity = 'npub-locked';
+    final registry = NStackRegistryStore();
+    await registry.addOrUpdate(
+      identity,
+      const NStackEntry(
+          id: 'stack-a', name: 'Locked stack', url: 'https://a.example'),
+    );
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: NStackScreen(
+          config: AppConfig.defaults().copyWith(deviceNpub: identity),
+          registryStore: registry,
+          grantStore: grants,
+          accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+              registryStore: registry, discovery: _NoDiscovery()),
+          recoveryService: NStackRecoveryService(
+              registryStore: registry,
+              storage: _NoStorage(),
+              relay: _NoRelay()),
+          onRegistryChanged: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('website login inside a tab'), findsOneWidget);
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('add-nstack')))
+            .onPressed,
+        isNull);
+    expect(
+      tester
+          .widget<IconButton>(find.byWidgetPredicate((widget) =>
+              widget is IconButton &&
+              widget.tooltip == 'Refresh Locked stack workspaces'))
+          .onPressed,
+      isNull,
+    );
+  });
 }
 
 class _NoDiscovery implements NStackWorkspaceDiscovery {

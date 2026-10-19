@@ -96,6 +96,7 @@ class NStackRegistryStore extends ChangeNotifier {
               newNStackOpaqueId(),
           name: workspace.name,
           remoteId: workspace.remoteId,
+          stableRemoteId: workspace.stableRemoteId,
           workspaceOwnerNpub: workspace.workspaceOwnerNpub,
           workspaceServiceNpub: workspace.workspaceServiceNpub,
           directHttpsUrl: workspace.directHttpsUrl,
@@ -237,7 +238,7 @@ class NStackRegistryStore extends ChangeNotifier {
 }
 
 String _workspaceStableIdentity(NStackWorkspace workspace) =>
-    '${workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
+    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

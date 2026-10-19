@@ -11,6 +11,7 @@ class NStackWorkspace {
     required this.id,
     required this.name,
     required this.remoteId,
+    this.stableRemoteId,
     this.workspaceOwnerNpub,
     this.workspaceServiceNpub,
     this.directHttpsUrl,
@@ -20,6 +21,7 @@ class NStackWorkspace {
   final String id;
   final String name;
   final String remoteId;
+  final String? stableRemoteId;
   final String? workspaceOwnerNpub;
   final String? workspaceServiceNpub;
   final String? directHttpsUrl;
@@ -32,6 +34,7 @@ class NStackWorkspace {
         'id': id,
         'name': name,
         'remote_id': remoteId,
+        if (stableRemoteId != null) 'stable_remote_id': stableRemoteId,
         'workspace_owner_npub': workspaceOwnerNpub,
         'workspace_service_npub': workspaceServiceNpub,
         'direct_https_url': directHttpsUrl,
@@ -44,12 +47,16 @@ class NStackWorkspace {
     final name = _nonEmpty(value['name']);
     final remoteId = _nonEmpty(value['remote_id']);
     if (id == null || name == null || remoteId == null) return null;
+    final stableRemoteId = value['stable_remote_id'] == null
+        ? null
+        : _bounded(value: value['stable_remote_id'], maximum: 128);
     final owner = _optionalNpub(value['workspace_owner_npub']);
     final workspaceService = _optionalNpub(value['workspace_service_npub']);
     final directUrl = canonicalNStackUrl(value['direct_https_url']?.toString());
     final service = _optionalNpub(value['service_npub']);
     final hasDiscoveryMetadata = value['workspace_owner_npub'] != null ||
         value['workspace_service_npub'] != null ||
+        value['stable_remote_id'] != null ||
         value['direct_https_url'] != null ||
         value['service_npub'] != null;
     if (hasDiscoveryMetadata &&
@@ -59,10 +66,14 @@ class NStackWorkspace {
             (value['service_npub'] != null && service == null))) {
       return null;
     }
+    if (value['stable_remote_id'] != null && stableRemoteId == null) {
+      return null;
+    }
     return NStackWorkspace(
       id: id,
       name: name,
       remoteId: remoteId,
+      stableRemoteId: stableRemoteId,
       workspaceOwnerNpub: owner,
       workspaceServiceNpub: workspaceService,
       directHttpsUrl: directUrl,
@@ -254,12 +265,15 @@ class NStackEntry {
     final workspaces = <NStackWorkspace>[];
     final seen = <String>{};
     final seenRemote = <String>{};
+    final seenStable = <String>{};
     if (value['workspaces'] is List) {
       for (final raw in value['workspaces'] as List) {
         final workspace = NStackWorkspace.tryParse(raw);
         if (workspace == null ||
             !seen.add(workspace.id) ||
-            !seenRemote.add(workspace.remoteId)) {
+            !seenRemote.add(workspace.remoteId) ||
+            !seenStable.add(
+                '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}')) {
           return null;
         }
         workspaces.add(workspace);

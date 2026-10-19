@@ -14,9 +14,35 @@ bearer token, reusable signature, or browser-wide inventory.
 
 The native NStacks screen accepts only a canonical HTTPS address (or approved
 loopback HTTP address). On first save and every refresh NBrowser freshly signs
-the exact `GET /api/v4/workspaces?member_npub=<active identity npub>` URL with
-the same unlocked identity exposed through `window.nostr`. It allowlists the
-returned safe fields and ignores wrapped secrets or other response fields.
+both exact Tower list URLs with the same active, unlocked native identity
+exposed through `window.nostr`:
+
+- `GET /api/v4/workspaces?member_npub=<active identity npub>` for legacy
+  creator-owned and group-member workspaces;
+- `GET /api/v4/flightdeck-pg/workspaces?limit=200` for Flight Deck PG owner and
+  member workspaces. When that response supplies an opaque `next_cursor`,
+  NBrowser follows it as the exact `cursor` query value, freshly signs every
+  page URL, rejects repeated/invalid cursors, and stops at bounded page and
+  total-workspace limits.
+
+Logging into a website inside a tab does not select or replace this native
+identity. NBrowser validates and merges both response shapes, allowlists only
+the safe connection fields, and ignores wrapped secrets or other response
+fields. An explicit PG `v4_workspace_id` identifies the same logical workspace
+across both lists; the PG descriptor is retained because it carries the
+canonical PG workspace ID, while the legacy link is retained only as private
+registry merge metadata so existing origin-scoped aliases remain stable. That
+merge metadata is not part of `window.NStack` results. For a legacy descriptor,
+`creator_npub` is the human
+workspace owner while `workspace_service_npub` (or its `workspace_npub` alias)
+remains the distinct workspace service identity.
+
+A Tower that clearly does not implement the Flight Deck collection route (HTTP
+404, 405, or 501 on the first PG request) remains a valid legacy-only NStack.
+Authentication/authorization failures, server failures, malformed responses,
+and failures after pagination has begun fail the combined refresh visibly and
+retain the previous list as stale; they are never treated as a successful
+partial discovery.
 First-save failure stores nothing. A later transient failure retains the last
 successful list, visibly marks it stale, and never invents a workspace.
 

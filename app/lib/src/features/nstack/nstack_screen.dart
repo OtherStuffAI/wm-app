@@ -40,6 +40,7 @@ class _NStackScreenState extends State<NStackScreen> {
   bool _busy = false;
   String? _refreshingStackId;
   String? _message;
+  int _identityEpoch = 0;
 
   @override
   void initState() {
@@ -61,6 +62,15 @@ class _NStackScreenState extends State<NStackScreen> {
       widget.grantStore.addListener(_refreshView);
     }
     if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
+      _identityEpoch++;
+      setState(() {
+        _registry = const NStackRegistry();
+        _grants = const [];
+        _status = null;
+        _busy = false;
+        _refreshingStackId = null;
+        _message = null;
+      });
       unawaited(_load());
     }
   }
@@ -102,7 +112,7 @@ class _NStackScreenState extends State<NStackScreen> {
             ),
             FilledButton.icon(
               key: const ValueKey('add-nstack'),
-              onPressed: _busy || widget.config.deviceNpub.isEmpty
+              onPressed: _busy || !widget.config.hasDeviceSecret
                   ? null
                   : () => _editStack(),
               icon: const Icon(Icons.add),
@@ -111,9 +121,16 @@ class _NStackScreenState extends State<NStackScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Choose the NStacks this identity uses. Websites see nothing beyond '
-          'the window.NStack version until you approve discovery.',
+        Text(
+          widget.config.hasDeviceSecret
+              ? 'Workspace discovery is signed by NBrowser’s active, unlocked '
+                  'identity (${widget.config.deviceNpub}). A website login inside '
+                  'a tab does not change this identity. Websites see nothing '
+                  'beyond the window.NStack version until you approve discovery.'
+              : 'Unlock NBrowser’s active Nostr identity to add or refresh an '
+                  'NStack. A website login inside a tab does not select the '
+                  'discovery identity.',
+          key: const ValueKey('nstack-discovery-identity'),
         ),
         const SizedBox(height: 18),
         if (_registry.stacks.isEmpty)
@@ -158,7 +175,9 @@ class _NStackScreenState extends State<NStackScreen> {
                 children: [
                   IconButton(
                     tooltip: 'Refresh ${stack.name} workspaces',
-                    onPressed: _busy ? null : () => _refreshStack(stack),
+                    onPressed: _busy || !widget.config.hasDeviceSecret
+                        ? null
+                        : () => _refreshStack(stack),
                     icon: _refreshingStackId == stack.id
                         ? const SizedBox.square(
                             dimension: 20,
@@ -168,7 +187,9 @@ class _NStackScreenState extends State<NStackScreen> {
                   ),
                   IconButton(
                     tooltip: 'Change ${stack.name} address',
-                    onPressed: _busy ? null : () => _editStack(stack),
+                    onPressed: _busy || !widget.config.hasDeviceSecret
+                        ? null
+                        : () => _editStack(stack),
                     icon: const Icon(Icons.edit_outlined),
                   ),
                   IconButton(
@@ -341,21 +362,27 @@ class _NStackScreenState extends State<NStackScreen> {
       builder: (context) => _NStackEditor(existingAddress: existing?.url),
     );
     if (address == null) return;
+    final identity = widget.config.deviceNpub;
+    final secret = widget.config.deviceSecret;
     await _run(() async {
       _message = 'Authenticating and discovering workspaces…';
       if (mounted) setState(() {});
       final result = existing == null
           ? await widget.discoveryService.add(
-              identityNpub: widget.config.deviceNpub,
-              secret: widget.config.deviceSecret,
+              identityNpub: identity,
+              secret: secret,
               address: address,
             )
           : await widget.discoveryService.changeAddress(
-              identityNpub: widget.config.deviceNpub,
-              secret: widget.config.deviceSecret,
+              identityNpub: identity,
+              secret: secret,
               stackId: existing.id,
               address: address,
             );
+      if (identity != widget.config.deviceNpub ||
+          secret != widget.config.deviceSecret) {
+        return;
+      }
       widget.onRegistryChanged();
       _message = result.workspaces.isEmpty
           ? '${result.name} saved; this identity has no accessible workspaces.'
@@ -364,19 +391,29 @@ class _NStackScreenState extends State<NStackScreen> {
   }
 
   Future<void> _refreshStack(NStackEntry stack) async {
+    final identity = widget.config.deviceNpub;
+    final secret = widget.config.deviceSecret;
     setState(() => _refreshingStackId = stack.id);
     await _run(() async {
       final refreshed = await widget.discoveryService.refresh(
-        identityNpub: widget.config.deviceNpub,
-        secret: widget.config.deviceSecret,
+        identityNpub: identity,
+        secret: secret,
         stackId: stack.id,
       );
+      if (identity != widget.config.deviceNpub ||
+          secret != widget.config.deviceSecret) {
+        return;
+      }
       widget.onRegistryChanged();
       _message = refreshed.workspaces.isEmpty
           ? 'Refresh complete; no accessible workspaces were returned.'
           : 'Refreshed ${refreshed.workspaces.length} workspace(s).';
     });
-    if (mounted) setState(() => _refreshingStackId = null);
+    if (mounted &&
+        identity == widget.config.deviceNpub &&
+        secret == widget.config.deviceSecret) {
+      setState(() => _refreshingStackId = null);
+    }
   }
 
   Future<void> _removeStack(NStackEntry stack) async {
@@ -457,6 +494,7 @@ class _NStackScreenState extends State<NStackScreen> {
       });
 
   Future<void> _run(Future<void> Function() action) async {
+    final identityEpoch = _identityEpoch;
     setState(() {
       _busy = true;
       _message = null;
@@ -464,10 +502,16 @@ class _NStackScreenState extends State<NStackScreen> {
     try {
       await action();
     } catch (error) {
-      _message = error.toString().replaceFirst('Bad state: ', '');
+      if (identityEpoch == _identityEpoch) {
+        _message = error.toString().replaceFirst('Bad state: ', '');
+      }
     } finally {
-      await _load();
-      if (mounted) setState(() => _busy = false);
+      if (identityEpoch == _identityEpoch) {
+        await _load();
+        if (mounted && identityEpoch == _identityEpoch) {
+          setState(() => _busy = false);
+        }
+      }
     }
   }
 }

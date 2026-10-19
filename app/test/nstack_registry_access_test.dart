@@ -89,6 +89,8 @@ void main() {
     expect(connection['workspaceId'], 'workspace-1');
     expect(connection['workspaceOwnerNpub'], _npub);
     expect(connection['directHttpsUrl'], 'https://tower.example');
+    expect(connection, isNot(contains('stableRemoteId')));
+    expect(connection, isNot(contains('stable_remote_id')));
     expect(connection, isNot(contains('handle')));
     expect(connection, isNot(contains('capabilities')));
     service.revokeDocument('document-a');
@@ -188,6 +190,7 @@ NStackEntry _stack(String id, String name) => NStackEntry(
           id: 'workspace-internal',
           name: 'Main',
           remoteId: 'workspace-1',
+          stableRemoteId: 'legacy-workspace-1',
           workspaceOwnerNpub: _npub,
           workspaceServiceNpub: _npub,
           directHttpsUrl: 'https://tower.example',
