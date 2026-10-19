@@ -192,6 +192,19 @@ avatar menu’s **Create identity / Import key** action to generate or import a
 Nostr identity and choose a PIN for the local signer vault. An existing vault
 requires its PIN before saved browser tabs open and authenticate.
 
+The **NStacks** screen manages multiple named NStacks, their workspaces, the
+active stack's browser links and preferences, and one host for encrypted
+settings backup. Eligible top-level pages receive the origin-consented
+`window.NStack` discovery surface; discovery remains separate from service
+capability approval. The API, revocation and error contract is documented in
+[`docs/nstack-browser-contract.md`](docs/nstack-browser-contract.md), with a
+manual fixture available at `/nstack-test.html`.
+
+Recovery uploads only encrypted settings to the selected host NStack and
+publishes a signed, self-encrypted NIP-78 pointer. Nostr Browser retains key
+custody and never gives a site raw identity keys or unrestricted NStack
+credentials.
+
 Do not put signer nsecs in `.env.local` anymore. That file is only for local
 development overrides such as `WMAPP_CORE_BIN`:
 
