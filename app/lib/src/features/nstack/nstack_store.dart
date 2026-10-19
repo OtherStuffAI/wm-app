@@ -65,6 +65,98 @@ class NStackRegistryStore extends ChangeNotifier {
     return next;
   }
 
+  Future<NStackEntry> applyWorkspaceDiscovery(
+    String signerNpub, {
+    required NStackEntry candidate,
+    required List<NStackWorkspace> discovered,
+    required DateTime refreshedAt,
+    String? expectedPreviousUrl,
+  }) async {
+    final current = await load(signerNpub);
+    final existing =
+        current.stacks.where((stack) => stack.id == candidate.id).firstOrNull;
+    if (existing != null &&
+        existing.url != (expectedPreviousUrl ?? candidate.url)) {
+      throw StateError('NStack address changed during discovery.');
+    }
+    final source = existing?.copyWith(url: candidate.url) ?? candidate;
+    final oldByStableIdentity = <String, NStackWorkspace>{
+      for (final workspace in source.workspaces)
+        _workspaceStableIdentity(workspace): workspace,
+    };
+    final oldLegacyByRemoteId = <String, NStackWorkspace>{
+      for (final workspace in source.workspaces)
+        if (!workspace.isDiscovered) workspace.remoteId: workspace,
+    };
+    final merged = <NStackWorkspace>[
+      for (final workspace in discovered)
+        NStackWorkspace(
+          id: oldByStableIdentity[_workspaceStableIdentity(workspace)]?.id ??
+              oldLegacyByRemoteId[workspace.remoteId]?.id ??
+              newNStackOpaqueId(),
+          name: workspace.name,
+          remoteId: workspace.remoteId,
+          workspaceOwnerNpub: workspace.workspaceOwnerNpub,
+          workspaceServiceNpub: workspace.workspaceServiceNpub,
+          directHttpsUrl: workspace.directHttpsUrl,
+          serviceNpub: workspace.serviceNpub,
+        ),
+    ];
+    final nextEntry = source.copyWith(
+      name: Uri.parse(source.url).host,
+      workspaces: List.unmodifiable(merged),
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: refreshedAt.toUtc(),
+        lastSuccessAt: refreshedAt.toUtc(),
+        stale: false,
+      ),
+    );
+    final next = current.next(
+      stacks: [
+        for (final stack in current.stacks)
+          if (stack.id != nextEntry.id) stack,
+        if (existing == null || current.stacks.any((s) => s.id == nextEntry.id))
+          nextEntry,
+      ],
+      activeStackId: current.activeStackId ?? nextEntry.id,
+    );
+    await replaceAtomic(signerNpub, next);
+    return nextEntry;
+  }
+
+  Future<NStackEntry> markWorkspaceDiscoveryFailure(
+    String signerNpub, {
+    required String stackId,
+    required String expectedUrl,
+    required DateTime attemptedAt,
+    required String errorCode,
+    required String errorMessage,
+  }) async {
+    final current = await load(signerNpub);
+    final stack =
+        current.stacks.where((item) => item.id == stackId).firstOrNull;
+    if (stack == null || stack.url != expectedUrl) {
+      throw StateError('NStack changed during discovery.');
+    }
+    final nextEntry = stack.copyWith(
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: attemptedAt.toUtc(),
+        lastSuccessAt: stack.workspaceDiscovery?.lastSuccessAt,
+        stale: true,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+      ),
+    );
+    await replaceAtomic(
+      signerNpub,
+      current.next(stacks: [
+        for (final item in current.stacks)
+          if (item.id == stackId) nextEntry else item,
+      ]),
+    );
+    return nextEntry;
+  }
+
   Future<NStackRegistry> remove(String signerNpub, String stackId) async {
     final current = await load(signerNpub);
     final nextStacks = current.stacks.where((s) => s.id != stackId).toList();
@@ -142,6 +234,13 @@ class NStackRegistryStore extends ChangeNotifier {
       ),
     );
   }
+}
+
+String _workspaceStableIdentity(NStackWorkspace workspace) =>
+    '${workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
 
 String newNStackOpaqueId() {

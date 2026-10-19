@@ -45,7 +45,7 @@ void main() {
         reason: 'migration must retain the legacy record byte-for-byte');
   });
 
-  test('opaque discovery is origin scoped and capability handles are documents',
+  test('origin consent exposes aliases and safe connection descriptors only',
       () async {
     const identity = 'npub-identity';
     final registry = NStackRegistryStore();
@@ -80,37 +80,31 @@ void main() {
       stackId: a['id'] as String,
     ))
         .single;
-    final handle = await service.createHandle(
-      documentId: 'document-a',
+    final connection = await service.getConnection(
       identity: identity,
       origin: 'https://app-a.example',
       stackId: a['id'] as String,
       workspaceId: workspace['id'] as String,
-      capabilities: const ['workspace.read', 'storage.read'],
     );
-    expect(handle['handle'], isNotEmpty);
-    expect((handle['connection'] as Map)['url'], 'https://host.example');
+    expect(connection['workspaceId'], 'workspace-1');
+    expect(connection['workspaceOwnerNpub'], _npub);
+    expect(connection['directHttpsUrl'], 'https://tower.example');
+    expect(connection, isNot(contains('handle')));
+    expect(connection, isNot(contains('capabilities')));
     service.revokeDocument('document-a');
-    expect(service.activeHandles, isEmpty);
-    expect(
-      () => service.revokeHandle(
-        documentId: 'document-a',
-        identity: identity,
-        origin: 'https://app-a.example',
-        handle: handle['handle'] as String,
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'stale_handle')),
-    );
   });
 
-  test('listing before consent and unsupported capability fail closed',
-      () async {
+  test('listing before consent and revoked origin fail closed', () async {
     const identity = 'npub-identity';
     final registry = NStackRegistryStore();
     await registry.addOrUpdate(identity, _stack('internal-a', 'Host'));
     final service = NStackAccessService(
         registryStore: registry, grantStore: NStackGrantStore());
+    expect(
+      () => service.listNStacks('', 'https://app.example'),
+      throwsA(isA<NStackException>()
+          .having((error) => error.code, 'code', 'locked')),
+    );
     expect(
       () => service.applyDiscoveryDecision(
         identity: identity,
@@ -133,19 +127,6 @@ void main() {
       stackInternalIds: const ['internal-a'],
       includeWorkspaces: false,
     );
-    final stackId = (await service.listNStacks(identity, 'https://app.example'))
-        .single['id'] as String;
-    expect(
-      () => service.createHandle(
-        documentId: 'doc',
-        identity: identity,
-        origin: 'https://app.example',
-        stackId: stackId,
-        capabilities: const ['administrator'],
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'unsupported_capability')),
-    );
     await service.revokeOrigin(identity, 'https://app.example');
     expect(
       () => service.listNStacks(identity, 'https://app.example'),
@@ -161,17 +142,42 @@ void main() {
       'requestDiscovery',
       'listNStacks',
       'listWorkspaces',
+      'getConnection',
       'requestCapabilities',
       'revoke',
     ]) {
       expect(script, contains(method));
     }
     expect(script, contains('version: 1'));
+    expect(script, contains('window !== window.top'));
+    expect(script, contains('location.origin'));
+    expect(script, contains('documentId'));
+    expect(script, contains('stale_handle'));
     expect(script, isNot(contains('fetch(')));
     expect(script, isNot(contains('WebSocket')));
     expect(script, isNot(contains('nsec')));
+    expect(nstackDocumentStartBootstrapScript, contains('NStackReady'));
+    expect(nstackDocumentStartBootstrapScript, contains('nstackready'));
+  });
+
+  test('deprecated capability method rejects locally without dispatch', () {
+    final provider = nstackBridgeScript(
+        documentId: 'document-secret', pageOrigin: 'https://app.example');
+
+    for (final script in [nstackDocumentStartBootstrapScript, provider]) {
+      expect(script, contains('requestCapabilities: rejectCapabilities'));
+      expect(script, contains("error.code = 'invalid_request'"));
+      expect(script, contains('NStack capabilities are not supported'));
+      expect(script, isNot(contains("callWhenReady('requestCapabilities'")));
+      expect(script, isNot(contains("call('requestCapabilities'")));
+      expect(script, isNot(contains('nstack.requestCapabilities')));
+    }
+    expect(provider, isNot(contains('createHandle')));
+    expect(provider, isNot(contains('capabilityHandle')));
   });
 }
+
+const _npub = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqnp7z5';
 
 NStackEntry _stack(String id, String name) => NStackEntry(
       id: id,
@@ -179,6 +185,17 @@ NStackEntry _stack(String id, String name) => NStackEntry(
       url: 'https://host.example',
       workspaces: const [
         NStackWorkspace(
-            id: 'workspace-internal', name: 'Main', remoteId: 'workspace-1'),
+          id: 'workspace-internal',
+          name: 'Main',
+          remoteId: 'workspace-1',
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+        ),
       ],
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: DateTime.utc(2026, 10, 19),
+        lastSuccessAt: DateTime.utc(2026, 10, 19),
+        stale: false,
+      ),
     );

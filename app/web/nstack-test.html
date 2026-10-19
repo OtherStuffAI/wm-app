@@ -13,14 +13,13 @@
 </head>
 <body>
   <h1>window.NStack v1 fixture</h1>
-  <p>This page never performs network requests. It exercises browser-held discovery and capability metadata only.</p>
+  <p>This page never performs network requests. It exercises consented NStack and workspace connection autofill only.</p>
   <div>
     <button id="detect">Feature detection</button>
     <button id="discover">Request discovery</button>
     <button id="stacks">List NStacks</button>
     <button id="workspaces">List first workspaces</button>
-    <button id="capabilities">Request first capability</button>
-    <button id="revoke">Revoke handle</button>
+    <button id="connection">Get first connection</button>
     <button id="clear">Clear output</button>
   </div>
   <pre id="output" role="status" aria-live="polite"></pre>
@@ -28,7 +27,6 @@
     const output = document.getElementById('output');
     let stacks = [];
     let workspaces = [];
-    let handle = null;
     function write(label, value) {
       output.textContent += `${label}\n${JSON.stringify(value, null, 2)}\n\n`;
     }
@@ -47,26 +45,18 @@
       if (!stacks.length) stacks = await window.NStack.listNStacks();
       return workspaces = await window.NStack.listWorkspaces({ stackId: stacks[0].id });
     });
-    document.getElementById('capabilities').onclick = () => run('capability', async () => {
+    document.getElementById('connection').onclick = () => run('connection', async () => {
       if (!stacks.length) stacks = await window.NStack.listNStacks();
       if (!workspaces.length) workspaces = await window.NStack.listWorkspaces({ stackId: stacks[0].id });
-      const result = await window.NStack.requestCapabilities({
+      return window.NStack.getConnection({
         stackId: stacks[0].id,
-        workspaceId: workspaces[0]?.id,
-        capabilities: ['workspace.read', 'storage.read'],
-        duration: 900,
+        workspaceId: workspaces[0].id,
       });
-      handle = result.handle;
-      return result;
-    });
-    document.getElementById('revoke').onclick = () => run('revoke', async () => {
-      if (!handle) throw Object.assign(new Error('Request a capability first.'), { code: 'invalid_request' });
-      const result = await window.NStack.revoke({ handle });
-      handle = null;
-      return result;
     });
     document.getElementById('clear').onclick = () => output.textContent = '';
     window.NStack?.on?.('change', detail => write('change', detail));
+    window.addEventListener('nstackready', event => write('ready event', event.detail));
+    window.NStackReady?.then(api => write('ready promise', { version: api.version }));
   </script>
 </body>
 </html>

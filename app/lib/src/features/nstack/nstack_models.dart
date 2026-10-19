@@ -11,16 +11,31 @@ class NStackWorkspace {
     required this.id,
     required this.name,
     required this.remoteId,
+    this.workspaceOwnerNpub,
+    this.workspaceServiceNpub,
+    this.directHttpsUrl,
+    this.serviceNpub,
   });
 
   final String id;
   final String name;
   final String remoteId;
+  final String? workspaceOwnerNpub;
+  final String? workspaceServiceNpub;
+  final String? directHttpsUrl;
+  final String? serviceNpub;
+
+  bool get isDiscovered =>
+      workspaceOwnerNpub != null && workspaceServiceNpub != null;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
         'remote_id': remoteId,
+        'workspace_owner_npub': workspaceOwnerNpub,
+        'workspace_service_npub': workspaceServiceNpub,
+        'direct_https_url': directHttpsUrl,
+        'service_npub': serviceNpub,
       };
 
   static NStackWorkspace? tryParse(Object? value) {
@@ -29,7 +44,86 @@ class NStackWorkspace {
     final name = _nonEmpty(value['name']);
     final remoteId = _nonEmpty(value['remote_id']);
     if (id == null || name == null || remoteId == null) return null;
-    return NStackWorkspace(id: id, name: name, remoteId: remoteId);
+    final owner = _optionalNpub(value['workspace_owner_npub']);
+    final workspaceService = _optionalNpub(value['workspace_service_npub']);
+    final directUrl = canonicalNStackUrl(value['direct_https_url']?.toString());
+    final service = _optionalNpub(value['service_npub']);
+    final hasDiscoveryMetadata = value['workspace_owner_npub'] != null ||
+        value['workspace_service_npub'] != null ||
+        value['direct_https_url'] != null ||
+        value['service_npub'] != null;
+    if (hasDiscoveryMetadata &&
+        (owner == null ||
+            workspaceService == null ||
+            (value['direct_https_url'] != null && directUrl == null) ||
+            (value['service_npub'] != null && service == null))) {
+      return null;
+    }
+    return NStackWorkspace(
+      id: id,
+      name: name,
+      remoteId: remoteId,
+      workspaceOwnerNpub: owner,
+      workspaceServiceNpub: workspaceService,
+      directHttpsUrl: directUrl,
+      serviceNpub: service,
+    );
+  }
+}
+
+class NStackWorkspaceDiscoveryStatus {
+  const NStackWorkspaceDiscoveryStatus({
+    required this.lastAttemptAt,
+    required this.stale,
+    this.lastSuccessAt,
+    this.errorCode,
+    this.errorMessage,
+  });
+
+  final DateTime lastAttemptAt;
+  final DateTime? lastSuccessAt;
+  final bool stale;
+  final String? errorCode;
+  final String? errorMessage;
+
+  bool get hasError => errorCode != null;
+
+  Map<String, dynamic> toJson() => {
+        'last_attempt_at': lastAttemptAt.toUtc().toIso8601String(),
+        'last_success_at': lastSuccessAt?.toUtc().toIso8601String(),
+        'stale': stale,
+        'error': errorCode == null
+            ? null
+            : {'code': errorCode, 'message': errorMessage},
+      };
+
+  static NStackWorkspaceDiscoveryStatus? tryParse(Object? value) {
+    if (value is! Map<String, dynamic>) return null;
+    final attempt =
+        DateTime.tryParse(value['last_attempt_at']?.toString() ?? '');
+    final success = value['last_success_at'] == null
+        ? null
+        : DateTime.tryParse(value['last_success_at'].toString());
+    final error = value['error'];
+    final errorCode = error is Map<String, dynamic>
+        ? _bounded(value: error['code'], maximum: 64)
+        : null;
+    final errorMessage = error is Map<String, dynamic>
+        ? _bounded(value: error['message'], maximum: 256)
+        : null;
+    if (attempt == null ||
+        value['stale'] is! bool ||
+        (value['last_success_at'] != null && success == null) ||
+        (error != null && (errorCode == null || errorMessage == null))) {
+      return null;
+    }
+    return NStackWorkspaceDiscoveryStatus(
+      lastAttemptAt: attempt.toUtc(),
+      lastSuccessAt: success?.toUtc(),
+      stale: value['stale'] as bool,
+      errorCode: errorCode,
+      errorMessage: errorMessage,
+    );
   }
 }
 
@@ -97,6 +191,7 @@ class NStackEntry {
     this.peerNpub,
     this.workspaces = const [],
     this.settings = const NStackBrowserSettings(),
+    this.workspaceDiscovery,
   });
 
   final String id;
@@ -106,6 +201,7 @@ class NStackEntry {
   final String? peerNpub;
   final List<NStackWorkspace> workspaces;
   final NStackBrowserSettings settings;
+  final NStackWorkspaceDiscoveryStatus? workspaceDiscovery;
 
   NStackEntry copyWith({
     String? name,
@@ -116,6 +212,8 @@ class NStackEntry {
     bool clearPeerNpub = false,
     List<NStackWorkspace>? workspaces,
     NStackBrowserSettings? settings,
+    NStackWorkspaceDiscoveryStatus? workspaceDiscovery,
+    bool clearWorkspaceDiscovery = false,
   }) {
     return NStackEntry(
       id: id,
@@ -126,6 +224,9 @@ class NStackEntry {
       peerNpub: clearPeerNpub ? null : peerNpub ?? this.peerNpub,
       workspaces: workspaces ?? this.workspaces,
       settings: settings ?? this.settings,
+      workspaceDiscovery: clearWorkspaceDiscovery
+          ? null
+          : workspaceDiscovery ?? this.workspaceDiscovery,
     );
   }
 
@@ -137,6 +238,7 @@ class NStackEntry {
         'peer_npub': peerNpub,
         'workspaces': [for (final workspace in workspaces) workspace.toJson()],
         'settings': settings.toJson(),
+        'workspace_discovery': workspaceDiscovery?.toJson(),
       };
 
   static NStackEntry? tryParse(Object? value) {
@@ -151,14 +253,22 @@ class NStackEntry {
     if ((fipsEndpoint == null) != (peerNpub == null)) return null;
     final workspaces = <NStackWorkspace>[];
     final seen = <String>{};
+    final seenRemote = <String>{};
     if (value['workspaces'] is List) {
       for (final raw in value['workspaces'] as List) {
         final workspace = NStackWorkspace.tryParse(raw);
-        if (workspace != null && seen.add(workspace.id)) {
-          workspaces.add(workspace);
+        if (workspace == null ||
+            !seen.add(workspace.id) ||
+            !seenRemote.add(workspace.remoteId)) {
+          return null;
         }
+        workspaces.add(workspace);
       }
     }
+    final discovery = value['workspace_discovery'] == null
+        ? null
+        : NStackWorkspaceDiscoveryStatus.tryParse(value['workspace_discovery']);
+    if (value['workspace_discovery'] != null && discovery == null) return null;
     return NStackEntry(
       id: id,
       name: name,
@@ -167,6 +277,7 @@ class NStackEntry {
       peerNpub: peerNpub,
       workspaces: List.unmodifiable(workspaces),
       settings: NStackBrowserSettings.tryParse(value['settings']),
+      workspaceDiscovery: discovery,
     );
   }
 }
@@ -306,4 +417,14 @@ String? _optionalNpub(Object? value) {
           .hasMatch(text)
       ? text
       : null;
+}
+
+String? _bounded({required Object? value, required int maximum}) {
+  final text = _nonEmpty(value);
+  if (text == null ||
+      text.length > maximum ||
+      text.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+    return null;
+  }
+  return text;
 }

@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
-import '../../core/nostr_crypto.dart';
 import 'nstack_access.dart';
+import 'nstack_discovery.dart';
 import 'nstack_models.dart';
 import 'nstack_recovery.dart';
 import 'nstack_store.dart';
@@ -15,6 +15,7 @@ class NStackScreen extends StatefulWidget {
     required this.registryStore,
     required this.grantStore,
     required this.accessService,
+    required this.discoveryService,
     required this.recoveryService,
     required this.onRegistryChanged,
     super.key,
@@ -24,6 +25,7 @@ class NStackScreen extends StatefulWidget {
   final NStackRegistryStore registryStore;
   final NStackGrantStore grantStore;
   final NStackAccessService accessService;
+  final NStackWorkspaceDiscoveryService discoveryService;
   final NStackRecoveryService recoveryService;
   final VoidCallback onRegistryChanged;
 
@@ -36,6 +38,7 @@ class _NStackScreenState extends State<NStackScreen> {
   List<NStackDiscoveryGrant> _grants = const [];
   Map<String, dynamic>? _status;
   bool _busy = false;
+  String? _refreshingStackId;
   String? _message;
 
   @override
@@ -122,6 +125,7 @@ class _NStackScreenState extends State<NStackScreen> {
                   Text('Add one to enable discovery and encrypted backup.'),
             ),
           ),
+        if (_busy) const LinearProgressIndicator(),
         for (final stack in _registry.stacks) _stackCard(stack),
         const SizedBox(height: 18),
         _recoveryCard(),
@@ -153,7 +157,17 @@ class _NStackScreenState extends State<NStackScreen> {
               trailing: Wrap(
                 children: [
                   IconButton(
-                    tooltip: 'Edit ${stack.name}',
+                    tooltip: 'Refresh ${stack.name} workspaces',
+                    onPressed: _busy ? null : () => _refreshStack(stack),
+                    icon: _refreshingStackId == stack.id
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                  ),
+                  IconButton(
+                    tooltip: 'Change ${stack.name} address',
                     onPressed: _busy ? null : () => _editStack(stack),
                     icon: const Icon(Icons.edit_outlined),
                   ),
@@ -165,6 +179,37 @@ class _NStackScreenState extends State<NStackScreen> {
                 ],
               ),
             ),
+            if (stack.workspaceDiscovery == null)
+              const ListTile(
+                leading: Icon(Icons.info_outline),
+                title: Text('Authenticated refresh required'),
+                subtitle: Text(
+                    'Previously entered workspace rows are retained until refresh replaces them with server discovery.'),
+              )
+            else if (stack.workspaceDiscovery!.hasError)
+              ListTile(
+                leading: const Icon(Icons.warning_amber),
+                title: const Text('Workspace refresh failed'),
+                subtitle: Text(
+                  '${stack.workspaceDiscovery!.errorMessage}\n'
+                  '${stack.workspaces.isEmpty ? 'No workspace was saved.' : 'Showing last-known-good workspaces; they may be stale.'}',
+                ),
+              )
+            else if (stack.workspaces.isEmpty)
+              const ListTile(
+                leading: Icon(Icons.workspaces_outline),
+                title: Text('No accessible workspaces'),
+                subtitle: Text(
+                    'The active identity authenticated successfully but this NStack returned no workspaces.'),
+              )
+            else
+              for (final workspace in stack.workspaces)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.workspaces_outline),
+                  title: Text(workspace.name),
+                  subtitle: Text(workspace.remoteId),
+                ),
             ListTile(
               leading: Icon(active
                   ? Icons.radio_button_checked
@@ -256,7 +301,6 @@ class _NStackScreenState extends State<NStackScreen> {
   }
 
   Widget _accessCard() {
-    final handles = widget.accessService.activeHandles;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -266,8 +310,8 @@ class _NStackScreenState extends State<NStackScreen> {
             Text('Website access',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            if (_grants.isEmpty && handles.isEmpty)
-              const Text('No website discovery or capability grants.'),
+            if (_grants.isEmpty)
+              const Text('No websites can discover saved connections.'),
             for (final grant in _grants)
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -285,18 +329,6 @@ class _NStackScreenState extends State<NStackScreen> {
                   child: const Text('Revoke'),
                 ),
               ),
-            for (final handle in handles)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.key_off_outlined),
-                title: Text(handle.origin),
-                subtitle: Text(handle.capabilities.join(', ')),
-                trailing: TextButton(
-                  onPressed: () =>
-                      widget.accessService.revokeFromManagement(handle.handle),
-                  child: const Text('Revoke handle'),
-                ),
-              ),
           ],
         ),
       ),
@@ -304,20 +336,47 @@ class _NStackScreenState extends State<NStackScreen> {
   }
 
   Future<void> _editStack([NStackEntry? existing]) async {
-    final result = await showDialog<NStackEntry>(
+    final address = await showDialog<String>(
       context: context,
-      builder: (context) => _NStackEditor(existing: existing),
+      builder: (context) => _NStackEditor(existingAddress: existing?.url),
     );
-    if (result == null) return;
+    if (address == null) return;
     await _run(() async {
-      await widget.registryStore.addOrUpdate(
-        widget.config.deviceNpub,
-        result,
-        makeActive: existing == null && _registry.stacks.isEmpty,
+      _message = 'Authenticating and discovering workspaces…';
+      if (mounted) setState(() {});
+      final result = existing == null
+          ? await widget.discoveryService.add(
+              identityNpub: widget.config.deviceNpub,
+              secret: widget.config.deviceSecret,
+              address: address,
+            )
+          : await widget.discoveryService.changeAddress(
+              identityNpub: widget.config.deviceNpub,
+              secret: widget.config.deviceSecret,
+              stackId: existing.id,
+              address: address,
+            );
+      widget.onRegistryChanged();
+      _message = result.workspaces.isEmpty
+          ? '${result.name} saved; this identity has no accessible workspaces.'
+          : '${result.name} saved with ${result.workspaces.length} workspace(s).';
+    });
+  }
+
+  Future<void> _refreshStack(NStackEntry stack) async {
+    setState(() => _refreshingStackId = stack.id);
+    await _run(() async {
+      final refreshed = await widget.discoveryService.refresh(
+        identityNpub: widget.config.deviceNpub,
+        secret: widget.config.deviceSecret,
+        stackId: stack.id,
       );
       widget.onRegistryChanged();
-      _message = '${result.name} saved.';
+      _message = refreshed.workspaces.isEmpty
+          ? 'Refresh complete; no accessible workspaces were returned.'
+          : 'Refreshed ${refreshed.workspaces.length} workspace(s).';
     });
+    if (mounted) setState(() => _refreshingStackId = null);
   }
 
   Future<void> _removeStack(NStackEntry stack) async {
@@ -326,7 +385,7 @@ class _NStackScreenState extends State<NStackScreen> {
           builder: (context) => AlertDialog(
             title: Text('Remove ${stack.name}?'),
             content: const Text(
-                'This removes its local metadata and revokes active handles. Existing encrypted backup objects are immutable.'),
+                'This removes its local metadata and website discovery aliases. Existing encrypted backup objects are immutable.'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context, false),
@@ -414,51 +473,35 @@ class _NStackScreenState extends State<NStackScreen> {
 }
 
 class _NStackEditor extends StatefulWidget {
-  const _NStackEditor({this.existing});
-  final NStackEntry? existing;
+  const _NStackEditor({this.existingAddress});
+  final String? existingAddress;
 
   @override
   State<_NStackEditor> createState() => _NStackEditorState();
 }
 
 class _NStackEditorState extends State<_NStackEditor> {
-  late final TextEditingController _name;
   late final TextEditingController _url;
-  late final TextEditingController _fips;
-  late final TextEditingController _peer;
-  late final TextEditingController _workspaces;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    final stack = widget.existing;
-    _name = TextEditingController(text: stack?.name ?? '');
-    _url = TextEditingController(text: stack?.url ?? '');
-    _fips = TextEditingController(text: stack?.fipsEndpoint ?? '');
-    _peer = TextEditingController(text: stack?.peerNpub ?? '');
-    _workspaces = TextEditingController(
-      text: stack?.workspaces
-              .map((workspace) => '${workspace.name}|${workspace.remoteId}')
-              .join('\n') ??
-          '',
-    );
+    _url = TextEditingController(text: widget.existingAddress ?? '');
   }
 
   @override
   void dispose() {
-    _name.dispose();
     _url.dispose();
-    _fips.dispose();
-    _peer.dispose();
-    _workspaces.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.existing == null ? 'Add NStack' : 'Edit NStack'),
+      title: Text(widget.existingAddress == null
+          ? 'Add NStack'
+          : 'Change NStack address'),
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
@@ -466,28 +509,14 @@ class _NStackEditorState extends State<_NStackEditor> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
-                  controller: _name,
-                  decoration: const InputDecoration(labelText: 'Name')),
-              TextField(
                   controller: _url,
-                  decoration: const InputDecoration(labelText: 'HTTPS URL')),
-              TextField(
-                  controller: _fips,
+                  autofocus: true,
+                  keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
-                      labelText: 'FIPS endpoint (optional)')),
-              TextField(
-                  controller: _peer,
-                  decoration: const InputDecoration(
-                      labelText: 'Pinned FIPS peer npub (optional)')),
-              TextField(
-                controller: _workspaces,
-                minLines: 2,
-                maxLines: 5,
-                decoration: const InputDecoration(
-                  labelText: 'Workspaces',
-                  helperText: 'One per line: Display name|remote workspace ID',
-                ),
-              ),
+                    labelText: 'NStack HTTPS address',
+                    helperText:
+                        'NBrowser will authenticate and discover every workspace available to the active identity.',
+                  )),
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 10),
@@ -509,64 +538,11 @@ class _NStackEditorState extends State<_NStackEditor> {
   }
 
   void _save() {
-    final name = _name.text.trim();
     final url = canonicalNStackUrl(_url.text);
-    final fips = canonicalFipsEndpoint(_fips.text);
-    final peer = _peer.text.trim();
-    var peerValid = peer.isEmpty;
-    if (peer.isNotEmpty) {
-      try {
-        NostrCrypto.publicKeyHexFromNpub(peer);
-        peerValid = true;
-      } catch (_) {}
-    }
-    if (name.isEmpty || url == null) {
-      setState(() => _error = 'Enter a name and valid HTTPS URL.');
+    if (url == null) {
+      setState(() => _error = 'Enter a valid HTTPS NStack address.');
       return;
     }
-    if ((_fips.text.trim().isEmpty) != peer.isEmpty ||
-        !peerValid ||
-        (_fips.text.trim().isNotEmpty && fips == null)) {
-      setState(() =>
-          _error = 'FIPS endpoint and pinned peer npub must both be valid.');
-      return;
-    }
-    final existingByRemote = {
-      for (final workspace
-          in widget.existing?.workspaces ?? const <NStackWorkspace>[])
-        workspace.remoteId: workspace,
-    };
-    final workspaces = <NStackWorkspace>[];
-    final seen = <String>{};
-    for (final line in _workspaces.text.split('\n')) {
-      if (line.trim().isEmpty) continue;
-      final parts = line.split('|');
-      if (parts.length != 2 || parts.any((part) => part.trim().isEmpty)) {
-        setState(() => _error = 'Each workspace must use Name|remote ID.');
-        return;
-      }
-      final remote = parts[1].trim();
-      if (!seen.add(remote)) {
-        setState(() => _error = 'Workspace remote IDs must be unique.');
-        return;
-      }
-      workspaces.add(NStackWorkspace(
-        id: existingByRemote[remote]?.id ?? newNStackOpaqueId(),
-        name: parts[0].trim(),
-        remoteId: remote,
-      ));
-    }
-    Navigator.pop(
-      context,
-      NStackEntry(
-        id: widget.existing?.id ?? newNStackOpaqueId(),
-        name: name,
-        url: url,
-        fipsEndpoint: fips,
-        peerNpub: peer.isEmpty ? null : peer,
-        workspaces: workspaces,
-        settings: widget.existing?.settings ?? const NStackBrowserSettings(),
-      ),
-    );
+    Navigator.pop(context, url);
   }
 }

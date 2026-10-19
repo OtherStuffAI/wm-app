@@ -975,13 +975,22 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<bool> _configureNativeChannels(BrowserTab tab) async {
-    if (!Platform.isAndroid) return Platform.isIOS || Platform.isMacOS;
+    if (!Platform.isAndroid) {
+      final controller = tab.controller.platform;
+      if (controller is WebKitWebViewController &&
+          (Platform.isIOS || Platform.isMacOS)) {
+        await controller.addMainFrameJavaScriptAtDocumentStart(
+            nstackDocumentStartBootstrapScript);
+      }
+      return Platform.isIOS || Platform.isMacOS;
+    }
     final controller = tab.controller.platform;
     if (controller is! AndroidWebViewController) return false;
     final id = controller.webViewIdentifier;
     tab.androidWebViewIdentifier = id;
     final installed = await GraspAndroidChannel.install(
       webViewIdentifier: id,
+      documentStartScript: nstackDocumentStartBootstrapScript,
       onMessage: (channel, message) {
         if (!mounted || _tabById(tab.id) != tab) return;
         switch (channel) {
@@ -2282,101 +2291,22 @@ class BrowserScreenState extends State<BrowserScreen>
             stackId: stackId,
           );
           break;
-        case 'nstack.requestCapabilities':
+        case 'nstack.getConnection':
           final stackId = params['stackId']?.toString() ?? '';
-          final workspaceId = params['workspaceId']?.toString();
-          final rawCapabilities = params['capabilities'];
-          if (stackId.isEmpty || rawCapabilities is! List) {
+          final workspaceId = params['workspaceId']?.toString() ?? '';
+          if (stackId.isEmpty || workspaceId.isEmpty) {
             throw const NStackException(
-                'invalid_request', 'stackId and capabilities are required.');
+                'invalid_request', 'stackId and workspaceId are required.');
           }
-          final capabilities = rawCapabilities
-              .map((value) => value.toString())
-              .toList(growable: false);
-          final durationSeconds = params['duration'] is num
-              ? (params['duration'] as num).toInt()
-              : 900;
-          final unsupported = capabilities
-              .where((value) => !nstackSupportedCapabilities.contains(value))
-              .toList();
-          if (unsupported.isNotEmpty) {
-            throw NStackException('unsupported_capability',
-                'Unsupported capability: ${unsupported.first}.');
-          }
-          if (capabilities.isEmpty ||
-              durationSeconds <= 0 ||
-              durationSeconds > const Duration(hours: 8).inSeconds) {
-            throw const NStackException(
-                'invalid_request', 'Capabilities or duration are invalid.');
-          }
-          final disclosed =
-              await _nstackAccessService.listNStacks(identity, origin);
-          if (!disclosed.any((stack) => stack['id'] == stackId)) {
-            throw const NStackException(
-                'not_disclosed', 'The NStack was not disclosed.');
-          }
-          if (workspaceId != null && workspaceId.isNotEmpty) {
-            final disclosedWorkspaces =
-                await _nstackAccessService.listWorkspaces(
-              identity: identity,
-              origin: origin,
-              stackId: stackId,
-            );
-            if (!disclosedWorkspaces
-                .any((workspace) => workspace['id'] == workspaceId)) {
-              throw const NStackException(
-                  'not_disclosed', 'The workspace was not disclosed.');
-            }
-          }
-          if (!current()) return;
-          if (!mounted) return;
-          final approved = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Grant NStack capabilities?'),
-                  content: Text(
-                    '$origin requests:\n\n${capabilities.join('\n')}\n\n'
-                    'This creates a handle for this document only. It does not expose credentials or reusable signatures.',
-                  ),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Deny')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Allow once')),
-                  ],
-                ),
-              ) ??
-              false;
-          if (!current()) return;
-          if (!approved) {
-            throw const NStackException(
-                'consent_denied', 'Capability request was denied.');
-          }
-          result = await _nstackAccessService.createHandle(
-            documentId: documentId,
+          result = await _nstackAccessService.getConnection(
             identity: identity,
             origin: origin,
             stackId: stackId,
-            workspaceId:
-                workspaceId == null || workspaceId.isEmpty ? null : workspaceId,
-            capabilities: capabilities,
-            duration: Duration(seconds: durationSeconds),
+            workspaceId: workspaceId,
           );
           break;
         case 'nstack.revoke':
-          final handle = params['handle']?.toString() ?? '';
-          if (handle.isEmpty) {
-            throw const NStackException(
-                'invalid_request', 'handle is required.');
-          }
-          _nstackAccessService.revokeHandle(
-            documentId: documentId,
-            identity: identity,
-            origin: origin,
-            handle: handle,
-          );
+          await _nstackAccessService.revokeOrigin(identity, origin);
           result = true;
           break;
         default:

@@ -4,6 +4,7 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/features/nstack/nstack_access.dart';
+import 'package:wingman_app/src/features/nstack/nstack_discovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_models.dart';
 import 'package:wingman_app/src/features/nstack/nstack_recovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_screen.dart';
@@ -49,6 +50,10 @@ void main() {
           registryStore: registry,
           grantStore: grants,
           accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+            registryStore: registry,
+            discovery: _NoDiscovery(),
+          ),
           recoveryService: NStackRecoveryService(
             registryStore: registry,
             storage: _NoStorage(),
@@ -67,9 +72,75 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Revoke'));
     await tester.pumpAndSettle();
     expect(await grants.list(identity), isEmpty);
-    expect(find.text('No website discovery or capability grants.'),
+    expect(find.text('No websites can discover saved connections.'),
         findsOneWidget);
   });
+
+  testWidgets('add flow asks only for address and shows discovered empty state',
+      (tester) async {
+    const identity = 'npub-test';
+    final registry = NStackRegistryStore();
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: NStackScreen(
+          config: AppConfig.defaults().copyWith(
+            deviceNpub: identity,
+            devicePublicKeyHex: '1'.padLeft(64, '0'),
+            deviceSecret: 'secret-present',
+          ),
+          registryStore: registry,
+          grantStore: grants,
+          accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+            registryStore: registry,
+            discovery: _EmptyDiscovery(),
+            clock: () => DateTime.utc(2026, 10, 19),
+          ),
+          recoveryService: NStackRecoveryService(
+            registryStore: registry,
+            storage: _NoStorage(),
+            relay: _NoRelay(),
+          ),
+          onRegistryChanged: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('add-nstack')));
+    await tester.pumpAndSettle();
+    expect(find.text('NStack HTTPS address'), findsOneWidget);
+    expect(find.text('Name'), findsNothing);
+    expect(find.text('Workspaces'), findsNothing);
+    expect(find.textContaining('FIPS endpoint'), findsNothing);
+    await tester.enterText(find.byType(TextField), 'https://stack.example/');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('stack.example'), findsOneWidget);
+    expect(find.text('No accessible workspaces'), findsOneWidget);
+  });
+}
+
+class _NoDiscovery implements NStackWorkspaceDiscovery {
+  @override
+  Future<List<NStackWorkspace>> discover({
+    required String address,
+    required String identityNpub,
+    required String secret,
+  }) =>
+      throw UnimplementedError();
+}
+
+class _EmptyDiscovery implements NStackWorkspaceDiscovery {
+  @override
+  Future<List<NStackWorkspace>> discover({
+    required String address,
+    required String identityNpub,
+    required String secret,
+  }) async =>
+      const [];
 }
 
 class _NoStorage implements NStackStorageClient {

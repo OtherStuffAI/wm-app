@@ -6,14 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'nstack_models.dart';
 import 'nstack_store.dart';
 
-const nstackSupportedCapabilities = <String>{
-  'workspace.read',
-  'storage.read',
-  'storage.write',
-  'events.read',
-  'events.write',
-};
-
 class NStackException implements Exception {
   const NStackException(this.code, this.message);
   final String code;
@@ -145,34 +137,6 @@ class NStackGrantStore extends ChangeNotifier {
   }
 }
 
-class NStackCapabilityHandle {
-  const NStackCapabilityHandle({
-    required this.handle,
-    required this.documentId,
-    required this.origin,
-    required this.identity,
-    required this.stackInternalId,
-    required this.stackId,
-    required this.capabilities,
-    required this.createdAt,
-    required this.expiresAt,
-    this.workspaceInternalId,
-    this.workspaceId,
-  });
-
-  final String handle;
-  final String documentId;
-  final String origin;
-  final String identity;
-  final String stackInternalId;
-  final String stackId;
-  final String? workspaceInternalId;
-  final String? workspaceId;
-  final Set<String> capabilities;
-  final DateTime createdAt;
-  final DateTime expiresAt;
-}
-
 class NStackAccessService extends ChangeNotifier {
   NStackAccessService({
     required this.registryStore,
@@ -183,12 +147,6 @@ class NStackAccessService extends ChangeNotifier {
   final NStackRegistryStore registryStore;
   final NStackGrantStore grantStore;
   final DateTime Function() _clock;
-  final Map<String, NStackCapabilityHandle> _handles = {};
-
-  List<NStackCapabilityHandle> get activeHandles {
-    _pruneExpired();
-    return List.unmodifiable(_handles.values);
-  }
 
   Future<Map<String, dynamic>> applyDiscoveryDecision({
     required String identity,
@@ -230,7 +188,8 @@ class NStackAccessService extends ChangeNotifier {
         in registry.stacks.where((s) => requested.contains(s.id))) {
       stackIds[stack.id] = old?.stackIds[stack.id] ?? newNStackOpaqueId();
       if (includeWorkspaces) {
-        for (final workspace in stack.workspaces) {
+        for (final workspace
+            in stack.workspaces.where((item) => item.isDiscovered)) {
           final key = '${stack.id}/${workspace.id}';
           workspaceIds[key] = old?.workspaceIds[key] ?? newNStackOpaqueId();
         }
@@ -258,8 +217,12 @@ class NStackAccessService extends ChangeNotifier {
           {
             'id': opaque,
             'name': stack.name,
+            'url': stack.url,
             'host': registry.hostStackId == stack.id,
             'available': true,
+            'stale': stack.workspaceDiscovery?.stale ?? true,
+            'lastRefreshedAt':
+                stack.workspaceDiscovery?.lastSuccessAt?.toIso8601String(),
           },
     ];
   }
@@ -283,38 +246,19 @@ class NStackAccessService extends ChangeNotifier {
     }
     return [
       for (final workspace in stack.workspaces)
-        if (state.$2.workspaceIds['${stack.id}/${workspace.id}']
-            case final opaque?)
-          {'id': opaque, 'name': workspace.name},
+        if (workspace.isDiscovered)
+          if (state.$2.workspaceIds['${stack.id}/${workspace.id}']
+              case final opaque?)
+            _workspaceDescriptor(stackId, opaque, stack, workspace),
     ];
   }
 
-  Future<Map<String, dynamic>> createHandle({
-    required String documentId,
+  Future<Map<String, dynamic>> getConnection({
     required String identity,
     required String origin,
     required String stackId,
-    required List<String> capabilities,
-    String? workspaceId,
-    Duration duration = const Duration(minutes: 15),
+    required String workspaceId,
   }) async {
-    if (documentId.trim().isEmpty) {
-      throw const NStackException('stale_handle', 'Document was revoked.');
-    }
-    final requested = capabilities.toSet();
-    if (requested.isEmpty) {
-      throw const NStackException(
-          'invalid_request', 'At least one capability is required.');
-    }
-    final unsupported = requested.difference(nstackSupportedCapabilities);
-    if (unsupported.isNotEmpty) {
-      throw NStackException('unsupported_capability',
-          'Unsupported capability: ${unsupported.first}.');
-    }
-    if (duration <= Duration.zero || duration > const Duration(hours: 8)) {
-      throw const NStackException(
-          'invalid_request', 'Duration must be between 1 second and 8 hours.');
-    }
     final state = await _state(identity, origin);
     final internalStackId = _internalId(state.$2.stackIds, stackId);
     if (internalStackId == null) {
@@ -327,106 +271,40 @@ class NStackAccessService extends ChangeNotifier {
       throw const NStackException(
           'stack_unavailable', 'The NStack is no longer available.');
     }
-    String? internalWorkspaceId;
-    if (workspaceId != null) {
-      final scoped = <String, String>{
-        for (final entry in state.$2.workspaceIds.entries)
-          if (entry.key.startsWith('$internalStackId/')) entry.key: entry.value,
-      };
-      final internalKey = _internalId(scoped, workspaceId);
-      if (internalKey == null) {
-        throw const NStackException(
-            'not_disclosed', 'The workspace was not disclosed to this origin.');
-      }
-      internalWorkspaceId = internalKey.split('/').last;
-      if (!stack.workspaces.any((w) => w.id == internalWorkspaceId)) {
-        throw const NStackException('stack_unavailable',
-            'The disclosed workspace is no longer available.');
-      }
-    }
-    final now = _clock().toUtc();
-    final token = newNStackOpaqueId();
-    final handle = NStackCapabilityHandle(
-      handle: token,
-      documentId: documentId,
-      origin: normalizeNStackOrigin(origin),
-      identity: identity,
-      stackInternalId: stack.id,
-      stackId: stackId,
-      workspaceInternalId: internalWorkspaceId,
-      workspaceId: workspaceId,
-      capabilities: Set.unmodifiable(requested),
-      createdAt: now,
-      expiresAt: now.add(duration),
-    );
-    _handles[token] = handle;
-    notifyListeners();
-    return {
-      'handle': token,
-      'stackId': stackId,
-      if (workspaceId != null) 'workspaceId': workspaceId,
-      'capabilities': requested.toList()..sort(),
-      'expiresAt': handle.expiresAt.toIso8601String(),
-      'connection': {
-        'transport': 'https',
-        'url': stack.url,
-        if (stack.fipsEndpoint != null) ...{
-          'fipsEndpoint': stack.fipsEndpoint,
-          'peerNpub': stack.peerNpub,
-        },
-      },
+    final scoped = <String, String>{
+      for (final entry in state.$2.workspaceIds.entries)
+        if (entry.key.startsWith('$internalStackId/')) entry.key: entry.value,
     };
-  }
-
-  void revokeHandle({
-    required String documentId,
-    required String identity,
-    required String origin,
-    required String handle,
-  }) {
-    final active = _handles[handle];
-    if (active == null ||
-        active.documentId != documentId ||
-        active.identity != identity ||
-        active.origin != normalizeNStackOrigin(origin)) {
+    final internalKey = _internalId(scoped, workspaceId);
+    if (internalKey == null) {
       throw const NStackException(
-          'stale_handle', 'Capability handle is stale or revoked.');
+          'not_disclosed', 'The workspace was not disclosed to this origin.');
     }
-    _handles.remove(handle);
-    notifyListeners();
+    final internalWorkspaceId =
+        internalKey.substring(internalKey.indexOf('/') + 1);
+    final workspace = stack.workspaces
+        .where((item) => item.id == internalWorkspaceId && item.isDiscovered)
+        .firstOrNull;
+    if (workspace == null) {
+      throw const NStackException('stack_unavailable',
+          'The disclosed workspace is no longer available.');
+    }
+    return _workspaceDescriptor(stackId, workspaceId, stack, workspace);
   }
 
-  void revokeDocument(String documentId) {
-    final before = _handles.length;
-    _handles.removeWhere((_, value) => value.documentId == documentId);
-    if (_handles.length != before) notifyListeners();
-  }
-
-  void revokeFromManagement(String handle) {
-    if (_handles.remove(handle) != null) notifyListeners();
-  }
+  // Kept as no-ops while native callers migrate away from the earlier handle
+  // model. Document/origin validation is enforced by the browser dispatcher.
+  void revokeDocument(String documentId) {}
 
   Future<void> revokeOrigin(String identity, String origin) async {
     final normalized = normalizeNStackOrigin(origin);
     await grantStore.revokeOrigin(identity, normalized);
-    final before = _handles.length;
-    _handles.removeWhere(
-        (_, value) => value.identity == identity && value.origin == normalized);
-    if (_handles.length != before) notifyListeners();
+    notifyListeners();
   }
 
-  void revokeIdentity(String identity) {
-    final before = _handles.length;
-    _handles.removeWhere((_, value) => value.identity == identity);
-    if (_handles.length != before) notifyListeners();
-  }
+  void revokeIdentity(String identity) {}
 
-  void revokeStack(String stackInternalId) {
-    final before = _handles.length;
-    _handles
-        .removeWhere((_, value) => value.stackInternalId == stackInternalId);
-    if (_handles.length != before) notifyListeners();
-  }
+  void revokeStack(String stackInternalId) {}
 
   Future<(NStackRegistry, NStackDiscoveryGrant)> _state(
       String identity, String origin) async {
@@ -438,11 +316,6 @@ class NStackAccessService extends ChangeNotifier {
           'not_disclosed', 'Request NStack discovery first.');
     }
     return (await registryStore.load(identity), grant);
-  }
-
-  void _pruneExpired() {
-    final now = _clock().toUtc();
-    _handles.removeWhere((_, value) => !value.expiresAt.isAfter(now));
   }
 
   void _requireIdentity(String identity) {
@@ -460,6 +333,27 @@ class NStackAccessService extends ChangeNotifier {
     return normalized;
   }
 }
+
+Map<String, dynamic> _workspaceDescriptor(
+  String stackAlias,
+  String workspaceAlias,
+  NStackEntry stack,
+  NStackWorkspace workspace,
+) =>
+    {
+      'id': workspaceAlias,
+      'name': workspace.name,
+      'workspaceId': workspace.remoteId,
+      'workspaceOwnerNpub': workspace.workspaceOwnerNpub,
+      'workspaceServiceNpub': workspace.workspaceServiceNpub,
+      'directHttpsUrl': workspace.directHttpsUrl ?? stack.url,
+      if (workspace.serviceNpub != null) 'serviceNpub': workspace.serviceNpub,
+      'nstack': {
+        'id': stackAlias,
+        'name': stack.name,
+        'url': stack.url,
+      },
+    };
 
 String? _internalId(Map<String, String> ids, String opaque) {
   for (final entry in ids.entries) {
