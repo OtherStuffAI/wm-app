@@ -5,6 +5,10 @@ import '../browser/browser_bookmark_store.dart';
 const nstackProtocolVersion = 1;
 const nstackRecoveryHintKind = 30078;
 const nstackRecoveryHintDTag = 'org.wingman.nbrowser.settings.v1';
+const nbrowserAppNamespaceDerivation =
+    'sha256:utf8:org.wingman.nbrowser.app-namespace.v1';
+const nbrowserAppNpub =
+    'npub12xnf0axznkv5uqnym9mk2s7emt6nxhz32trkjn70tdqt6ah9quws20ygx8';
 
 class NStackWorkspace {
   const NStackWorkspace({
@@ -16,6 +20,7 @@ class NStackWorkspace {
     this.workspaceServiceNpub,
     this.directHttpsUrl,
     this.serviceNpub,
+    this.membershipRole,
   });
 
   final String id;
@@ -26,9 +31,19 @@ class NStackWorkspace {
   final String? workspaceServiceNpub;
   final String? directHttpsUrl;
   final String? serviceNpub;
+  final String? membershipRole;
 
   bool get isDiscovered =>
       workspaceOwnerNpub != null && workspaceServiceNpub != null;
+
+  bool get supportsBackup =>
+      isDiscovered &&
+      isWorkspaceUuid(remoteId) &&
+      directHttpsUrl != null &&
+      membershipRole != null;
+
+  bool get canManageBackupNamespace =>
+      const {'owner', 'manager', 'admin'}.contains(membershipRole);
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -39,6 +54,7 @@ class NStackWorkspace {
         'workspace_service_npub': workspaceServiceNpub,
         'direct_https_url': directHttpsUrl,
         'service_npub': serviceNpub,
+        'membership_role': membershipRole,
       };
 
   static NStackWorkspace? tryParse(Object? value) {
@@ -54,6 +70,9 @@ class NStackWorkspace {
     final workspaceService = _optionalNpub(value['workspace_service_npub']);
     final directUrl = canonicalNStackUrl(value['direct_https_url']?.toString());
     final service = _optionalNpub(value['service_npub']);
+    final membershipRole = value['membership_role'] == null
+        ? null
+        : _bounded(value: value['membership_role'], maximum: 32);
     final hasDiscoveryMetadata = value['workspace_owner_npub'] != null ||
         value['workspace_service_npub'] != null ||
         value['stable_remote_id'] != null ||
@@ -78,6 +97,49 @@ class NStackWorkspace {
       workspaceServiceNpub: workspaceService,
       directHttpsUrl: directUrl,
       serviceNpub: service,
+      membershipRole: membershipRole,
+    );
+  }
+}
+
+class NStackBackupDestination {
+  const NStackBackupDestination({
+    required this.stackId,
+    required this.workspaceId,
+    required this.workspaceRemoteId,
+    required this.workspaceOwnerNpub,
+  });
+
+  final String stackId;
+  final String workspaceId;
+  final String workspaceRemoteId;
+  final String workspaceOwnerNpub;
+
+  Map<String, dynamic> toJson() => {
+        'stack_id': stackId,
+        'workspace_id': workspaceId,
+        'workspace_remote_id': workspaceRemoteId,
+        'workspace_owner_npub': workspaceOwnerNpub,
+      };
+
+  static NStackBackupDestination? tryParse(Object? value) {
+    if (value is! Map<String, dynamic>) return null;
+    final stackId = _nonEmpty(value['stack_id']);
+    final workspaceId = _nonEmpty(value['workspace_id']);
+    final remoteId = _nonEmpty(value['workspace_remote_id']);
+    final owner = _optionalNpub(value['workspace_owner_npub']);
+    if (stackId == null ||
+        workspaceId == null ||
+        remoteId == null ||
+        !isWorkspaceUuid(remoteId) ||
+        owner == null) {
+      return null;
+    }
+    return NStackBackupDestination(
+      stackId: stackId,
+      workspaceId: workspaceId,
+      workspaceRemoteId: remoteId,
+      workspaceOwnerNpub: owner,
     );
   }
 }
@@ -302,6 +364,8 @@ class NStackRegistry {
     this.revision = 0,
     this.activeStackId,
     this.hostStackId,
+    this.backupDestination,
+    this.backupDestinationMigrationVersion = 0,
     this.stacks = const [],
   });
 
@@ -309,10 +373,32 @@ class NStackRegistry {
   final int revision;
   final String? activeStackId;
   final String? hostStackId;
+  final NStackBackupDestination? backupDestination;
+  final int backupDestinationMigrationVersion;
   final List<NStackEntry> stacks;
 
   NStackEntry? get activeStack => _byId(activeStackId);
   NStackEntry? get hostStack => _byId(hostStackId);
+
+  NStackEntry? get backupStack => _byId(backupDestination?.stackId);
+
+  NStackWorkspace? get backupWorkspace {
+    final destination = backupDestination;
+    final stack = backupStack;
+    if (destination == null || stack == null) return null;
+    for (final workspace in stack.workspaces) {
+      if (workspace.id == destination.workspaceId &&
+          workspace.remoteId == destination.workspaceRemoteId &&
+          workspace.workspaceOwnerNpub == destination.workspaceOwnerNpub) {
+        return workspace;
+      }
+    }
+    return null;
+  }
+
+  bool get backupDestinationAvailable =>
+      backupWorkspace?.supportsBackup == true &&
+      backupStack?.workspaceDiscovery?.stale != true;
 
   NStackEntry? _byId(String? id) {
     if (id == null) return null;
@@ -327,6 +413,9 @@ class NStackRegistry {
     bool clearActive = false,
     String? hostStackId,
     bool clearHost = false,
+    NStackBackupDestination? backupDestination,
+    bool clearBackupDestination = false,
+    int? backupDestinationMigrationVersion,
     List<NStackEntry>? stacks,
   }) {
     final nextStacks = stacks ?? this.stacks;
@@ -338,6 +427,11 @@ class NStackRegistry {
       activeStackId:
           valid(clearActive ? null : activeStackId ?? this.activeStackId),
       hostStackId: valid(clearHost ? null : hostStackId ?? this.hostStackId),
+      backupDestination: clearBackupDestination
+          ? null
+          : backupDestination ?? this.backupDestination,
+      backupDestinationMigrationVersion: backupDestinationMigrationVersion ??
+          this.backupDestinationMigrationVersion,
       stacks: List.unmodifiable(nextStacks),
     );
   }
@@ -348,6 +442,9 @@ class NStackRegistry {
         'revision': revision,
         'active_stack_id': activeStackId,
         'host_stack_id': hostStackId,
+        'backup_destination': backupDestination?.toJson(),
+        'backup_destination_migration_version':
+            backupDestinationMigrationVersion,
         'stacks': [for (final stack in stacks) stack.toJson()],
       };
 
@@ -367,14 +464,23 @@ class NStackRegistry {
     }
     final active = _nonEmpty(value['active_stack_id']);
     final host = _nonEmpty(value['host_stack_id']);
+    final backupDestination = value['backup_destination'] == null
+        ? null
+        : NStackBackupDestination.tryParse(value['backup_destination']);
+    final migrationVersion = value['backup_destination_migration_version'];
     if ((active != null && !seen.contains(active)) ||
-        (host != null && !seen.contains(host))) {
+        (host != null && !seen.contains(host)) ||
+        (value['backup_destination'] != null && backupDestination == null) ||
+        (migrationVersion != null && migrationVersion is! int)) {
       return null;
     }
     return NStackRegistry(
       revision: value['revision'] is int ? value['revision'] as int : 0,
       activeStackId: active,
       hostStackId: host,
+      backupDestination: backupDestination,
+      backupDestinationMigrationVersion:
+          migrationVersion is int ? migrationVersion : 0,
       stacks: List.unmodifiable(stacks),
     );
   }
@@ -387,6 +493,10 @@ class NStackRegistry {
     }
   }
 }
+
+bool isWorkspaceUuid(String value) => RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+    ).hasMatch(value);
 
 String? canonicalNStackUrl(String? value) {
   final raw = value?.trim() ?? '';

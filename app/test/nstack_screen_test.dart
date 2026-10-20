@@ -23,6 +23,8 @@ void main() {
 
   testWidgets('management surface shows host and revokes origin discovery',
       (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     const identity = 'npub-test';
     final registry = NStackRegistryStore();
     await registry.addOrUpdate(
@@ -79,6 +81,116 @@ void main() {
     expect(await grants.list(identity), isEmpty);
     expect(find.text('No websites can discover saved connections.'),
         findsOneWidget);
+  });
+
+  testWidgets(
+      'backup workspace is explicit, changeable and reports manager enablement',
+      (tester) async {
+    final identity = NostrCrypto.importIdentity(_identitySecret);
+    final registry = NStackRegistryStore();
+    await registry.addOrUpdate(
+      identity.npub,
+      _backupStackWithTwoWorkspaces.copyWith(
+        workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+          lastAttemptAt: DateTime.utc(2026, 10, 20),
+          lastSuccessAt: DateTime.utc(2026, 10, 20),
+          stale: false,
+        ),
+      ),
+      makeActive: true,
+    );
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: NStackScreen(
+          config: AppConfig.defaults().copyWith(
+            deviceNpub: identity.npub,
+            devicePublicKeyHex: identity.publicKeyHex,
+            deviceSecret: _identitySecret,
+          ),
+          registryStore: registry,
+          grantStore: grants,
+          accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+              registryStore: registry, discovery: _NoDiscovery()),
+          recoveryService: NStackRecoveryService(
+            registryStore: registry,
+            storage: _NamespaceStorage(),
+            relay: _NoRelay(),
+          ),
+          onRegistryChanged: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<RadioGroup<String>>(find.byType(RadioGroup<String>))
+            .groupValue,
+        isNull);
+    expect((await registry.load(identity.npub)).backupDestination, isNull,
+        reason: 'the first discovered workspace must never be implicit');
+
+    final second =
+        find.byKey(const ValueKey('backup-workspace-stack-a-workspace-b'));
+    expect(second, findsOneWidget);
+    await tester.tap(second);
+    await tester.pumpAndSettle();
+    expect(find.text('Backup destination: Personal NStack · Operations'),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-namespace-manager-required')),
+        findsOneWidget);
+    expect((await registry.load(identity.npub)).backupDestination?.workspaceId,
+        'workspace-b');
+
+    final first =
+        find.byKey(const ValueKey('backup-workspace-stack-a-workspace-a'));
+    expect(first, findsOneWidget);
+    await tester.tap(first);
+    await tester.pumpAndSettle();
+    expect((await registry.load(identity.npub)).backupDestination?.workspaceId,
+        'workspace-a');
+  });
+
+  testWidgets('removed selected destination remains visible as unavailable',
+      (tester) async {
+    final identity = NostrCrypto.importIdentity(_identitySecret);
+    final registry = NStackRegistryStore();
+    await registry.addOrUpdate(identity.npub, _backupStackA, makeActive: true);
+    await registry.selectBackupDestination(identity.npub,
+        stackId: 'stack-a', workspaceId: 'workspace-a');
+    await registry.remove(identity.npub, 'stack-a');
+    final grants = NStackGrantStore();
+    final access =
+        NStackAccessService(registryStore: registry, grantStore: grants);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: NStackScreen(
+          config: AppConfig.defaults().copyWith(
+            deviceNpub: identity.npub,
+            devicePublicKeyHex: identity.publicKeyHex,
+            deviceSecret: _identitySecret,
+          ),
+          registryStore: registry,
+          grantStore: grants,
+          accessService: access,
+          discoveryService: NStackWorkspaceDiscoveryService(
+              registryStore: registry, discovery: _NoDiscovery()),
+          recoveryService: NStackRecoveryService(
+              registryStore: registry,
+              storage: _NoStorage(),
+              relay: _NoRelay()),
+          onRegistryChanged: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup-destination-unavailable')),
+        findsOneWidget);
+    expect((await registry.load(identity.npub)).backupDestination?.stackId,
+        'stack-a');
   });
 
   testWidgets('add flow asks only for address and shows discovered empty state',
@@ -355,21 +467,21 @@ class _EmptyDiscovery implements NStackWorkspaceDiscovery {
 
 class _NoStorage implements NStackStorageClient {
   @override
-  Future<List<int>> fetch(
-          {required String hostUrl,
-          required String objectId,
-          required String secret,
-          required String expectedSha256}) =>
-      throw UnimplementedError();
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
+class _NamespaceStorage implements NStackStorageClient {
+  @override
+  Future<NStackBackupNamespaceState> namespaceState(
+          {required NStackBackupTarget target, required String secret}) async =>
+      NStackBackupNamespaceState.managerRequired;
 
   @override
-  Future<String> upload(
-          {required String hostUrl,
-          required String ownerNpub,
-          required String secret,
-          required List<int> bytes,
-          required String sha256}) =>
-      throw UnimplementedError();
+  Future<void> enableNamespace(
+      {required NStackBackupTarget target, required String secret}) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }
 
 class _NoRelay implements NStackRecoveryRelay {
@@ -384,3 +496,55 @@ class _NoRelay implements NStackRecoveryRelay {
   Future<NStackRelayPublishResult> publish(Map<String, dynamic> event) =>
       throw UnimplementedError();
 }
+
+const _identitySecret =
+    '0000000000000000000000000000000000000000000000000000000000000001';
+const _workspaceOwner =
+    'npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d';
+const _backupStackA = NStackEntry(
+  id: 'stack-a',
+  name: 'Personal NStack',
+  url: 'https://personal.example',
+  workspaces: [
+    NStackWorkspace(
+      id: 'workspace-a',
+      name: 'Home',
+      remoteId: '11111111-1111-4111-8111-111111111111',
+      stableRemoteId: '11111111-1111-4111-8111-111111111111',
+      workspaceOwnerNpub: _workspaceOwner,
+      workspaceServiceNpub: _workspaceOwner,
+      directHttpsUrl: 'https://personal.example',
+      serviceNpub: _workspaceOwner,
+      membershipRole: 'owner',
+    ),
+  ],
+);
+const _backupStackWithTwoWorkspaces = NStackEntry(
+  id: 'stack-a',
+  name: 'Personal NStack',
+  url: 'https://personal.example',
+  workspaces: [
+    NStackWorkspace(
+      id: 'workspace-a',
+      name: 'Home',
+      remoteId: '11111111-1111-4111-8111-111111111111',
+      stableRemoteId: '11111111-1111-4111-8111-111111111111',
+      workspaceOwnerNpub: _workspaceOwner,
+      workspaceServiceNpub: _workspaceOwner,
+      directHttpsUrl: 'https://personal.example',
+      serviceNpub: _workspaceOwner,
+      membershipRole: 'owner',
+    ),
+    NStackWorkspace(
+      id: 'workspace-b',
+      name: 'Operations',
+      remoteId: '22222222-2222-4222-8222-222222222222',
+      stableRemoteId: '22222222-2222-4222-8222-222222222222',
+      workspaceOwnerNpub: _workspaceOwner,
+      workspaceServiceNpub: _workspaceOwner,
+      directHttpsUrl: 'https://personal.example',
+      serviceNpub: _workspaceOwner,
+      membershipRole: 'manager',
+    ),
+  ],
+);

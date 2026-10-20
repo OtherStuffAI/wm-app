@@ -45,6 +45,57 @@ void main() {
         reason: 'migration must retain the legacy record byte-for-byte');
   });
 
+  test(
+      'legacy host migrates once only when exactly one workspace is accessible',
+      () async {
+    const identity = 'npub-legacy-one';
+    final legacy = NStackRegistry(
+      revision: 4,
+      hostStackId: 'legacy-host',
+      stacks: [_backupStack('legacy-host', 'workspace-a', _workspaceA)],
+    );
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.withData({
+      '${NStackRegistryStore.keyPrefix}$identity': jsonEncode(legacy.toJson()),
+    });
+    final migrated = await NStackRegistryStore().load(identity);
+    expect(migrated.backupDestination?.stackId, 'legacy-host');
+    expect(migrated.backupDestination?.workspaceRemoteId, _workspaceA);
+    expect(migrated.backupDestinationMigrationVersion, 1);
+  });
+
+  test('ambiguous legacy host requires selection and is never retried silently',
+      () async {
+    const identity = 'npub-legacy-many';
+    final stack = _backupStack('legacy-host', 'workspace-a', _workspaceA,
+        extraWorkspace: const NStackWorkspace(
+          id: 'workspace-b',
+          name: 'Second',
+          remoteId: _workspaceB,
+          stableRemoteId: _workspaceB,
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+          membershipRole: 'member',
+        ));
+    final legacy = NStackRegistry(
+        revision: 2, hostStackId: 'legacy-host', stacks: [stack]);
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.withData({
+      '${NStackRegistryStore.keyPrefix}$identity': jsonEncode(legacy.toJson()),
+    });
+    final store = NStackRegistryStore();
+    final migrated = await store.load(identity);
+    expect(migrated.backupDestination, isNull);
+    expect(migrated.backupDestinationMigrationVersion, 1);
+    await store.addOrUpdate(
+      identity,
+      _backupStack('legacy-host', 'workspace-a', _workspaceA),
+    );
+    expect((await store.load(identity)).backupDestination, isNull,
+        reason: 'a later single workspace must not become an implicit choice');
+  });
+
   test('origin consent exposes aliases and safe connection descriptors only',
       () async {
     const identity = 'npub-identity';
@@ -201,4 +252,28 @@ NStackEntry _stack(String id, String name) => NStackEntry(
         lastSuccessAt: DateTime.utc(2026, 10, 19),
         stale: false,
       ),
+    );
+
+const _workspaceA = '11111111-1111-4111-8111-111111111111';
+const _workspaceB = '22222222-2222-4222-8222-222222222222';
+
+NStackEntry _backupStack(String stackId, String workspaceId, String remoteId,
+        {NStackWorkspace? extraWorkspace}) =>
+    NStackEntry(
+      id: stackId,
+      name: 'Legacy host',
+      url: 'https://tower.example',
+      workspaces: [
+        NStackWorkspace(
+          id: workspaceId,
+          name: 'Main',
+          remoteId: remoteId,
+          stableRemoteId: remoteId,
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+          membershipRole: 'owner',
+        ),
+        if (extraWorkspace != null) extraWorkspace,
+      ],
     );

@@ -40,6 +40,8 @@ class _NStackScreenState extends State<NStackScreen> {
   bool _busy = false;
   String? _refreshingStackId;
   String? _message;
+  NStackBackupNamespaceState? _namespaceState;
+  String? _namespaceDestinationKey;
   int _identityEpoch = 0;
 
   @override
@@ -70,6 +72,8 @@ class _NStackScreenState extends State<NStackScreen> {
         _busy = false;
         _refreshingStackId = null;
         _message = null;
+        _namespaceState = null;
+        _namespaceDestinationKey = null;
       });
       unawaited(_load());
     }
@@ -97,68 +101,87 @@ class _NStackScreenState extends State<NStackScreen> {
       _grants = grants;
       _status = status;
     });
+    final destination = registry.backupDestination;
+    final destinationKey = destination == null
+        ? null
+        : '${destination.stackId}:${destination.workspaceId}';
+    if (destinationKey != null &&
+        registry.backupDestinationAvailable &&
+        widget.config.hasDeviceSecret &&
+        _namespaceDestinationKey != destinationKey) {
+      _namespaceDestinationKey = destinationKey;
+      unawaited(_checkNamespace());
+    } else if (destinationKey == null || !registry.backupDestinationAvailable) {
+      _namespaceDestinationKey = destinationKey;
+      _namespaceState = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text('NStacks',
-                  style: Theme.of(context).textTheme.headlineMedium),
-            ),
-            FilledButton.icon(
-              key: const ValueKey('add-nstack'),
-              onPressed: _busy || !widget.config.hasDeviceSecret
-                  ? null
-                  : () => _editStack(),
-              icon: const Icon(Icons.add),
-              label: const Text('Add NStack'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          widget.config.hasDeviceSecret
-              ? 'Workspace discovery is signed by NBrowser’s active, unlocked '
-                  'identity (${widget.config.deviceNpub}). A website login inside '
-                  'a tab does not change this identity. Websites see nothing '
-                  'beyond the window.NStack version until you approve discovery.'
-              : 'Unlock NBrowser’s active Nostr identity to add or refresh an '
-                  'NStack. A website login inside a tab does not select the '
-                  'discovery identity.',
-          key: const ValueKey('nstack-discovery-identity'),
-        ),
-        const SizedBox(height: 18),
-        if (_registry.stacks.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.dns_outlined),
-              title: Text('No NStacks yet'),
-              subtitle:
-                  Text('Add one to enable discovery and encrypted backup.'),
-            ),
+    return RadioGroup<String>(
+      groupValue: _registry.backupDestination == null
+          ? null
+          : '${_registry.backupDestination!.stackId}:${_registry.backupDestination!.workspaceId}',
+      onChanged: _selectBackupValue,
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('NStacks',
+                    style: Theme.of(context).textTheme.headlineMedium),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('add-nstack'),
+                onPressed: _busy || !widget.config.hasDeviceSecret
+                    ? null
+                    : () => _editStack(),
+                icon: const Icon(Icons.add),
+                label: const Text('Add NStack'),
+              ),
+            ],
           ),
-        if (_busy) const LinearProgressIndicator(),
-        for (final stack in _registry.stacks) _stackCard(stack),
-        const SizedBox(height: 18),
-        _recoveryCard(),
-        const SizedBox(height: 18),
-        _accessCard(),
-        if (_message != null) ...[
-          const SizedBox(height: 14),
-          Text(_message!, key: const ValueKey('nstack-message')),
+          const SizedBox(height: 8),
+          Text(
+            widget.config.hasDeviceSecret
+                ? 'Workspace discovery is signed by NBrowser’s active, unlocked '
+                    'identity (${widget.config.deviceNpub}). A website login inside '
+                    'a tab does not change this identity. Websites see nothing '
+                    'beyond the window.NStack version until you approve discovery.'
+                : 'Unlock NBrowser’s active Nostr identity to add or refresh an '
+                    'NStack. A website login inside a tab does not select the '
+                    'discovery identity.',
+            key: const ValueKey('nstack-discovery-identity'),
+          ),
+          const SizedBox(height: 18),
+          if (_registry.stacks.isEmpty)
+            const Card(
+              child: ListTile(
+                leading: Icon(Icons.dns_outlined),
+                title: Text('No NStacks yet'),
+                subtitle:
+                    Text('Add one to enable discovery and encrypted backup.'),
+              ),
+            ),
+          if (_busy) const LinearProgressIndicator(),
+          for (final stack in _registry.stacks) _stackCard(stack),
+          const SizedBox(height: 18),
+          _recoveryCard(),
+          const SizedBox(height: 18),
+          _accessCard(),
+          if (_message != null) ...[
+            const SizedBox(height: 14),
+            Text(_message!, key: const ValueKey('nstack-message')),
+          ],
         ],
-      ],
+      ),
     );
   }
 
   Widget _stackCard(NStackEntry stack) {
     final active = _registry.activeStackId == stack.id;
-    final host = _registry.hostStackId == stack.id;
     return Card(
       key: ValueKey('nstack-${stack.id}'),
       child: Padding(
@@ -166,7 +189,7 @@ class _NStackScreenState extends State<NStackScreen> {
         child: Column(
           children: [
             ListTile(
-              leading: Icon(host ? Icons.home_work : Icons.dns_outlined),
+              leading: const Icon(Icons.dns_outlined),
               title: Text(stack.name),
               subtitle:
                   Text('${stack.url}\n${stack.workspaces.length} workspace(s)'),
@@ -226,10 +249,25 @@ class _NStackScreenState extends State<NStackScreen> {
             else
               for (final workspace in stack.workspaces)
                 ListTile(
+                  key: ValueKey('backup-workspace-${stack.id}-${workspace.id}'),
                   dense: true,
-                  leading: const Icon(Icons.workspaces_outline),
+                  leading: Radio<String>(
+                    value: '${stack.id}:${workspace.id}',
+                    enabled: !_busy &&
+                        workspace.supportsBackup &&
+                        stack.workspaceDiscovery?.stale != true,
+                  ),
                   title: Text(workspace.name),
-                  subtitle: Text(workspace.remoteId),
+                  subtitle: Text(
+                    workspace.supportsBackup
+                        ? '${stack.name} · ${workspace.remoteId}'
+                        : '${stack.name} · unavailable for workspace backup',
+                  ),
+                  onTap: _busy ||
+                          !workspace.supportsBackup ||
+                          stack.workspaceDiscovery?.stale == true
+                      ? null
+                      : () => _selectBackupDestination(stack, workspace),
                 ),
             ListTile(
               leading: Icon(active
@@ -244,19 +282,6 @@ class _NStackScreenState extends State<NStackScreen> {
                       await _load();
                     },
               title: const Text('Use browser links and preferences'),
-            ),
-            CheckboxListTile(
-              value: host,
-              onChanged: _busy
-                  ? null
-                  : (value) async {
-                      await widget.registryStore.selectHost(
-                        widget.config.deviceNpub,
-                        value == true ? stack.id : null,
-                      );
-                      await _load();
-                    },
-              title: const Text('Host encrypted NBrowser backup'),
             ),
             if (active)
               Align(
@@ -276,6 +301,10 @@ class _NStackScreenState extends State<NStackScreen> {
   Widget _recoveryCard() {
     final published = _status?['last_published_at']?.toString();
     final restored = _status?['last_restored_at']?.toString();
+    final destination = _registry.backupDestination;
+    final backupStack = _registry.backupStack;
+    final backupWorkspace = _registry.backupWorkspace;
+    final destinationAvailable = _registry.backupDestinationAvailable;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -286,9 +315,40 @@ class _NStackScreenState extends State<NStackScreen> {
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             const Text(
-              'The host stores only NIP-44 ciphertext. A signed, self-encrypted '
-              'Nostr hint points to the exact object and hash.',
+              'The selected workspace stores only NIP-44 ciphertext and a private '
+              'NBrowser pointer row. A self-encrypted Nostr hint is supplementary.',
             ),
+            const SizedBox(height: 8),
+            if (destination == null)
+              const Text(
+                  'Choose one workspace above as the backup destination.',
+                  key: ValueKey('backup-destination-missing'))
+            else if (!destinationAvailable)
+              Text(
+                'Selected destination unavailable: ${backupStack?.name ?? 'removed NStack'} · '
+                '${backupWorkspace?.name ?? destination.workspaceRemoteId}. Refresh access or choose another workspace.',
+                key: const ValueKey('backup-destination-unavailable'),
+              )
+            else
+              Text(
+                'Backup destination: ${backupStack!.name} · ${backupWorkspace!.name}',
+                key: const ValueKey('backup-destination-selected'),
+              ),
+            if (_namespaceState ==
+                NStackBackupNamespaceState.managerRequired) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'A workspace manager must enable NBrowser backup for this workspace.',
+                key: ValueKey('backup-namespace-manager-required'),
+              ),
+              if (backupWorkspace?.canManageBackupNamespace == true)
+                TextButton.icon(
+                  key: const ValueKey('enable-nbrowser-backup-namespace'),
+                  onPressed: _busy ? null : _enableNamespace,
+                  icon: const Icon(Icons.admin_panel_settings_outlined),
+                  label: const Text('Enable NBrowser backup'),
+                ),
+            ],
             if (published != null) Text('Last published: $published'),
             if (restored != null) Text('Last restored: $restored'),
             const SizedBox(height: 12),
@@ -300,7 +360,9 @@ class _NStackScreenState extends State<NStackScreen> {
                   key: const ValueKey('publish-nstack-backup'),
                   onPressed: _busy ||
                           !widget.config.hasDeviceSecret ||
-                          _registry.hostStack == null
+                          !destinationAvailable ||
+                          _namespaceState ==
+                              NStackBackupNamespaceState.managerRequired
                       ? null
                       : _publish,
                   icon: const Icon(Icons.cloud_upload_outlined),
@@ -308,8 +370,13 @@ class _NStackScreenState extends State<NStackScreen> {
                 ),
                 OutlinedButton.icon(
                   key: const ValueKey('recover-nstack-backup'),
-                  onPressed:
-                      _busy || !widget.config.hasDeviceSecret ? null : _recover,
+                  onPressed: _busy ||
+                          !widget.config.hasDeviceSecret ||
+                          !destinationAvailable ||
+                          _namespaceState ==
+                              NStackBackupNamespaceState.managerRequired
+                      ? null
+                      : _recover,
                   icon: const Icon(Icons.restore),
                   label: const Text('Find recovery'),
                 ),
@@ -355,6 +422,64 @@ class _NStackScreenState extends State<NStackScreen> {
       ),
     );
   }
+
+  Future<void> _selectBackupDestination(
+      NStackEntry stack, NStackWorkspace workspace) async {
+    await _run(() async {
+      await widget.registryStore.selectBackupDestination(
+        widget.config.deviceNpub,
+        stackId: stack.id,
+        workspaceId: workspace.id,
+      );
+      _namespaceDestinationKey = null;
+      _namespaceState = null;
+      _message =
+          'Backup destination selected: ${stack.name} · ${workspace.name}.';
+    });
+  }
+
+  void _selectBackupValue(String? value) {
+    if (value == null || _busy) return;
+    for (final stack in _registry.stacks) {
+      for (final workspace in stack.workspaces) {
+        if (value == '${stack.id}:${workspace.id}' &&
+            workspace.supportsBackup &&
+            stack.workspaceDiscovery?.stale != true) {
+          unawaited(_selectBackupDestination(stack, workspace));
+          return;
+        }
+      }
+    }
+  }
+
+  Future<void> _checkNamespace() async {
+    final identityEpoch = _identityEpoch;
+    try {
+      final state = await widget.recoveryService.namespaceState(
+        identityNpub: widget.config.deviceNpub,
+        secret: widget.config.deviceSecret,
+      );
+      if (mounted && identityEpoch == _identityEpoch) {
+        setState(() => _namespaceState = state);
+      }
+    } catch (error) {
+      if (mounted && identityEpoch == _identityEpoch) {
+        setState(() {
+          _namespaceState = null;
+          _message = error.toString().replaceFirst('Bad state: ', '');
+        });
+      }
+    }
+  }
+
+  Future<void> _enableNamespace() => _run(() async {
+        await widget.recoveryService.enableNamespace(
+          identityNpub: widget.config.deviceNpub,
+          secret: widget.config.deviceSecret,
+        );
+        _namespaceState = NStackBackupNamespaceState.enabled;
+        _message = 'NBrowser backup enabled for the selected workspace.';
+      });
 
   Future<void> _editStack([NStackEntry? existing]) async {
     final address = await showDialog<String>(

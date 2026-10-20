@@ -195,21 +195,52 @@ cache, and unrelated application settings. Existing identity-scoped v1 browser
 links are copied into the first active NStack once and retained in their legacy
 record for rollback.
 
-NBrowser self-encrypts the canonical snapshot with NIP-44 v2, then uses Tower's
-existing immutable private object flow: signed prepare, signed upload,
-hash-checked complete, and signed metadata/content fetch. A signed parameterized
-replaceable kind `30078` event uses the stable `d` tag
-`org.wingman.nbrowser.settings.v1`. Its NIP-44 self-encrypted content contains
-only the host URL, optional workspace identifier, exact object UUID and SHA-256,
-snapshot schema/revision/time, and recovery relay URLs.
+The user explicitly chooses one discovered Flight Deck workspace across all
+saved NStacks. NBrowser persists that destination per unlocked identity as the
+stable local NStack alias plus the local and remote workspace identities and
+the discovered workspace owner npub. Refresh, removal, stale discovery, or
+membership loss never substitutes another workspace. A legacy `host_stack_id`
+is migrated once only when that stack still has exactly one accessible Flight
+Deck workspace; ambiguous or unavailable legacy state requires a user choice.
 
-Recovery accepts only an exactly authored, correctly signed kind-30078 event
-with that `d` tag. It decrypts and validates the pointer, retrieves that exact
-private object, checks Tower metadata and the downloaded bytes against the
-expected hash, decrypts and validates the identity/schema/revision, then shows a
-preview. The local registry is a single-record atomic replacement only after
-explicit confirmation. Any missing, malformed, stale/conflicting, undecryptable,
-or tampered input leaves current settings untouched.
+The public NBrowser namespace is
+`npub12xnf0axznkv5uqnym9mk2s7emt6nxhz32trkjn70tdqt6ah9quws20ygx8`.
+It is the Bech32 `npub` encoding of the 32-byte SHA-256 digest of UTF-8
+`org.wingman.nbrowser.app-namespace.v1` (digest
+`51a697f4c29d994e0264d9776543d9daf5335c5152c7694fcf5b40bd76e5071d`).
+This is a deterministic release namespace identifier, not a signer identity;
+no corresponding secret is generated, embedded, stored, or used by NBrowser.
+
+A workspace manager enables the namespace with capabilities
+`storage.private` and `app_rows.private_only`. Missing or disabled registration
+is shown explicitly. An ordinary member is told to ask a workspace manager;
+NBrowser does not retry or degrade to host-level storage.
+
+NBrowser self-encrypts the canonical snapshot with NIP-44 v2, then prepares it
+through
+`POST /api/v4/flightdeck-pg/workspaces/{workspaceId}/storage/prepare` without
+legacy owner/group fields. It uses the existing freshly signed upload,
+hash-checked complete, metadata, and content routes. The authoritative pointer
+is the signing human's private `current-v1` row in collection
+`settings-backups` under the public NBrowser namespace. Every app-row response
+must bind to the selected workspace UUID and discovered workspace-owner npub.
+
+A signed parameterized replaceable kind `30078` event still uses the stable `d`
+tag `org.wingman.nbrowser.settings.v1`. Its NIP-44 self-encrypted content
+contains only the selected host/workspace binding, exact object UUID and
+SHA-256, snapshot schema/revision/time, and recovery relay URLs. The hint is
+supplementary: recovery reads the selected workspace's private row first, and
+an absent, legacy, malformed, or inconsistent hint can never override that
+selection.
+
+Recovery validates the private row's workspace, object, hash, status, revision,
+and timestamp, retrieves that exact private object, checks Tower metadata and
+downloaded bytes, decrypts and validates identity/schema/revision locally, then
+shows a preview. Old version-1 snapshots and optional old hint fields remain
+parseable. The local registry is a single-record atomic replacement only after
+explicit confirmation. Any missing namespace, lost membership, unavailable
+destination, mismatched response, malformed row, undecryptable snapshot, or
+tampered input leaves current settings untouched.
 
 Automated tests use fake storage and relays; they never publish real events.
 The manual fixture is [`app/web/nstack-test.html`](../app/web/nstack-test.html).

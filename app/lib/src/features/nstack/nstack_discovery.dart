@@ -345,6 +345,10 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
     final owner = _validNpub(identity['workspace_owner_npub']);
     final workspaceService = _validNpub(identity['workspace_service_npub']);
     final service = _validNpub(identity['tower_service_npub']);
+    final membership = raw['membership'];
+    final membershipRole = membership is Map<String, dynamic>
+        ? _safeText(membership['role'], 32)
+        : null;
     final v4WorkspaceId = raw['v4_workspace_id'] == null
         ? null
         : _safeText(raw['v4_workspace_id'], 128);
@@ -358,6 +362,7 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
         owner == null ||
         workspaceService == null ||
         service == null ||
+        membershipRole == null ||
         (raw['v4_workspace_id'] != null && v4WorkspaceId == null)) {
       omitted++;
       continue;
@@ -381,6 +386,7 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
         workspaceServiceNpub: workspaceService,
         directHttpsUrl: directUrl,
         serviceNpub: service,
+        membershipRole: membershipRole,
       ),
     ));
   }
