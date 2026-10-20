@@ -5,10 +5,11 @@ import '../browser/browser_bookmark_store.dart';
 const nstackProtocolVersion = 1;
 const nstackRecoveryHintKind = 30078;
 const nstackRecoveryHintDTag = 'org.wingman.nbrowser.settings.v1';
+const nbrowserAppNamespaceLabel = 'org.wingman.nbrowser.app-namespace.v1';
 const nbrowserAppNamespaceDerivation =
-    'sha256:utf8:org.wingman.nbrowser.app-namespace.v1';
+    'sha256-counter-to-secp256k1-x:$nbrowserAppNamespaceLabel:0';
 const nbrowserAppNpub =
-    'npub12xnf0axznkv5uqnym9mk2s7emt6nxhz32trkjn70tdqt6ah9quws20ygx8';
+    'npub104qc4t62zry5vrqnsevkazswgtdh87fy2vgc73sndellfnq7pa2sqrqjs0';
 
 class NStackWorkspace {
   const NStackWorkspace({

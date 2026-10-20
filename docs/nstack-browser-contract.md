@@ -204,12 +204,16 @@ is migrated once only when that stack still has exactly one accessible Flight
 Deck workspace; ambiguous or unavailable legacy state requires a user choice.
 
 The public NBrowser namespace is
-`npub12xnf0axznkv5uqnym9mk2s7emt6nxhz32trkjn70tdqt6ah9quws20ygx8`.
-It is the Bech32 `npub` encoding of the 32-byte SHA-256 digest of UTF-8
-`org.wingman.nbrowser.app-namespace.v1` (digest
-`51a697f4c29d994e0264d9776543d9daf5335c5152c7694fcf5b40bd76e5071d`).
-This is a deterministic release namespace identifier, not a signer identity;
-no corresponding secret is generated, embedded, stored, or used by NBrowser.
+`npub104qc4t62zry5vrqnsevkazswgtdh87fy2vgc73sndellfnq7pa2sqrqjs0`.
+It is derived without a secret by hashing UTF-8 candidates
+`org.wingman.nbrowser.app-namespace.v1:<counter>` with SHA-256, starting at
+decimal counter zero, and choosing the first digest whose 32-byte value lifts
+to a secp256k1 x-coordinate using the compressed even-y prefix `02`. Counter
+zero is valid, producing x-coordinate
+`7d418aaf4a10c9460c1386596e8a0e42db73f92453118f46136e7ff4cc1e0f55`,
+which is Bech32-encoded as the `npub` above. This is a deterministic release
+namespace identifier, not a signer identity; no corresponding secret is
+generated, embedded, stored, or used by NBrowser.
 
 A workspace manager enables the namespace with capabilities
 `storage.private` and `app_rows.private_only`. Missing or disabled registration
