@@ -45,6 +45,13 @@ import '../nstack/nstack_access.dart';
 import '../nstack/nstack_bridge_script.dart';
 import '../nstack/nstack_store.dart';
 
+@visibleForTesting
+bool useAndroidHomeHtmlLoader({
+  required bool isAndroid,
+  required int? nativeWebViewIdentifier,
+}) =>
+    isAndroid && nativeWebViewIdentifier != null;
+
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
     required this.config,
@@ -1742,11 +1749,12 @@ class BrowserScreenState extends State<BrowserScreen>
       if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
       final html = _homePageHtml(savedBookmarks: _visibleBookmarks);
       final nativeId = tab.nativeWebViewIdentifier;
-      if (nativeId != null) {
+      if (useAndroidHomeHtmlLoader(
+          isAndroid: Platform.isAndroid, nativeWebViewIdentifier: nativeId)) {
         // Keep Android's native current URL and document origin aligned for
         // local home actions, without weakening frame checks for web pages.
         await GraspAndroidChannel.loadHomeHtml(
-            webViewIdentifier: nativeId, html: html);
+            webViewIdentifier: nativeId!, html: html);
       } else {
         await tab.controller
             .loadHtmlString(html, baseUrl: 'https://wingman.local/');
