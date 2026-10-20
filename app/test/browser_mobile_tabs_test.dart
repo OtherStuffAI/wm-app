@@ -7,6 +7,7 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/browser_screen.dart';
 import 'package:wingman_app/src/features/browser/signer_store.dart';
+import 'package:wingman_app/src/theme/browser_theme.dart';
 
 import 'fake_webview_platform.dart';
 
@@ -31,8 +32,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.light(),
-        darkTheme: ThemeData.dark(),
+        theme: BrowserTheme.light(),
         builder: reducedMotion
             ? (context, child) => MediaQuery(
                   data:
@@ -76,6 +76,48 @@ void main() {
 
     expect(find.text('3'), findsOneWidget);
     expect(find.text('two.example'), findsOneWidget);
+  });
+
+  testWidgets('mobile title and count retain contrast on purple chrome',
+      (tester) async {
+    double contrast(Color foreground, Color background) {
+      final foregroundLuminance = foreground.computeLuminance();
+      final backgroundLuminance = background.computeLuminance();
+      final lighter = foregroundLuminance > backgroundLuminance
+          ? foregroundLuminance
+          : backgroundLuminance;
+      final darker = foregroundLuminance > backgroundLuminance
+          ? backgroundLuminance
+          : foregroundLuminance;
+      return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    await pumpBrowser(tester);
+
+    final header = tester.widget<Material>(
+      find.byKey(const ValueKey('browser-mobile-tab-header')),
+    );
+    final title = tester.widget<Text>(
+      find.byKey(const ValueKey('browser-mobile-tab-title')),
+    );
+    final count = tester.widget<OutlinedButton>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('browser-mobile-tab-count')),
+            matching: find.byType(OutlinedButton),
+          )
+          .first,
+    );
+    final enabledCountColor = count.style!.foregroundColor!.resolve({})!;
+    final disabledCountColor = count.style!.foregroundColor!.resolve(
+      {WidgetState.disabled},
+    )!;
+
+    expect(header.color, BrowserTheme.frame);
+    expect(title.style!.color, BrowserTheme.lavender);
+    expect(contrast(title.style!.color!, header.color!), greaterThan(4.5));
+    expect(contrast(enabledCountColor, header.color!), greaterThan(4.5));
+    expect(contrast(disabledCountColor, header.color!), greaterThan(4.5));
   });
 
   testWidgets('tab count control renders zero, one, and many states',

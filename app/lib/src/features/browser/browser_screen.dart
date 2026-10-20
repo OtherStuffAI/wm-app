@@ -514,7 +514,9 @@ class BrowserScreenState extends State<BrowserScreen>
                               key: const ValueKey('browser-mobile-tab-title'),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: theme.colorScheme.onSurface,
+                              ),
                             ),
                           ),
                         ],
@@ -4271,13 +4273,17 @@ class BrowserTabCountButton extends StatelessWidget {
   });
 
   final int count;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
+        foregroundColor: colors.onSurface,
+        disabledForegroundColor: colors.onSurfaceVariant,
+        side: BorderSide(color: colors.onSurfaceVariant),
         minimumSize: const Size(48, 40),
         padding: const EdgeInsets.symmetric(horizontal: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
