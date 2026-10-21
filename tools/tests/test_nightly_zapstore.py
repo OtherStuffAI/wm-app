@@ -38,9 +38,9 @@ class NightlyTests(unittest.TestCase):
         import tempfile,json
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp).resolve();lock=root/'tmp/docs/handoffs/nightly-release-shared.lock';lock.mkdir(parents=True)
+            root=Path(temp).resolve()/'wmapp';lock=root.parent/'autopilot/tmp/docs/handoffs/nightly-release-shared.lock';lock.mkdir(parents=True)
             (lock/'owner.json').write_text(json.dumps({'SESSION_ID':'android','store':'zapstore','day':'today'}))
-            apple=root/'tmp/docs/handoffs/nightly-testflight/ledger.json';apple.parent.mkdir()
+            apple=root/'tmp/docs/handoffs/nightly-testflight/ledger.json';apple.parent.mkdir(parents=True)
             original=b'{"schema":1,"days":{"yesterday":{"status":"active","owner":"apple","recovery_run":"retained"}}}\n'
             apple.write_bytes(original)
             with patch.object(n,'ROOT',root),patch.object(n.subprocess,'run'),patch.object(n,'command',return_value=''):
@@ -51,7 +51,7 @@ class NightlyTests(unittest.TestCase):
         import tempfile,json
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp).resolve();lock=root/'tmp/docs/handoffs/nightly-release-shared.lock';lock.parent.mkdir(parents=True)
+            root=Path(temp).resolve()/'wmapp';lock=root.parent/'autopilot/tmp/docs/handoffs/nightly-release-shared.lock';lock.parent.mkdir(parents=True)
             with patch.object(n,'ROOT',root),patch.object(n.subprocess,'run'),patch.object(n,'command',return_value=''):
                 with self.assertRaisesRegex(ValueError,'missing or busy'):n.require_shared_lock('android','today')
                 lock.mkdir()
@@ -63,7 +63,7 @@ class NightlyTests(unittest.TestCase):
                     record.write_text(json.dumps(state));before=record.read_bytes()
                     with self.assertRaisesRegex(ValueError,'another'):n.require_shared_lock('android','today')
                     self.assertEqual(record.read_bytes(),before)
-                record.unlink();target=root/'foreign.json';target.write_text('{}');record.symlink_to(target)
+                record.unlink();target=root.parent/'foreign.json';target.write_text('{}');record.symlink_to(target)
                 with self.assertRaisesRegex(ValueError,'missing or busy'):n.require_shared_lock('android','today')
                 record.unlink();lock.rmdir();lock.symlink_to(root,target_is_directory=True)
                 with self.assertRaisesRegex(ValueError,'Verified'):n.require_shared_lock('android','today')

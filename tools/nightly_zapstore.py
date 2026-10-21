@@ -129,11 +129,12 @@ def require_shared_lock(owner, day):
     Delivery claims are lane-local and can outlive this lock on uncertainty.
     Only the owner may proceed; never acquire, expire or remove a foreign lock.
     """
-    path = ROOT / 'tmp/docs/handoffs/nightly-release-shared.lock'
+    lock_repo = ROOT.parent / 'autopilot'
+    path = lock_repo / 'tmp/docs/handoffs/nightly-release-shared.lock'
     if not owner or any(x.is_symlink() for x in (path, *path.parents)):
         raise ValueError('Verified shared source lock owner required.')
-    subprocess.run(['git', '-C', str(ROOT), 'check-ignore', '-q', str(path)], check=True)
-    if command(['git', 'ls-files', '--', str(path)]):
+    subprocess.run(['git', '-C', str(lock_repo), 'check-ignore', '-q', str(path)], check=True)
+    if command(['git', '-C', str(lock_repo), 'ls-files', '--', str(path)]):
         raise ValueError('Shared source lock must be untracked.')
     record = path / 'owner.json'
     if not path.is_dir() or record.is_symlink() or not record.is_file():

@@ -35,7 +35,8 @@ future APK updates require the same certificate.
 
 1. The independent 22:00 `Australia/Perth` store sessions serialize shared
    source preparation with atomic directory creation at
-   `tmp/docs/handoffs/nightly-release-shared.lock`. Verify ignored/untracked
+   `tmp/docs/handoffs/nightly-release-shared.lock` in the sibling Autopilot
+   checkout (not the WMAPP checkout). Verify ignored/untracked
    storage and reject symlinks before acquisition. Write `owner.json` with
    `SESSION_ID`, `store: "zapstore"`, Perth `day` and creation time. Hold it
    through source preparation, snapshots, delivery/readback and reporting.
