@@ -96,6 +96,10 @@ def snapshot(r, repo, target):
 def execute(r, a, run):
     r.require(not getattr(a, 'dry_run', False), '--dry-run is not supported for API actions; use api-preflight or read-only readback.')
     client = Client(a.auth_reference)
+    if a.action == 'api-cancel-exports':
+        from testflight_export_cancellation import cancel
+        cancel(r, client, a, run)
+        return
     if a.action == 'api-preflight':
         h = client.preflight()
         print(json.dumps({'auth_ready': h['auth_ready'], 'history_complete': True,

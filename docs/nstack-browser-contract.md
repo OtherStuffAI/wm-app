@@ -3,6 +3,19 @@
 Status: implemented foundation
 Protocol version: `1`
 
+Saved connections use editable display names and abbreviated public identities.
+Endpoints and full identifiers are visible only through connection details.
+Address edits require the same verified Tower identity before preserving saved
+workspace associations, bookmarks and backup destinations. Registry v2 migrates
+existing v1 records without deleting the original preference.
+
+After explicit origin consent, `getServiceCatalogue({stackId})` returns the
+disclosed connection's bounded, validated discovery metadata using its
+origin-scoped alias. It does not create a service capability, network bridge or
+signing grant. Stale/unavailable services remain labelled; capability requests
+continue to reject locally. Service authentication and FIPS transport consent
+retain their separate existing boundaries.
+
 ## Boundary
 
 `window.NStack` is origin-consented secure connection autofill.

@@ -95,6 +95,24 @@ class AppleTests(unittest.TestCase):
         self.assertEqual(api.numbers(h), [10,20]); self.assertEqual(h['pending_upload_ids'], ['u20'])
         self.assertIn('include=preReleaseVersion', c.all.call_args_list[0].args[0])
 
+    def test_cancelled_exports_still_count_and_delivered_number_blocks(self):
+        c = client(); c.config['cancelled_export_uploads'] = {'u20': {'pinned': True}}
+        history(c, [upload('20')])
+        with patch('testflight_export_cancellation.verified_rule', return_value=True) as check:
+            h = c.history()
+            self.assertEqual(h['pending_upload_ids'], [])
+            self.assertEqual(h['cancelled_export_upload_ids'], ['u20'])
+            self.assertEqual(api.numbers(h), [10, 20])
+            check.assert_called_once()
+            with self.assertRaises(ValueError):
+                api.reservation_gate(release, h, {'version':'0.1.8', 'build':20})
+            api.reservation_gate(release, h, {'version':'0.1.8', 'build':21})
+        history(c, [upload('20')]); c.all.side_effect = [[build('20')], [upload('20')],
+            [{'id':'v', 'attributes':{'version':'0.1.7', 'platform':'IOS'}}]]
+        with patch('testflight_export_cancellation.verified_rule') as check:
+            with self.assertRaises(ValueError): c.history()
+            check.assert_not_called()
+
     def test_legacy_requires_exact_evidence_and_empty_files(self):
         c = client(); u = upload('9', '0.1.7'); history(c,[u])
         self.assertEqual(c.history()['pending_upload_ids'], ['u9'])

@@ -292,6 +292,52 @@ class NStackAccessService extends ChangeNotifier {
     return _workspaceDescriptor(stackId, workspaceId, stack, workspace);
   }
 
+  Future<Map<String, dynamic>> getServiceCatalogue({
+    required String identity,
+    required String origin,
+    required String stackId,
+  }) async {
+    final state = await _state(identity, origin);
+    final internalStackId = _internalId(state.$2.stackIds, stackId);
+    if (internalStackId == null) {
+      throw const NStackException(
+          'not_disclosed', 'The NStack was not disclosed to this origin.');
+    }
+    final stack =
+        state.$1.stacks.where((s) => s.id == internalStackId).firstOrNull;
+    if (stack == null) {
+      throw const NStackException(
+          'stack_unavailable', 'The disclosed NStack is no longer available.');
+    }
+    final status = stack.catalogueStatus;
+    final catalogue = status?.catalogue;
+    return {
+      'stackId': stackId,
+      'checkedAt': status?.checkedAt.toUtc().toIso8601String(),
+      'fetchedAt': catalogue?.fetchedAt.toUtc().toIso8601String(),
+      'stale': catalogue == null || catalogue.isStaleAt(_clock()),
+      if (status?.errorCode != null)
+        'error': {'code': status!.errorCode, 'message': status.errorMessage},
+      'services': [
+        for (final service in catalogue?.services ?? const <NStackService>[])
+          {
+            'id': service.id,
+            'kind': service.kind,
+            'endpoint': service.endpoint,
+            'version': service.version,
+            'protocols': service.protocols,
+            'capabilities': service.capabilities,
+            'features': {'nips': service.nips, 'buds': service.buds},
+            'availability': {
+              'status': service.availability.name,
+              'checkedAt': service.checkedAt?.toUtc().toIso8601String(),
+            },
+            'actionable': service.actionable,
+          },
+      ],
+    };
+  }
+
   // Kept as no-ops while native callers migrate away from the earlier handle
   // model. Document/origin validation is enforced by the browser dispatcher.
   void revokeDocument(String documentId) {}
@@ -369,15 +415,10 @@ String normalizeNStackOrigin(String value) {
   final local = {'localhost', '127.0.0.1', '::1', 'wingman.local'}
       .contains(uri.host.toLowerCase());
   if (scheme != 'https' && !(scheme == 'http' && local)) return '';
-  return uri
-      .replace(
-        scheme: scheme,
-        host: uri.host.toLowerCase(),
-        path: '',
-        query: '',
-        fragment: '',
-      )
-      .toString();
+  // Must equal the page's `location.origin`; the injected provider refuses to
+  // install for any other value. `Uri.replace(query: '', fragment: '')` would
+  // serialize an empty query and fragment as `?#`.
+  return uri.origin;
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

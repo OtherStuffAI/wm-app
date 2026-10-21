@@ -3,20 +3,15 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../../core/nostr_crypto.dart';
 import 'nstack_models.dart';
 import 'nstack_store.dart';
 
-const nstackWorkspaceResponseMaxBytes = 256 * 1024;
-const nstackWorkspaceDiscoveryTimeout = Duration(seconds: 10);
-const nstackFlightDeckWorkspacePageSize = 200;
-const nstackFlightDeckWorkspaceTotalLimit = 1000;
-const nstackFlightDeckWorkspacePageLimit = 10;
-const nstackFlightDeckCursorMaxLength = 4096;
+const nstackDescriptorPath = '/.well-known/nstack.json';
+const nstackDescriptorMaxBytes = 128 * 1024;
+const nstackDescriptorTimeout = Duration(seconds: 5);
 
 class NStackDiscoveryException implements Exception {
   const NStackDiscoveryException(this.code, this.message);
-
   final String code;
   final String message;
 
@@ -24,601 +19,337 @@ class NStackDiscoveryException implements Exception {
   String toString() => message;
 }
 
-abstract class NStackWorkspaceDiscovery {
-  Future<List<NStackWorkspace>> discover({
-    required String address,
-    required String identityNpub,
-    required String secret,
-  });
-}
-
-class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
-  TowerNStackWorkspaceDiscovery({
+class NStackDiscoveryClient {
+  NStackDiscoveryClient({
     http.Client? client,
-    this.timeout = nstackWorkspaceDiscoveryTimeout,
-  }) : _client = client ?? http.Client();
+    DateTime Function()? clock,
+    this.timeout = nstackDescriptorTimeout,
+  })  : _client = client ?? http.Client(),
+        _clock = clock ?? DateTime.now;
 
   final http.Client _client;
+  final DateTime Function() _clock;
   final Duration timeout;
 
-  @override
-  Future<List<NStackWorkspace>> discover({
-    required String address,
-    required String identityNpub,
-    required String secret,
-  }) async {
-    final root = canonicalNStackUrl(address);
-    if (root == null) {
+  Future<NStackServiceCatalogue> fetch(String configuredUrl) async {
+    final configured = canonicalNStackUrl(configuredUrl);
+    if (configured == null) {
       throw const NStackDiscoveryException(
-          'invalid_address', 'Enter a valid HTTPS NStack address.');
+          'invalid_origin', 'The configured NStack origin is invalid.');
     }
-    NostrIdentity signer;
-    try {
-      signer = NostrCrypto.importIdentity(secret);
-    } catch (_) {
-      throw const NStackDiscoveryException(
-          'locked', 'Unlock the active Nostr identity first.');
-    }
-    if (signer.npub != identityNpub) {
-      throw const NStackDiscoveryException('identity_changed',
-          'The unlocked identity changed before discovery.');
-    }
-
-    final rootUri = Uri.parse(root);
-    final basePath = rootUri.path.replaceFirst(RegExp(r'/+$'), '');
-    final legacyUrl = rootUri.replace(
-      path: '$basePath/api/v4/workspaces',
-      queryParameters: {'member_npub': identityNpub},
-    );
-    try {
-      final legacy = validateWorkspaceDiscoveryResponse(
-        await _getJson(legacyUrl, secret),
-      );
-      final flightDeck = await _discoverFlightDeckWorkspaces(
-        rootUri: rootUri,
-        basePath: basePath,
-        secret: secret,
-      );
-      return _mergeWorkspaceSources(legacy, flightDeck);
-    } on NStackDiscoveryException {
-      rethrow;
-    } on TimeoutException {
-      throw const NStackDiscoveryException(
-          'timeout', 'Workspace discovery timed out.');
-    } catch (_) {
-      throw const NStackDiscoveryException(
-          'network_error', 'NStack workspace discovery failed.');
-    }
-  }
-
-  Future<List<_FlightDeckWorkspace>> _discoverFlightDeckWorkspaces({
-    required Uri rootUri,
-    required String basePath,
-    required String secret,
-  }) async {
-    final result = <_FlightDeckWorkspace>[];
-    final workspaceIds = <String>{};
-    final stableRemoteIds = <String>{};
-    final cursors = <String>{};
-    String? cursor;
-    for (var pageNumber = 0;
-        pageNumber < nstackFlightDeckWorkspacePageLimit;
-        pageNumber++) {
-      final url = rootUri.replace(
-        path: '$basePath/api/v4/flightdeck-pg/workspaces',
-        queryParameters: {
-          'limit': '$nstackFlightDeckWorkspacePageSize',
-          if (cursor != null) 'cursor': cursor,
-        },
-      );
-      Object? response;
-      try {
-        response = await _getJson(
-          url,
-          secret,
-          allowUnsupportedEndpoint: pageNumber == 0,
-        );
-      } on NStackDiscoveryException catch (error) {
-        if (pageNumber == 0 && error.code == 'unsupported_endpoint') {
-          return const [];
-        }
-        rethrow;
-      }
-      final page = _validateFlightDeckWorkspaceDiscoveryResponse(
-        response,
-        verifiedTowerRoot: rootUri,
-      );
-      for (final item in page.workspaces) {
-        if (!workspaceIds.add(item.workspace.remoteId)) {
-          throw const NStackDiscoveryException('invalid_response',
-              'NStack returned a duplicate Flight Deck workspace.');
-        }
-        if (!stableRemoteIds.add(item.workspace.stableRemoteId!)) {
-          throw const NStackDiscoveryException('invalid_response',
-              'NStack returned a duplicate linked workspace identity.');
-        }
-        result.add(item);
-        if (result.length > nstackFlightDeckWorkspaceTotalLimit) {
-          throw const NStackDiscoveryException('invalid_response',
-              'NStack returned too many Flight Deck workspaces.');
-        }
-      }
-      cursor = page.nextCursor;
-      if (cursor == null) return List.unmodifiable(result);
-      if (!cursors.add(cursor)) {
-        throw const NStackDiscoveryException('invalid_response',
-            'NStack repeated a Flight Deck workspace cursor.');
-      }
-      if (result.length >= nstackFlightDeckWorkspaceTotalLimit) {
-        throw const NStackDiscoveryException('invalid_response',
-            'NStack Flight Deck workspace response exceeded the total limit.');
-      }
-    }
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack Flight Deck workspace response exceeded the page limit.');
-  }
-
-  Future<Object?> _getJson(
-    Uri url,
-    String secret, {
-    bool allowUnsupportedEndpoint = false,
-  }) async {
-    final authorization = NostrCrypto.signNip98(
-      secret: secret,
-      method: 'GET',
-      url: url.toString(),
-    ).authorization;
-    final abort = Completer<void>();
+    final origin = Uri.parse(configured).replace(path: '');
+    final abortTrigger = Completer<void>();
     final request = http.AbortableRequest(
-      'GET',
-      url,
-      abortTrigger: abort.future,
-    )
+        'GET', origin.replace(path: nstackDescriptorPath),
+        abortTrigger: abortTrigger.future)
       ..followRedirects = false
-      ..headers['accept'] = 'application/json'
-      ..headers['authorization'] = authorization;
+      ..headers['Accept'] = 'application/json';
     try {
-      final bytes = await _read(
-        request,
-        allowUnsupportedEndpoint: allowUnsupportedEndpoint,
-      ).timeout(timeout, onTimeout: () {
-        abort.complete();
-        throw TimeoutException('Workspace discovery timed out.');
+      final bytes =
+          await _readResponse(request).timeout(timeout, onTimeout: () {
+        abortTrigger.complete();
+        throw TimeoutException('Descriptor request timed out.');
       });
+      Object? decoded;
       try {
-        return jsonDecode(utf8.decode(bytes));
+        decoded = jsonDecode(utf8.decode(bytes));
       } catch (_) {
         throw const NStackDiscoveryException(
-            'invalid_response', 'NStack returned malformed workspace data.');
+            'malformed', 'Descriptor is not valid UTF-8 JSON.');
       }
+      return validateNStackDescriptor(
+        decoded,
+        configuredOrigin: origin.toString(),
+        fetchedAt: _clock().toUtc(),
+      );
     } on NStackDiscoveryException {
       rethrow;
     } on TimeoutException {
       throw const NStackDiscoveryException(
-          'timeout', 'Workspace discovery timed out.');
+          'timeout', 'Descriptor request timed out.');
     } catch (_) {
       throw const NStackDiscoveryException(
-          'network_error', 'NStack workspace discovery failed.');
+          'network_error', 'Descriptor request failed.');
     }
   }
 
-  Future<List<int>> _read(
-    http.BaseRequest request, {
-    required bool allowUnsupportedEndpoint,
-  }) async {
+  Future<List<int>> _readResponse(http.BaseRequest request) async {
     final response = await _client.send(request);
     if (response.statusCode != 200) {
-      if (allowUnsupportedEndpoint &&
-          const {404, 405, 501}.contains(response.statusCode)) {
-        throw const NStackDiscoveryException('unsupported_endpoint',
-            'This NStack does not expose Flight Deck workspace discovery.');
-      }
       throw NStackDiscoveryException('http_error',
-          'NStack returned HTTP ${response.statusCode} during discovery.');
+          'Descriptor request returned HTTP ${response.statusCode}.');
     }
-    if (response.contentLength case final length?
-        when length > nstackWorkspaceResponseMaxBytes) {
+    final length = response.contentLength;
+    if (length != null && length > nstackDescriptorMaxBytes) {
       throw const NStackDiscoveryException(
-          'invalid_response', 'Workspace response is too large.');
+          'oversized', 'Descriptor exceeds the 128 KiB limit.');
     }
     final bytes = <int>[];
     await for (final chunk in response.stream) {
       bytes.addAll(chunk);
-      if (bytes.length > nstackWorkspaceResponseMaxBytes) {
+      if (bytes.length > nstackDescriptorMaxBytes) {
         throw const NStackDiscoveryException(
-            'invalid_response', 'Workspace response is too large.');
+            'oversized', 'Descriptor exceeds the 128 KiB limit.');
       }
     }
     return bytes;
   }
 }
 
-List<NStackWorkspace> validateWorkspaceDiscoveryResponse(Object? value) {
-  if (value is! Map<String, dynamic> || value['workspaces'] is! List) {
-    throw const NStackDiscoveryException(
-        'invalid_response', 'NStack workspace response has an invalid shape.');
-  }
-  final rawWorkspaces = value['workspaces'] as List;
-  if (rawWorkspaces.length > 1000) {
-    throw const NStackDiscoveryException(
-        'invalid_response', 'NStack returned too many workspaces.');
-  }
-  final result = <NStackWorkspace>[];
-  final stableIds = <String>{};
-  for (final raw in rawWorkspaces) {
-    if (raw is! Map<String, dynamic>) {
-      throw const NStackDiscoveryException(
-          'invalid_response', 'NStack returned an invalid workspace.');
-    }
-    final workspaceId = _safeText(raw['workspace_id'], 128);
-    final name = _safeText(raw['name'], 256);
-    final owner =
-        _validNpub(raw['creator_npub'] ?? raw['workspace_owner_npub']);
-    final workspaceService =
-        _validNpub(raw['workspace_service_npub'] ?? raw['workspace_npub']);
-    final directUrl = raw['direct_https_url'] == null
-        ? null
-        : canonicalNStackUrl(raw['direct_https_url'].toString());
-    final service =
-        raw['service_npub'] == null ? null : _validNpub(raw['service_npub']);
-    if (workspaceId == null ||
-        name == null ||
-        owner == null ||
-        workspaceService == null ||
-        (raw['direct_https_url'] != null && directUrl == null) ||
-        (raw['service_npub'] != null && service == null) ||
-        !stableIds.add(workspaceId)) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned incomplete, invalid, or duplicate workspace identity.');
-    }
-    result.add(NStackWorkspace(
-      id: '',
-      name: name,
-      remoteId: workspaceId,
-      stableRemoteId: workspaceId,
-      workspaceOwnerNpub: owner,
-      workspaceServiceNpub: workspaceService,
-      directHttpsUrl: directUrl,
-      serviceNpub: service,
-    ));
-  }
-  return List.unmodifiable(result);
-}
-
-class _FlightDeckWorkspace {
-  const _FlightDeckWorkspace({
-    required this.workspace,
-    this.v4WorkspaceId,
-  });
-
-  final NStackWorkspace workspace;
-  final String? v4WorkspaceId;
-}
-
-class _FlightDeckWorkspacePage {
-  const _FlightDeckWorkspacePage({
-    required this.workspaces,
-    required this.nextCursor,
-  });
-
-  final List<_FlightDeckWorkspace> workspaces;
-  final String? nextCursor;
-}
-
-_FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
-  Object? value, {
-  required Uri verifiedTowerRoot,
-}) {
-  if (value is! Map<String, dynamic> || value['workspaces'] is! List) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack Flight Deck workspace response has an invalid shape.');
-  }
-  final nextCursor = value['next_cursor'] == null
-      ? null
-      : _safeText(value['next_cursor'], nstackFlightDeckCursorMaxLength);
-  if (value['next_cursor'] != null && nextCursor == null) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned an invalid Flight Deck workspace cursor.');
-  }
-  final rawWorkspaces = value['workspaces'] as List;
-  if (rawWorkspaces.length > nstackFlightDeckWorkspacePageSize) {
-    throw const NStackDiscoveryException(
-        'invalid_response', 'NStack returned an oversized workspace page.');
-  }
-  final result = <_FlightDeckWorkspace>[];
-  final workspaceIds = <String>{};
-  final stableIds = <String>{};
-  var omitted = 0;
-  for (final raw in rawWorkspaces) {
-    if (raw is! Map<String, dynamic> ||
-        raw['identity'] is! Map<String, dynamic>) {
-      omitted++;
-      continue;
-    }
-    final identity = raw['identity'] as Map<String, dynamic>;
-    final workspaceId = _safeText(identity['workspace_id'], 128);
-    if (workspaceId != null && !workspaceIds.add(workspaceId)) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned a duplicate Flight Deck workspace identity.');
-    }
-    final name = _safeText(raw['label'], 256);
-    final owner = _validNpub(identity['workspace_owner_npub']);
-    final workspaceService = _validNpub(identity['workspace_service_npub']);
-    final service = _validNpub(identity['tower_service_npub']);
-    final membership = raw['membership'];
-    final membershipRole = membership is Map<String, dynamic>
-        ? _safeText(membership['role'], 32)
-        : null;
-    final v4WorkspaceId = raw['v4_workspace_id'] == null
-        ? null
-        : _safeText(raw['v4_workspace_id'], 128);
-    final stableId = v4WorkspaceId ?? workspaceId;
-    if (stableId != null && !stableIds.add(stableId)) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned a duplicate linked Flight Deck workspace identity.');
-    }
-    if (workspaceId == null ||
-        name == null ||
-        owner == null ||
-        workspaceService == null ||
-        service == null ||
-        membershipRole == null ||
-        (raw['v4_workspace_id'] != null && v4WorkspaceId == null)) {
-      omitted++;
-      continue;
-    }
-    final directUrl = _boundFlightDeckTowerUrl(
-      raw['tower_base_url'],
-      verifiedTowerRoot: verifiedTowerRoot,
-    );
-    if (directUrl == null) {
-      omitted++;
-      continue;
-    }
-    result.add(_FlightDeckWorkspace(
-      v4WorkspaceId: v4WorkspaceId,
-      workspace: NStackWorkspace(
-        id: '',
-        name: name,
-        remoteId: workspaceId,
-        stableRemoteId: v4WorkspaceId ?? workspaceId,
-        workspaceOwnerNpub: owner,
-        workspaceServiceNpub: workspaceService,
-        directHttpsUrl: directUrl,
-        serviceNpub: service,
-        membershipRole: membershipRole,
-      ),
-    ));
-  }
-  if (result.isEmpty && omitted > 0) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned no usable Flight Deck workspace identities.');
-  }
-  return _FlightDeckWorkspacePage(
-    workspaces: List.unmodifiable(result),
-    nextCursor: nextCursor,
-  );
-}
-
-String? _boundFlightDeckTowerUrl(
-  Object? value, {
-  required Uri verifiedTowerRoot,
-}) {
-  final raw = _safeText(value, 2048);
-  if (raw == null) return null;
-  final reported = Uri.tryParse(raw);
-  if (reported == null ||
-      reported.host.isEmpty ||
-      reported.userInfo.isNotEmpty ||
-      reported.query.isNotEmpty ||
-      reported.fragment.isNotEmpty) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
-  }
-  final verifiedScheme = verifiedTowerRoot.scheme.toLowerCase();
-  final reportedScheme = reported.scheme.toLowerCase();
-  final sameScheme = reportedScheme == verifiedScheme;
-  final proxyDowngrade = verifiedScheme == 'https' && reportedScheme == 'http';
-  final compatiblePort = sameScheme
-      ? reported.port == verifiedTowerRoot.port
-      : !verifiedTowerRoot.hasPort &&
-          (!reported.hasPort || reported.port == 80);
-  if ((!sameScheme && !proxyDowngrade) ||
-      reported.host.toLowerCase() != verifiedTowerRoot.host.toLowerCase() ||
-      !compatiblePort) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
-  }
-  final verifiedPath = verifiedTowerRoot.path == '/'
-      ? ''
-      : verifiedTowerRoot.path.replaceFirst(RegExp(r'/+$'), '');
-  final reportedPath = reported.path == '/'
-      ? ''
-      : reported.path.replaceFirst(RegExp(r'/+$'), '');
-  if (reportedPath.isNotEmpty && reportedPath != verifiedPath) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned a Flight Deck Tower URL outside the verified discovery address.');
-  }
-  return canonicalNStackUrl(verifiedTowerRoot.toString());
-}
-
-List<NStackWorkspace> _mergeWorkspaceSources(
-  List<NStackWorkspace> legacy,
-  List<_FlightDeckWorkspace> flightDeck,
-) {
-  final merged = <String, NStackWorkspace>{};
-  final legacyByRemoteId = <String, NStackWorkspace>{};
-  for (final workspace in legacy) {
-    final stableId = _workspaceStableIdentity(
-        workspace.stableRemoteId!, workspace.workspaceOwnerNpub!);
-    merged[stableId] = workspace;
-    legacyByRemoteId[workspace.remoteId] = workspace;
-  }
-  for (final item in flightDeck) {
-    final workspace = item.workspace;
-    final linkedLegacy = item.v4WorkspaceId == null
-        ? null
-        : legacyByRemoteId[item.v4WorkspaceId];
-    if (linkedLegacy != null &&
-        linkedLegacy.workspaceOwnerNpub != workspace.workspaceOwnerNpub) {
-      throw const NStackDiscoveryException('invalid_response',
-          'NStack returned conflicting linked workspace ownership.');
-    }
-    merged[_workspaceStableIdentity(
-        workspace.stableRemoteId!, workspace.workspaceOwnerNpub!)] = workspace;
-  }
-  final remoteIds = <String>{};
-  if (merged.values.any((workspace) => !remoteIds.add(workspace.remoteId))) {
-    throw const NStackDiscoveryException('invalid_response',
-        'NStack returned conflicting workspace identities.');
-  }
-  return List.unmodifiable(merged.values);
-}
-
-String _workspaceStableIdentity(String remoteId, String ownerNpub) =>
-    '$remoteId\u0000$ownerNpub';
-
-class NStackWorkspaceDiscoveryService {
-  NStackWorkspaceDiscoveryService({
+class NStackDiscoveryService {
+  NStackDiscoveryService({
     required this.registryStore,
-    NStackWorkspaceDiscovery? discovery,
+    NStackDiscoveryClient? client,
     DateTime Function()? clock,
-  })  : discovery = discovery ?? TowerNStackWorkspaceDiscovery(),
+  })  : client = client ?? NStackDiscoveryClient(clock: clock),
         _clock = clock ?? DateTime.now;
 
   final NStackRegistryStore registryStore;
-  final NStackWorkspaceDiscovery discovery;
+  final NStackDiscoveryClient client;
   final DateTime Function() _clock;
 
-  Future<NStackEntry> add({
-    required String identityNpub,
-    required String secret,
-    required String address,
-  }) async {
-    final canonical = canonicalNStackUrl(address);
-    if (canonical == null) {
-      throw const NStackDiscoveryException(
-          'invalid_address', 'Enter a valid HTTPS NStack address.');
-    }
-    final registry = await registryStore.load(identityNpub);
-    final existing =
-        registry.stacks.where((stack) => stack.url == canonical).firstOrNull;
-    if (existing != null) {
-      return refresh(
-        identityNpub: identityNpub,
-        secret: secret,
-        stackId: existing.id,
-      );
-    }
-    final discovered = await discovery.discover(
-      address: canonical,
-      identityNpub: identityNpub,
-      secret: secret,
-    );
-    final candidate = NStackEntry(
-      id: newNStackOpaqueId(),
-      name: Uri.parse(canonical).host,
-      url: canonical,
-    );
-    return registryStore.applyWorkspaceDiscovery(
-      identityNpub,
-      candidate: candidate,
-      discovered: discovered,
-      refreshedAt: _clock().toUtc(),
-    );
-  }
-
-  Future<NStackEntry> changeAddress({
-    required String identityNpub,
-    required String secret,
-    required String stackId,
-    required String address,
-  }) async {
-    final canonical = canonicalNStackUrl(address);
-    if (canonical == null) {
-      throw const NStackDiscoveryException(
-          'invalid_address', 'Enter a valid HTTPS NStack address.');
-    }
-    final registry = await registryStore.load(identityNpub);
-    final current =
-        registry.stacks.where((stack) => stack.id == stackId).firstOrNull;
-    if (current == null) throw StateError('NStack no longer exists.');
-    if (registry.stacks
-        .any((stack) => stack.id != stackId && stack.url == canonical)) {
-      throw const NStackDiscoveryException(
-          'duplicate_address', 'That NStack address is already saved.');
-    }
-    final discovered = await discovery.discover(
-      address: canonical,
-      identityNpub: identityNpub,
-      secret: secret,
-    );
-    return registryStore.applyWorkspaceDiscovery(
-      identityNpub,
-      candidate: current.copyWith(url: canonical),
-      expectedPreviousUrl: current.url,
-      discovered: discovered,
-      refreshedAt: _clock().toUtc(),
-    );
-  }
-
-  Future<NStackEntry> refresh({
-    required String identityNpub,
-    required String secret,
-    required String stackId,
-  }) async {
-    final registry = await registryStore.load(identityNpub);
+  Future<NStackEntry> refresh(String identity, String stackId) async {
+    final registry = await registryStore.load(identity);
     final stack =
         registry.stacks.where((item) => item.id == stackId).firstOrNull;
     if (stack == null) throw StateError('NStack no longer exists.');
-    final attemptedAt = _clock().toUtc();
+    final now = _clock().toUtc();
+    NStackCatalogueStatus status;
     try {
-      final discovered = await discovery.discover(
-        address: stack.url,
-        identityNpub: identityNpub,
-        secret: secret,
-      );
-      return registryStore.applyWorkspaceDiscovery(
-        identityNpub,
-        candidate: stack,
-        discovered: discovered,
-        refreshedAt: attemptedAt,
-      );
+      final catalogue = await client.fetch(stack.url);
+      status = NStackCatalogueStatus(checkedAt: now, catalogue: catalogue);
     } on NStackDiscoveryException catch (error) {
-      await registryStore.markWorkspaceDiscoveryFailure(
-        identityNpub,
-        stackId: stack.id,
-        expectedUrl: stack.url,
-        attemptedAt: attemptedAt,
+      status = NStackCatalogueStatus(
+        checkedAt: now,
+        catalogue: stack.catalogueStatus?.catalogue,
         errorCode: error.code,
         errorMessage: error.message,
       );
-      rethrow;
     }
+    return registryStore.updateCatalogue(
+      identity,
+      stackId,
+      status,
+      expectedUrl: stack.url,
+    );
   }
 }
 
-String? _safeText(Object? value, int maximum) {
-  if (value is! String ||
-      value.isEmpty ||
-      value.length > maximum ||
-      value.trim() != value ||
-      value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
-    return null;
+NStackServiceCatalogue validateNStackDescriptor(
+  Object? value, {
+  required String configuredOrigin,
+  required DateTime fetchedAt,
+}) {
+  const rootKeys = {
+    'schema',
+    'schema_version',
+    'generated_at',
+    'cache_ttl_seconds',
+    'stack',
+    'services'
+  };
+  if (value is! Map<String, dynamic> ||
+      !_onlyKeys(value, rootKeys) ||
+      value['schema'] != 'org.wingman.nstack.services' ||
+      value['schema_version'] != 1 ||
+      value['stack'] is! Map<String, dynamic> ||
+      value['services'] is! List) {
+    throw const NStackDiscoveryException(
+        'malformed', 'Descriptor schema v1 is invalid.');
   }
-  return value;
+  final generatedAt =
+      DateTime.tryParse(value['generated_at']?.toString() ?? '')?.toUtc();
+  final ttlRaw = value['cache_ttl_seconds'];
+  final servicesRaw = value['services'] as List;
+  final stackRaw = value['stack'] as Map<String, dynamic>;
+  if (generatedAt == null ||
+      generatedAt.isAfter(fetchedAt.toUtc().add(const Duration(minutes: 5))) ||
+      ttlRaw is! int ||
+      ttlRaw < 1 ||
+      ttlRaw > 86400 ||
+      servicesRaw.length > 32 ||
+      !_onlyKeys(stackRaw, const {'tower_npub', 'name'})) {
+    throw const NStackDiscoveryException(
+        'malformed', 'Descriptor metadata is invalid.');
+  }
+  final towerNpub = stackRaw['tower_npub'];
+  final stackName = stackRaw['name'];
+  if ((towerNpub != null && !_validNpub(towerNpub)) ||
+      (stackName != null && !_validString(stackName, 1, 128))) {
+    throw const NStackDiscoveryException(
+        'malformed', 'Descriptor stack metadata is invalid.');
+  }
+
+  final configured = Uri.parse(configuredOrigin);
+  final services = <NStackService>[];
+  final seen = <String>{};
+  for (final raw in servicesRaw) {
+    if (raw is! Map<String, dynamic> ||
+        !_onlyKeys(raw, const {
+          'id',
+          'kind',
+          'endpoint',
+          'version',
+          'protocols',
+          'capabilities',
+          'features',
+          'availability'
+        })) {
+      throw const NStackDiscoveryException(
+          'malformed', 'A service entry is invalid.');
+    }
+    final id = raw['id'];
+    final kind = raw['kind'];
+    final endpointText = raw['endpoint'];
+    final version = raw['version'];
+    if (!_validString(id, 1, 64) ||
+        !_validString(kind, 1, 64) ||
+        !_validString(endpointText, 1, 2048) ||
+        !_validString(version, 1, 128) ||
+        !seen.add(id as String)) {
+      throw const NStackDiscoveryException(
+          'malformed', 'Service identity fields are invalid or duplicated.');
+    }
+    final protocols = _stringList(raw['protocols'], 32, 64);
+    final capabilities = _stringList(raw['capabilities'], 64, 128);
+    final features = raw['features'];
+    final availability = raw['availability'];
+    if (protocols == null ||
+        capabilities == null ||
+        features is! Map<String, dynamic> ||
+        !_onlyKeys(features, const {'nips', 'buds'}) ||
+        availability is! Map<String, dynamic> ||
+        !_onlyKeys(availability, const {'status', 'checked_at'})) {
+      throw const NStackDiscoveryException(
+          'malformed', 'Service metadata is invalid.');
+    }
+    final nips = _intList(features['nips'], 64);
+    final buds = _intList(features['buds'], 64);
+    final status = NStackServiceAvailability.values
+        .where((item) => item.name == availability['status'])
+        .firstOrNull;
+    final checkedAt = availability['checked_at'] == null
+        ? null
+        : DateTime.tryParse(availability['checked_at'].toString())?.toUtc();
+    if (nips == null ||
+        buds == null ||
+        status == null ||
+        (availability['checked_at'] != null && checkedAt == null) ||
+        (checkedAt != null &&
+            checkedAt
+                .isAfter(fetchedAt.toUtc().add(const Duration(minutes: 5))))) {
+      throw const NStackDiscoveryException(
+          'malformed', 'Service features or availability are invalid.');
+    }
+    final endpoint = _serviceOrigin(endpointText as String);
+    if (endpoint == null) {
+      throw const NStackDiscoveryException(
+          'invalid_origin', 'A service endpoint is not a safe root origin.');
+    }
+    final known = switch (id) {
+      'tower' => kind == 'tower' &&
+          _isHttpOrigin(endpoint) &&
+          _sameOrigin(endpoint, configured),
+      'relay' => kind == 'nostr_relay' && _isWebSocketOrigin(endpoint),
+      'blossom' => kind == 'blossom' && _isHttpOrigin(endpoint),
+      _ => false,
+    };
+    if ({'tower', 'relay', 'blossom'}.contains(id) && !known) {
+      throw const NStackDiscoveryException(
+          'invalid_origin', 'A known service kind or origin is inconsistent.');
+    }
+    services.add(NStackService(
+      id: id,
+      kind: kind as String,
+      endpoint: endpoint.toString(),
+      version: version as String,
+      protocols: List.unmodifiable(protocols),
+      capabilities: List.unmodifiable(capabilities),
+      nips: List.unmodifiable(nips),
+      buds: List.unmodifiable(buds),
+      availability: status,
+      checkedAt: checkedAt,
+      actionable: known,
+    ));
+  }
+  return NStackServiceCatalogue(
+    generatedAt: generatedAt,
+    fetchedAt: fetchedAt.toUtc(),
+    cacheTtlSeconds: ttlRaw.clamp(5, 3600),
+    towerNpub: towerNpub as String?,
+    stackName: stackName as String?,
+    services: List.unmodifiable(services),
+  );
 }
 
-String? _validNpub(Object? value) {
-  final text = _safeText(value, 128);
-  if (text == null) return null;
-  try {
-    NostrCrypto.publicKeyHexFromNpub(text);
-    return text;
-  } catch (_) {
+bool _onlyKeys(Map<String, dynamic> map, Set<String> allowed) =>
+    map.keys.every(allowed.contains);
+
+bool _validString(Object? value, int minimum, int maximum) =>
+    value is String &&
+    value.length >= minimum &&
+    value.length <= maximum &&
+    value.trim() == value &&
+    !value.contains(RegExp(r'[\x00-\x1f\x7f]'));
+
+bool _validNpub(Object? value) =>
+    value is String &&
+    RegExp(r'^npub1[023456789acdefghjklmnpqrstuvwxyz]{20,}$').hasMatch(value) &&
+    value.length <= 128;
+
+List<String>? _stringList(Object? value, int maximumItems, int maximumLength) {
+  if (value is! List || value.length > maximumItems) return null;
+  final result = <String>[];
+  final seen = <String>{};
+  for (final item in value) {
+    if (!_validString(item, 1, maximumLength) || !seen.add(item as String)) {
+      return null;
+    }
+    result.add(item);
+  }
+  return result;
+}
+
+List<int>? _intList(Object? value, int maximumItems) {
+  if (value == null) return const [];
+  if (value is! List || value.length > maximumItems) return null;
+  final result = <int>[];
+  final seen = <int>{};
+  for (final item in value) {
+    if (item is! int || item < 1 || item > 65535 || !seen.add(item)) {
+      return null;
+    }
+    result.add(item);
+  }
+  return result;
+}
+
+Uri? _serviceOrigin(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.query.isNotEmpty ||
+      uri.fragment.isNotEmpty ||
+      (uri.path.isNotEmpty && uri.path != '/')) {
     return null;
   }
+  final host = uri.host.toLowerCase();
+  final local = {'localhost', '127.0.0.1', '::1'}.contains(host);
+  final allowed = uri.scheme == 'https' ||
+      uri.scheme == 'wss' ||
+      (local && (uri.scheme == 'http' || uri.scheme == 'ws'));
+  if (!allowed) return null;
+  return uri.replace(host: host, path: '');
 }
+
+bool _isHttpOrigin(Uri uri) => uri.scheme == 'https' || uri.scheme == 'http';
+bool _isWebSocketOrigin(Uri uri) => uri.scheme == 'wss' || uri.scheme == 'ws';
+
+bool _sameOrigin(Uri left, Uri right) =>
+    left.scheme == right.scheme &&
+    left.host == right.host &&
+    left.port == right.port;
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

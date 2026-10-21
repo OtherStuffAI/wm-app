@@ -21,6 +21,7 @@ import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
 import 'embedded_content_focus.dart';
+import 'browser_keyboard_shortcuts.dart';
 import 'focus_edge_gestures.dart';
 import 'diagnostics_store.dart';
 import 'relay_diagnostics.dart';
@@ -1115,11 +1116,50 @@ class BrowserScreenState extends State<BrowserScreen>
 
   bool _handleKeyboardEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.tab) return false;
     final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed &&
+        !keyboard.isControlPressed &&
+        !keyboard.isAltPressed &&
+        !keyboard.isShiftPressed &&
+        (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+            event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+      final focusContext = FocusManager.instance.primaryFocus?.context;
+      // Native content handles its own events using the actual DOM focus.
+      // Flutter focus can otherwise remain stale while WebKit owns an editor.
+      if (focusContext?.findAncestorWidgetOfExactType<EmbeddedContentFocus>() !=
+              null ||
+          focusContext?.findAncestorStateOfType<EditableTextState>() != null ||
+          focusContext?.widget is EditableText ||
+          !_canUseNavigationShortcut) {
+        return false;
+      }
+      // One action per press; do not race repeated native/shell navigation.
+      if (event is KeyRepeatEvent) return true;
+      _runNavigationShortcut(event.logicalKey == LogicalKeyboardKey.arrowRight
+          ? 'nextApp'
+          : 'openMenu');
+      return true;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.tab) return false;
     if (!keyboard.isControlPressed) return false;
     _activateAdjacentTab(keyboard.isShiftPressed ? -1 : 1);
     return true;
+  }
+
+  bool get _canUseNavigationShortcut =>
+      mounted &&
+      (ModalRoute.of(context)?.isCurrent ?? true) &&
+      !(Scaffold.maybeOf(context)?.isDrawerOpen ?? false) &&
+      !(Scaffold.maybeOf(context)?.isEndDrawerOpen ?? false);
+
+  void _runNavigationShortcut(String action) {
+    if (!_canUseNavigationShortcut) return;
+    switch (action) {
+      case 'nextApp':
+        _activateAdjacentTab(1);
+      case 'openMenu':
+        widget.onOpenDrawer();
+    }
   }
 
   void _activateAdjacentTab(int delta) {
@@ -1206,6 +1246,21 @@ class BrowserScreenState extends State<BrowserScreen>
       if (controller is WebKitWebViewController &&
           (Platform.isIOS || Platform.isMacOS)) {
         tab.nativeWebViewIdentifier = controller.webViewIdentifier;
+        await tab.controller.addJavaScriptChannel(
+          'WingmanNavigation',
+          onMessageReceived: (message) {
+            if (!mounted ||
+                tab.disposed ||
+                _activeTabId != tab.id ||
+                _tabById(tab.id) != tab) {
+              return;
+            }
+            _runNavigationShortcut(message.message);
+          },
+        );
+        await controller.addJavaScriptAtDocumentStart(
+            browserKeyboardShortcutsScript,
+            forMainFrameOnly: false);
         await controller.addMainFrameJavaScriptAtDocumentStart(
             nstackDocumentStartBootstrapScript);
       }
@@ -2513,7 +2568,7 @@ class BrowserScreenState extends State<BrowserScreen>
                             selected.remove(stack.id);
                           }
                         }),
-                        title: Text(stack.name),
+                        title: Text(stack.displayLabel),
                       ),
                   ],
                 ),
@@ -2541,6 +2596,18 @@ class BrowserScreenState extends State<BrowserScreen>
           break;
         case 'nstack.listNStacks':
           result = await _nstackAccessService.listNStacks(identity, origin);
+          break;
+        case 'nstack.getServiceCatalogue':
+          final stackId = params['stackId']?.toString() ?? '';
+          if (stackId.isEmpty) {
+            throw const NStackException(
+                'invalid_request', 'stackId is required.');
+          }
+          result = await _nstackAccessService.getServiceCatalogue(
+            identity: identity,
+            origin: origin,
+            stackId: stackId,
+          );
           break;
         case 'nstack.listWorkspaces':
           final stackId = params['stackId']?.toString() ?? '';

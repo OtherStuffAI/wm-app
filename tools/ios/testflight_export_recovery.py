@@ -11,14 +11,14 @@ import plistlib
 from appstore_connect import APP, BUNDLE, owner_file, require
 
 
-def export_proof(r, run, s, logs):
+def export_proof(r, run, s, logs, policy_path=None, private_check=None):
     from nightly_testflight import safe_private
     require(s.get('stage') == 'exported' and s.get('api') is True and s.get('app_id') == APP,
             'Recovery requires an exported private API run, never attempted delivery.')
     require(not any((run / name).exists() or (run / name).is_symlink() for name in ('upload.log', 'UploadOptions.plist', 'upload-output')) and
             not list(run.glob('upload-*.log')) and
             not any(k.startswith('upload_') for k in s), 'Delivery intent/evidence exists; readback only.')
-    safe_private(logs)
+    (private_check or safe_private)(logs)
     export = owner_file(run / 'export.log').read_text()
     require('** EXPORT SUCCEEDED **' in export, 'Successful export evidence required.')
     # Preserve the original native bundle; its basename must match this run’s export log.
@@ -53,7 +53,9 @@ def export_proof(r, run, s, logs):
     received = re.findall(r'Received build ID: ([a-f0-9-]+)', content)
     require(received == [ident] and content.rstrip().endswith('Received build ID: ' + ident),
             'Native export log has uncertain or subsequent activity.')
-    require(r.validate_artifacts(run, s) == s['artifact'], 'Retained artifact changed.')
+    artifact = (r.validate_artifacts(run, s) if policy_path is None else
+                r.validate_artifacts(run, s, policy_path=policy_path))
+    require(artifact == s['artifact'], 'Retained artifact changed.')
     with zipfile.ZipFile(s['artifact']['ipa']) as z:
         info = plistlib.loads(z.read('Payload/Runner.app/Info.plist'))
     require(info.get('TFInternalTestingOnly') is True and info.get('CFBundleIdentifier') == BUNDLE and
@@ -97,14 +99,14 @@ def recovery_history(r, client, h, s, proof):
     return {'id': ident, 'version': s['version'], 'build': s['build'], 'created_at': a['createdDate']}
 
 
-def stopped_session(owner):
+def stopped_session(owner, source_repo=None):
     # Supported read-only runtime route; do not infer stopped from an old comment.
     repo = Path(__file__).resolve().parents[3] / 'autopilot'
     result = subprocess.run(['bun', 'clis/sessions.ts', 'archive-info', owner, '--json'],
                             cwd=repo, capture_output=True, text=True, check=True)
     session = json.loads(result.stdout)['session']
     require(session['id'] == owner and bool(session.get('archivedAt')) and
-            session.get('workingDirectory') == str(Path(__file__).resolve().parents[2]),
+            session.get('workingDirectory') == str(source_repo or Path(__file__).resolve().parents[2]),
             'Prior claim owner is not verifiably archived.')
     return {'id': owner, 'archived_at': session['archivedAt']}
 

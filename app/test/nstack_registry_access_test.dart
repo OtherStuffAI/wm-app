@@ -213,6 +213,102 @@ void main() {
     expect(nstackDocumentStartBootstrapScript, contains('nstackready'));
   });
 
+  test('page origins normalize to the exact browser location.origin', () {
+    const cases = {
+      'https://Canopy.Example/feed?tab=1#top': 'https://canopy.example',
+      'https://app.example': 'https://app.example',
+      'https://app.example:443/': 'https://app.example',
+      'https://app.example:8443/x': 'https://app.example:8443',
+      'http://localhost:5173/route?q#f': 'http://localhost:5173',
+      'http://wingman.local/': 'http://wingman.local',
+    };
+    for (final entry in cases.entries) {
+      expect(normalizeNStackOrigin(entry.key), entry.value, reason: entry.key);
+    }
+    expect(normalizeNStackOrigin('http://app.example/'), isEmpty);
+    expect(normalizeNStackOrigin('https://user@app.example/'), isEmpty);
+  });
+
+  test('provider install guard matches the page origin for routed URLs', () {
+    // The browser derives pageOrigin from the full document URL. The provider
+    // only installs when it equals location.origin, so a serialized empty
+    // query/fragment (`?#`) left Canopy with a never-ready stub.
+    const pageUrl = 'https://canopy.example/settings?panel=nstack#connect';
+    final script = nstackBridgeScript(
+      documentId: 'document-secret',
+      pageOrigin: normalizeNStackOrigin(pageUrl),
+    );
+    expect(
+        script,
+        contains(
+            'location.origin !== ${jsonEncode('https://canopy.example')}'));
+    expect(script, isNot(contains('canopy.example?')));
+    expect(script, isNot(contains('canopy.example#')));
+  });
+
+  test('persisted grants keyed by a malformed origin resolve canonically',
+      () async {
+    const identity = 'npub-identity';
+    final preferences = SharedPreferencesAsync();
+    await preferences.setString(
+      '${NStackGrantStore.keyPrefix}$identity',
+      jsonEncode({
+        'version': 1,
+        'grants': [
+          {
+            'origin': 'https://canopy.example?#',
+            'stack_ids': {'internal-a': 'alias-a'},
+            'workspace_ids': <String, String>{},
+            'updated_at': '2026-10-20T00:00:00.000Z',
+          }
+        ],
+      }),
+    );
+    final grants = NStackGrantStore(preferences: preferences);
+    final grant = await grants.find(identity, 'https://canopy.example/feed');
+    expect(grant?.origin, 'https://canopy.example');
+  });
+
+  test('catalogue metadata requires consent and an origin-scoped alias',
+      () async {
+    const identity = 'npub-identity';
+    final registry = NStackRegistryStore();
+    await registry.addOrUpdate(identity, _stack('internal-a', 'Host'));
+    final service = NStackAccessService(
+        registryStore: registry, grantStore: NStackGrantStore());
+    await expectLater(
+      service.getServiceCatalogue(
+          identity: identity,
+          origin: 'https://app.example',
+          stackId: 'internal-a'),
+      throwsA(isA<NStackException>()),
+    );
+    await service.disclose(
+        identity: identity,
+        origin: 'https://app.example',
+        stackInternalIds: ['internal-a'],
+        includeWorkspaces: false);
+    final alias = (await service.listNStacks(identity, 'https://app.example'))
+        .single['id'] as String;
+    final metadata = await service.getServiceCatalogue(
+        identity: identity, origin: 'https://app.example', stackId: alias);
+    expect(metadata['stackId'], alias);
+    expect(metadata['stale'], isTrue);
+    expect(metadata['services'], isEmpty);
+    expect(metadata, isNot(contains('handle')));
+    await expectLater(
+      service.getServiceCatalogue(
+          identity: identity, origin: 'https://other.example', stackId: alias),
+      throwsA(isA<NStackException>()),
+    );
+    await service.revokeOrigin(identity, 'https://app.example');
+    await expectLater(
+      service.getServiceCatalogue(
+          identity: identity, origin: 'https://app.example', stackId: alias),
+      throwsA(isA<NStackException>()),
+    );
+  });
+
   test('deprecated capability method rejects locally without dispatch', () {
     final provider = nstackBridgeScript(
         documentId: 'document-secret', pageOrigin: 'https://app.example');

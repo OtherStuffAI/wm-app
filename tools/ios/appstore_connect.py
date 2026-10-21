@@ -122,7 +122,7 @@ class Client:
             require(v['platform'] == 'IOS', 'Unexpected build platform.')
             result.append({'id': b['id'], 'build': int(number), 'version': v['version'],
                            'processing': b['attributes']['processingState']})
-        pending, inactive = [], []
+        pending, inactive, cancelled = [], [], []
         rules = self.config.get('inactive_uploads', {})
         for u in uploads:
             a = u['attributes']
@@ -131,6 +131,14 @@ class Client:
             require(re.fullmatch(r'\d+\.\d+\.\d+', a['cfBundleShortVersionString']), 'Invalid upload version.')
             state = a['state']['state']
             require(state in ('COMPLETE', 'FAILED', 'PROCESSING', 'AWAITING_UPLOAD'), 'Unknown upload state.')
+            cancellation = self.config.get('cancelled_export_uploads', {}).get(u['id'])
+            if cancellation:
+                from testflight_export_cancellation import verified_rule
+                require(not any(b['build'] == int(a['cfBundleVersion']) for b in result),
+                        'Cancelled export number now has a delivered build; reconcile again.')
+                verified_rule(self, u['id'], a, cancellation)
+                cancelled.append(u['id'])
+                continue
             if state in ('COMPLETE', 'FAILED'):
                 continue
             rule = rules.get(u['id'])
@@ -150,9 +158,12 @@ class Client:
             else:
                 pending.append(u['id'])
         pending_builds = [b['id'] for b in result if b['processing'] == 'PROCESSING']
+        require(set(self.config.get('cancelled_export_uploads', {})) == set(cancelled),
+                'A cancelled export reservation disappeared from complete history; reconcile again.')
         require(all(b['processing'] in ('VALID', 'PROCESSING', 'FAILED', 'INVALID') for b in result), 'Unknown build processing state.')
         return {'pending_build_ids': pending_builds, 'builds': builds, 'uploads': uploads, 'versions': versions, 'history': result,
-                'pending_upload_ids': pending, 'inactive_upload_ids': inactive}
+                'pending_upload_ids': pending, 'inactive_upload_ids': inactive,
+                'cancelled_export_upload_ids': cancelled}
 
     def evidence(self, rule):
         from nightly_testflight import safe_private

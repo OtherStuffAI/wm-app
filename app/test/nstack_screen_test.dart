@@ -9,7 +9,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/nstack/nstack_access.dart';
-import 'package:wingman_app/src/features/nstack/nstack_discovery.dart';
+import 'package:wingman_app/src/features/nstack/nstack_workspace_discovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_models.dart';
 import 'package:wingman_app/src/features/nstack/nstack_recovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_screen.dart';
@@ -21,7 +21,7 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
-  testWidgets('management surface shows host and revokes origin discovery',
+  testWidgets('management surface hides endpoints and revokes origin discovery',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 3000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -72,10 +72,63 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Personal NStack'), findsOneWidget);
-    expect(find.text('https://host.example\n0 workspace(s)'), findsOneWidget);
+    expect(find.text('Identity unavailable\n0 workspace(s)'), findsOneWidget);
+    expect(find.textContaining('https://host.example'), findsNothing);
+    await tester.tap(find.byTooltip('Reveal connection details'));
+    await tester.pumpAndSettle();
+    expect(find.text('https://host.example'), findsOneWidget);
+    expect(find.byTooltip('Copy Connection address'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('https://host.example'), findsNothing);
+    await tester.tap(find.byTooltip('Rename NStack'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), 'Home NStack');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Home NStack'), findsOneWidget);
+    expect((await NStackRegistryStore().load(identity)).activeStack?.name,
+        'Home NStack');
+
+    await tester.scrollUntilVisible(find.text('Approved website'), 300);
+    expect(find.textContaining('https://ambulando.example'), findsNothing);
+    await access.disclose(
+        identity: identity,
+        origin: 'https://second.example',
+        stackInternalIds: const ['stack-a'],
+        includeWorkspaces: false);
+    // Reopen the screen to reload both independently persisted grants.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: NStackScreen(
+      config: AppConfig.defaults()
+          .copyWith(deviceNpub: identity, deviceSecret: 'secret-present'),
+      registryStore: registry,
+      grantStore: grants,
+      accessService: access,
+      discoveryService: NStackWorkspaceDiscoveryService(
+          registryStore: registry, discovery: _NoDiscovery()),
+      recoveryService: NStackRecoveryService(
+          registryStore: registry, storage: _NoStorage(), relay: _NoRelay()),
+      onRegistryChanged: () {},
+    ))));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-        find.textContaining('https://ambulando.example'), 300);
-    expect(find.textContaining('https://ambulando.example'), findsOneWidget);
+        find.byTooltip('Reveal website origin').first, 300);
+    expect(find.byTooltip('Reveal website origin'), findsNWidgets(2));
+    await tester.tap(find.byTooltip('Reveal website origin').first);
+    await tester.pumpAndSettle();
+    final revealed =
+        tester.widget<SelectableText>(find.byType(SelectableText)).data!;
+    expect(['https://ambulando.example', 'https://second.example'],
+        contains(revealed));
+    await tester.tap(find.text('Revoke this website'));
+    await tester.pumpAndSettle();
+    final remaining = await grants.list(identity);
+    expect(remaining, hasLength(1));
+    expect(remaining.single.origin, isNot(revealed));
+    expect(find.textContaining(revealed), findsNothing);
     await tester.tap(find.widgetWithText(TextButton, 'Revoke'));
     await tester.pumpAndSettle();
     expect(await grants.list(identity), isEmpty);
@@ -86,6 +139,8 @@ void main() {
   testWidgets(
       'backup workspace is explicit, changeable and reports manager enablement',
       (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final identity = NostrCrypto.importIdentity(_identitySecret);
     final registry = NStackRegistryStore();
     await registry.addOrUpdate(
@@ -125,6 +180,16 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
+    final ordinaryText = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((w) => w.data ?? '')
+        .join('\n');
+    expect(ordinaryText, isNot(contains(identity.npub)));
+    for (final workspace in _backupStackWithTwoWorkspaces.workspaces) {
+      expect(ordinaryText, isNot(contains(workspace.remoteId)));
+      expect(ordinaryText, isNot(contains(workspace.workspaceServiceNpub!)));
+      expect(ordinaryText, isNot(contains(workspace.directHttpsUrl!)));
+    }
     expect(
         tester
             .widget<RadioGroup<String>>(find.byType(RadioGroup<String>))
@@ -136,9 +201,10 @@ void main() {
     final second =
         find.byKey(const ValueKey('backup-workspace-stack-a-workspace-b'));
     expect(second, findsOneWidget);
+    await tester.scrollUntilVisible(second, 200);
     await tester.tap(second);
     await tester.pumpAndSettle();
-    expect(find.text('Backup destination: Personal NStack · Operations'),
+    expect(find.textContaining('Backup destination: Personal NStack ·'),
         findsOneWidget);
     expect(find.byKey(const ValueKey('backup-namespace-manager-required')),
         findsOneWidget);
@@ -148,6 +214,7 @@ void main() {
     final first =
         find.byKey(const ValueKey('backup-workspace-stack-a-workspace-a'));
     expect(first, findsOneWidget);
+    await tester.scrollUntilVisible(first, 200);
     await tester.tap(first);
     await tester.pumpAndSettle();
     expect((await registry.load(identity.npub)).backupDestination?.workspaceId,
@@ -235,7 +302,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'https://stack.example/');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
-    expect(find.text('stack.example'), findsOneWidget);
+    expect(find.text('NStack'), findsOneWidget);
     expect(find.text('No accessible workspaces'), findsOneWidget);
   });
 
@@ -437,8 +504,7 @@ void main() {
     expect(
       tester
           .widget<IconButton>(find.byWidgetPredicate((widget) =>
-              widget is IconButton &&
-              widget.tooltip == 'Refresh Locked stack workspaces'))
+              widget is IconButton && widget.tooltip == 'Refresh workspaces'))
           .onPressed,
       isNull,
     );

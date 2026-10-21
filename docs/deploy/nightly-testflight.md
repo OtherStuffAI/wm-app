@@ -223,3 +223,50 @@ An interrupted recovery must be inspected before any further mutation.
 Apple documents [altool as a supported upload route](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds).
 The installed tool's `--help` specifies package identity and private-key-path
 options. Processing and exact private audience readback remain mandatory.
+
+## Cancel reviewed never-uploaded exports
+
+When multiple repository roots exported competing sources, select one authoritative
+release coordinator first. Neither competing binary should be uploaded if the
+approved release needs their combined source. The existing recovery command
+deliberately rejects multiple pending exports.
+
+Use `api-cancel-exports` only with explicit authorization to cancel the exact
+retained exports. This is a local, evidence-bound disposition, not an Apple
+delete: all original Apple records, run states, archives, IPAs, native logs and
+claim history remain intact. Never use it for an uncertain upload.
+
+Prepare an owner-only JSON manifest in ignored private handoffs with `schema: 1`,
+`app_id`, `reviewed_by` (the current `SESSION_ID`), a concrete `authorization`
+reference, and `entries`. Each entry pins `repository`, absolute `run_path`,
+absolute retained `export_logs`, `owner`, claimed Perth `day`, `source_commit`,
+`state_sha256`, exact `upload_id`, `version`, integer `build`, Apple `created_at`,
+and absolute `export_policy`. Retain the exact policy actually used inside the
+original run and verify its SHA-256 against the unchanged state; some sources
+generate a private team-configured policy from a template during export.
+
+```sh
+"$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-cancel-exports \
+  --run "$CANCELLATION_RUN" --cancellation-manifest "$REVIEWED_MANIFEST" \
+  --confirm-cancel-exports
+```
+
+The helper checks ignored/untracked storage without symlink paths in each
+repository; exact successful native creation requests and responses; unchanged
+signed archive/IPA bytes and internal-only policy; no upload intent or logs;
+finished failed source claims with no active claim in either root; and archived
+other owners through the supported session API. The current coordinator may
+cancel its own finished failed export without archiving itself. Complete live
+Apple history must contain exactly the reviewed pending set, no processing
+builds, no delivered build with either number, null uploaded dates, and empty
+complete file collections. Empty collections alone never establish cancellation.
+
+After every check passes, the command retains immutable proof and a byte-exact
+credential-reference backup, then atomically adds scoped
+`cancelled_export_uploads` rules. It exports no credential or key material and
+makes no Apple mutation. Future history reads revalidate local proof, hashes,
+finished claims and exact Apple facts; drift fails closed. The numbers continue
+to participate in monotonic reservations. Never patch original state files or
+mislabel new cancellations as inactive legacy records. A failed or interrupted
+command must be inspected before another attempt. Build a fresh committed
+combined source with a new claim and a higher history-derived number afterward.

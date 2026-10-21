@@ -11,7 +11,8 @@ class NStackRegistryStore extends ChangeNotifier {
   NStackRegistryStore({SharedPreferencesAsync? preferences})
       : _preferences = preferences ?? SharedPreferencesAsync();
 
-  static const keyPrefix = 'wingman.nstack.registry.v1.';
+  static const keyPrefix = 'wingman.nstack.registry.v2.';
+  static const legacyKeyPrefix = 'wingman.nstack.registry.v1.';
   final SharedPreferencesAsync _preferences;
   final Map<String, NStackRegistry> _cache = {};
 
@@ -21,9 +22,16 @@ class NStackRegistryStore extends ChangeNotifier {
     final cached = _cache[identity];
     if (cached != null) return cached;
     final raw = await _preferences.getString('$keyPrefix$identity');
-    final registry = raw == null
-        ? const NStackRegistry()
-        : NStackRegistry.decode(raw) ?? const NStackRegistry();
+    var registry = raw == null ? null : NStackRegistry.decode(raw);
+    if (registry == null && raw == null) {
+      final legacy = await _preferences.getString('$legacyKeyPrefix$identity');
+      registry = legacy == null ? null : NStackRegistry.decode(legacy);
+      if (registry != null) {
+        await _preferences.setString(
+            '$keyPrefix$identity', jsonEncode(registry.toJson()));
+      }
+    }
+    registry ??= const NStackRegistry();
     final migrated = _migrateLegacyBackupDestination(registry);
     if (!identical(migrated, registry)) {
       await _preferences.setString(
@@ -35,7 +43,7 @@ class NStackRegistryStore extends ChangeNotifier {
 
   Future<void> replaceAtomic(String signerNpub, NStackRegistry registry) async {
     final identity = signerNpub.trim();
-    if (identity.isEmpty || registry.version != 1) {
+    if (identity.isEmpty || registry.version != nstackRegistryVersion) {
       throw StateError('A valid identity and registry are required.');
     }
     final encoded = jsonEncode(registry.toJson());
@@ -45,6 +53,36 @@ class NStackRegistryStore extends ChangeNotifier {
     await _preferences.setString('$keyPrefix$identity', encoded);
     _cache[identity] = registry;
     notifyListeners();
+  }
+
+  Future<NStackEntry> updateCatalogue(
+    String signerNpub,
+    String stackId,
+    NStackCatalogueStatus status, {
+    required String expectedUrl,
+  }) async {
+    final current = await load(signerNpub);
+    final existing = current.stacks.where((stack) => stack.id == stackId);
+    if (existing.isEmpty) throw StateError('NStack no longer exists.');
+    if (existing.first.url != expectedUrl) {
+      throw StateError('NStack origin changed during service discovery.');
+    }
+    final pinned = existing.first.publicIdentity;
+    final reported = status.catalogue?.towerNpub;
+    if (pinned != null && reported != null && pinned != reported) {
+      throw StateError(
+          'NStack identity changed. Add it as a separate connection.');
+    }
+    final updated =
+        existing.first.copyWith(towerNpub: reported, catalogueStatus: status);
+    await replaceAtomic(
+      signerNpub,
+      current.next(stacks: [
+        for (final stack in current.stacks)
+          if (stack.id == stackId) updated else stack,
+      ]),
+    );
+    return updated;
   }
 
   Future<NStackRegistry> addOrUpdate(
@@ -80,11 +118,34 @@ class NStackRegistryStore extends ChangeNotifier {
     final current = await load(signerNpub);
     final existing =
         current.stacks.where((stack) => stack.id == candidate.id).firstOrNull;
+    if (expectedPreviousUrl != null && existing == null) {
+      throw StateError('NStack was removed during discovery.');
+    }
     if (existing != null &&
         existing.url != (expectedPreviousUrl ?? candidate.url)) {
       throw StateError('NStack address changed during discovery.');
     }
-    final source = existing?.copyWith(url: candidate.url) ?? candidate;
+    final identities =
+        discovered.map((w) => w.serviceNpub).whereType<String>().toSet();
+    if (identities.length > 1) {
+      throw StateError('Discovery returned conflicting NStack identities.');
+    }
+    final reported = identities.firstOrNull;
+    final pinned = existing?.publicIdentity;
+    final changingAddress = existing != null && existing.url != candidate.url;
+    if ((pinned != null && reported != null && pinned != reported) ||
+        (changingAddress && (pinned == null || reported != pinned))) {
+      throw StateError(
+          'NStack identity could not be matched. Add it as a separate connection.');
+    }
+    final source = (existing?.copyWith(
+              url: candidate.url,
+              clearCatalogueStatus: changingAddress,
+              clearFipsEndpoint: changingAddress,
+              clearPeerNpub: changingAddress,
+            ) ??
+            candidate)
+        .copyWith(towerNpub: reported);
     final oldByStableIdentity = <String, NStackWorkspace>{
       for (final workspace in source.workspaces)
         _workspaceStableIdentity(workspace): workspace,
@@ -110,7 +171,6 @@ class NStackRegistryStore extends ChangeNotifier {
         ),
     ];
     final nextEntry = source.copyWith(
-      name: Uri.parse(source.url).host,
       workspaces: List.unmodifiable(merged),
       workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
         lastAttemptAt: refreshedAt.toUtc(),
@@ -122,8 +182,7 @@ class NStackRegistryStore extends ChangeNotifier {
       stacks: [
         for (final stack in current.stacks)
           if (stack.id != nextEntry.id) stack,
-        if (existing == null || current.stacks.any((s) => s.id == nextEntry.id))
-          nextEntry,
+        nextEntry,
       ],
       activeStackId: current.activeStackId ?? nextEntry.id,
     );
@@ -162,6 +221,25 @@ class NStackRegistryStore extends ChangeNotifier {
       ]),
     );
     return nextEntry;
+  }
+
+  Future<void> rename(String signerNpub, String stackId, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty ||
+        trimmed.length > 128 ||
+        trimmed.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+      throw StateError('Enter a display name of 1–128 characters.');
+    }
+    final current = await load(signerNpub);
+    if (!current.stacks.any((s) => s.id == stackId)) {
+      throw StateError('NStack no longer exists.');
+    }
+    await replaceAtomic(
+        signerNpub,
+        current.next(stacks: [
+          for (final stack in current.stacks)
+            if (stack.id == stackId) stack.copyWith(name: trimmed) else stack,
+        ]));
   }
 
   Future<NStackRegistry> remove(String signerNpub, String stackId) async {
@@ -314,7 +392,7 @@ NStackRegistry _migrateLegacyBackupDestination(NStackRegistry registry) {
 }
 
 String _workspaceStableIdentity(NStackWorkspace workspace) =>
-    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
+    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}\u0000${workspace.workspaceServiceNpub ?? ''}';
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

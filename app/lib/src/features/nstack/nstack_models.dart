@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../browser/browser_bookmark_store.dart';
 
 const nstackProtocolVersion = 1;
+const nstackRegistryVersion = 2;
 const nstackRecoveryHintKind = 30078;
 const nstackRecoveryHintDTag = 'org.wingman.nbrowser.settings.v1';
 const nbrowserAppNamespaceLabel = 'org.wingman.nbrowser.app-namespace.v1';
@@ -33,6 +34,10 @@ class NStackWorkspace {
   final String? directHttpsUrl;
   final String? serviceNpub;
   final String? membershipRole;
+
+  String get displayName => safeConnectionName(name, fallback: 'Workspace');
+  String get displayLabel =>
+      '$displayName · ${abbreviatedNpub(workspaceServiceNpub)}';
 
   bool get isDiscovered =>
       workspaceOwnerNpub != null && workspaceServiceNpub != null;
@@ -66,14 +71,14 @@ class NStackWorkspace {
     if (id == null || name == null || remoteId == null) return null;
     final stableRemoteId = value['stable_remote_id'] == null
         ? null
-        : _bounded(value: value['stable_remote_id'], maximum: 128);
+        : _boundedString(value['stable_remote_id'], 1, 128);
     final owner = _optionalNpub(value['workspace_owner_npub']);
     final workspaceService = _optionalNpub(value['workspace_service_npub']);
     final directUrl = canonicalNStackUrl(value['direct_https_url']?.toString());
     final service = _optionalNpub(value['service_npub']);
     final membershipRole = value['membership_role'] == null
         ? null
-        : _bounded(value: value['membership_role'], maximum: 32);
+        : _boundedString(value['membership_role'], 1, 32);
     final hasDiscoveryMetadata = value['workspace_owner_npub'] != null ||
         value['workspace_service_npub'] != null ||
         value['stable_remote_id'] != null ||
@@ -180,10 +185,10 @@ class NStackWorkspaceDiscoveryStatus {
         : DateTime.tryParse(value['last_success_at'].toString());
     final error = value['error'];
     final errorCode = error is Map<String, dynamic>
-        ? _bounded(value: error['code'], maximum: 64)
+        ? _boundedString(error['code'], 1, 64)
         : null;
     final errorMessage = error is Map<String, dynamic>
-        ? _bounded(value: error['message'], maximum: 256)
+        ? _boundedString(error['message'], 1, 256)
         : null;
     if (attempt == null ||
         value['stale'] is! bool ||
@@ -256,28 +261,281 @@ class NStackBrowserSettings {
   }
 }
 
+enum NStackServiceAvailability { available, unavailable, unknown }
+
+class NStackService {
+  const NStackService({
+    required this.id,
+    required this.kind,
+    required this.endpoint,
+    required this.version,
+    required this.protocols,
+    required this.capabilities,
+    required this.availability,
+    required this.checkedAt,
+    this.nips = const [],
+    this.buds = const [],
+    this.actionable = false,
+  });
+
+  final String id;
+  final String kind;
+  final String endpoint;
+  final String version;
+  final List<String> protocols;
+  final List<String> capabilities;
+  final List<int> nips;
+  final List<int> buds;
+  final NStackServiceAvailability availability;
+  final DateTime? checkedAt;
+  final bool actionable;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'kind': kind,
+        'endpoint': endpoint,
+        'version': version,
+        'protocols': protocols,
+        'capabilities': capabilities,
+        'features': {'nips': nips, 'buds': buds},
+        'availability': {
+          'status': availability.name,
+          'checked_at': checkedAt?.toUtc().toIso8601String(),
+        },
+        'actionable': actionable,
+      };
+
+  static NStackService? tryParse(Object? value) {
+    if (value is! Map<String, dynamic>) return null;
+    final id = _boundedString(value['id'], 1, 64);
+    final kind = _boundedString(value['kind'], 1, 64);
+    final endpoint = _boundedString(value['endpoint'], 1, 2048);
+    final version = _boundedString(value['version'], 1, 128);
+    final protocols = _boundedStringList(value['protocols'], 32, 64);
+    final capabilities = _boundedStringList(value['capabilities'], 64, 128);
+    final features = value['features'];
+    final availability = value['availability'];
+    if (id == null ||
+        kind == null ||
+        endpoint == null ||
+        version == null ||
+        protocols == null ||
+        capabilities == null ||
+        features is! Map<String, dynamic> ||
+        availability is! Map<String, dynamic>) {
+      return null;
+    }
+    final serviceOrigin = _canonicalServiceOrigin(endpoint);
+    final knownPair = switch (id) {
+      'tower' => kind == 'tower' &&
+          serviceOrigin != null &&
+          {'https', 'http'}.contains(serviceOrigin.scheme),
+      'relay' => kind == 'nostr_relay' &&
+          serviceOrigin != null &&
+          {'wss', 'ws'}.contains(serviceOrigin.scheme),
+      'blossom' => kind == 'blossom' &&
+          serviceOrigin != null &&
+          {'https', 'http'}.contains(serviceOrigin.scheme),
+      _ => serviceOrigin != null,
+    };
+    if (!knownPair) return null;
+    final status = NStackServiceAvailability.values
+        .where((item) => item.name == availability['status'])
+        .firstOrNull;
+    final checkedAt = availability['checked_at'] == null
+        ? null
+        : DateTime.tryParse(availability['checked_at'].toString())?.toUtc();
+    final nips = _boundedIntList(features['nips'], 64);
+    final buds = _boundedIntList(features['buds'], 64);
+    if (status == null ||
+        (availability['checked_at'] != null && checkedAt == null) ||
+        nips == null ||
+        buds == null) {
+      return null;
+    }
+    return NStackService(
+      id: id,
+      kind: kind,
+      endpoint: serviceOrigin.toString(),
+      version: version,
+      protocols: List.unmodifiable(protocols),
+      capabilities: List.unmodifiable(capabilities),
+      nips: List.unmodifiable(nips),
+      buds: List.unmodifiable(buds),
+      availability: status,
+      checkedAt: checkedAt,
+      actionable: {'tower', 'relay', 'blossom'}.contains(id) &&
+          value['actionable'] == true,
+    );
+  }
+}
+
+class NStackServiceCatalogue {
+  const NStackServiceCatalogue({
+    required this.generatedAt,
+    required this.fetchedAt,
+    required this.cacheTtlSeconds,
+    required this.services,
+    this.towerNpub,
+    this.stackName,
+  });
+
+  final DateTime generatedAt;
+  final DateTime fetchedAt;
+  final int cacheTtlSeconds;
+  final String? towerNpub;
+  final String? stackName;
+  final List<NStackService> services;
+
+  bool isStaleAt(DateTime now) =>
+      !fetchedAt.add(Duration(seconds: cacheTtlSeconds)).isAfter(now.toUtc());
+
+  NStackService? service(String id) =>
+      services.where((service) => service.id == id).firstOrNull;
+
+  Map<String, dynamic> toJson() => {
+        'schema': 'org.wingman.nstack.services',
+        'schema_version': 1,
+        'generated_at': generatedAt.toUtc().toIso8601String(),
+        'fetched_at': fetchedAt.toUtc().toIso8601String(),
+        'cache_ttl_seconds': cacheTtlSeconds,
+        'stack': {'tower_npub': towerNpub, 'name': stackName},
+        'services': [for (final service in services) service.toJson()],
+      };
+
+  static NStackServiceCatalogue? tryParse(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['schema'] != 'org.wingman.nstack.services' ||
+        value['schema_version'] != 1 ||
+        value['stack'] is! Map<String, dynamic> ||
+        value['services'] is! List) {
+      return null;
+    }
+    final generatedAt =
+        DateTime.tryParse(value['generated_at']?.toString() ?? '')?.toUtc();
+    final fetchedAt =
+        DateTime.tryParse(value['fetched_at']?.toString() ?? '')?.toUtc();
+    final ttl = value['cache_ttl_seconds'];
+    final stack = value['stack'] as Map<String, dynamic>;
+    final towerNpub = _optionalNpub(stack['tower_npub']);
+    final stackName =
+        stack['name'] == null ? null : _boundedString(stack['name'], 1, 128);
+    if (generatedAt == null ||
+        fetchedAt == null ||
+        ttl is! int ||
+        ttl < 5 ||
+        ttl > 3600 ||
+        (stack['tower_npub'] != null && towerNpub == null) ||
+        (stack['name'] != null && stackName == null)) {
+      return null;
+    }
+    final services = <NStackService>[];
+    final seen = <String>{};
+    for (final raw in value['services'] as List) {
+      final service = NStackService.tryParse(raw);
+      if (service == null || !seen.add(service.id)) return null;
+      services.add(service);
+    }
+    if (services.length > 32) return null;
+    return NStackServiceCatalogue(
+      generatedAt: generatedAt,
+      fetchedAt: fetchedAt,
+      cacheTtlSeconds: ttl,
+      towerNpub: towerNpub,
+      stackName: stackName,
+      services: List.unmodifiable(services),
+    );
+  }
+}
+
+class NStackCatalogueStatus {
+  const NStackCatalogueStatus({
+    required this.checkedAt,
+    this.catalogue,
+    this.errorCode,
+    this.errorMessage,
+  });
+
+  final DateTime checkedAt;
+  final NStackServiceCatalogue? catalogue;
+  final String? errorCode;
+  final String? errorMessage;
+
+  bool get hasError => errorCode != null;
+
+  Map<String, dynamic> toJson() => {
+        'checked_at': checkedAt.toUtc().toIso8601String(),
+        'catalogue': catalogue?.toJson(),
+        'error': errorCode == null
+            ? null
+            : {'code': errorCode, 'message': errorMessage},
+      };
+
+  static NStackCatalogueStatus? tryParse(Object? value) {
+    if (value is! Map<String, dynamic>) return null;
+    final checkedAt =
+        DateTime.tryParse(value['checked_at']?.toString() ?? '')?.toUtc();
+    final catalogue = value['catalogue'] == null
+        ? null
+        : NStackServiceCatalogue.tryParse(value['catalogue']);
+    final error = value['error'];
+    final errorCode = error is Map<String, dynamic>
+        ? _boundedString(error['code'], 1, 64)
+        : null;
+    final errorMessage = error is Map<String, dynamic>
+        ? _boundedString(error['message'], 1, 256)
+        : null;
+    if (checkedAt == null ||
+        (value['catalogue'] != null && catalogue == null) ||
+        (error != null && (errorCode == null || errorMessage == null))) {
+      return null;
+    }
+    return NStackCatalogueStatus(
+      checkedAt: checkedAt,
+      catalogue: catalogue,
+      errorCode: errorCode,
+      errorMessage: errorMessage,
+    );
+  }
+}
+
 class NStackEntry {
   const NStackEntry({
     required this.id,
     required this.name,
     required this.url,
+    this.towerNpub,
     this.fipsEndpoint,
     this.peerNpub,
     this.workspaces = const [],
     this.settings = const NStackBrowserSettings(),
+    this.catalogueStatus,
     this.workspaceDiscovery,
   });
 
   final String id;
   final String name;
   final String url;
+  final String? towerNpub;
+
+  String? get publicIdentity =>
+      towerNpub ??
+      catalogueStatus?.catalogue?.towerNpub ??
+      workspaces.map((w) => w.serviceNpub).whereType<String>().firstOrNull;
+  String get displayName => name == Uri.parse(url).host
+      ? 'NStack'
+      : safeConnectionName(name, fallback: 'NStack');
+  String get displayLabel =>
+      '$displayName · ${abbreviatedNpub(publicIdentity)}';
   final String? fipsEndpoint;
   final String? peerNpub;
   final List<NStackWorkspace> workspaces;
   final NStackBrowserSettings settings;
+  final NStackCatalogueStatus? catalogueStatus;
   final NStackWorkspaceDiscoveryStatus? workspaceDiscovery;
 
   NStackEntry copyWith({
+    String? towerNpub,
     String? name,
     String? url,
     String? fipsEndpoint,
@@ -286,11 +544,14 @@ class NStackEntry {
     bool clearPeerNpub = false,
     List<NStackWorkspace>? workspaces,
     NStackBrowserSettings? settings,
+    NStackCatalogueStatus? catalogueStatus,
+    bool clearCatalogueStatus = false,
     NStackWorkspaceDiscoveryStatus? workspaceDiscovery,
     bool clearWorkspaceDiscovery = false,
   }) {
     return NStackEntry(
       id: id,
+      towerNpub: towerNpub ?? this.towerNpub,
       name: name ?? this.name,
       url: url ?? this.url,
       fipsEndpoint:
@@ -298,6 +559,8 @@ class NStackEntry {
       peerNpub: clearPeerNpub ? null : peerNpub ?? this.peerNpub,
       workspaces: workspaces ?? this.workspaces,
       settings: settings ?? this.settings,
+      catalogueStatus:
+          clearCatalogueStatus ? null : catalogueStatus ?? this.catalogueStatus,
       workspaceDiscovery: clearWorkspaceDiscovery
           ? null
           : workspaceDiscovery ?? this.workspaceDiscovery,
@@ -308,10 +571,12 @@ class NStackEntry {
         'id': id,
         'name': name,
         'url': url,
+        'tower_npub': towerNpub,
         'fips_endpoint': fipsEndpoint,
         'peer_npub': peerNpub,
         'workspaces': [for (final workspace in workspaces) workspace.toJson()],
         'settings': settings.toJson(),
+        'service_catalogue': catalogueStatus?.toJson(),
         'workspace_discovery': workspaceDiscovery?.toJson(),
       };
 
@@ -321,10 +586,20 @@ class NStackEntry {
     final name = _nonEmpty(value['name']);
     final url = canonicalNStackUrl(value['url']?.toString());
     if (id == null || name == null || url == null) return null;
+    final towerNpub = _optionalNpub(value['tower_npub']);
+    if (value['tower_npub'] != null && towerNpub == null) return null;
     final fipsEndpoint =
         canonicalFipsEndpoint(value['fips_endpoint']?.toString());
     final peerNpub = _optionalNpub(value['peer_npub']);
     if ((fipsEndpoint == null) != (peerNpub == null)) return null;
+    final catalogueStatus = value['service_catalogue'] == null
+        ? null
+        : NStackCatalogueStatus.tryParse(value['service_catalogue']);
+    if (value['service_catalogue'] != null && catalogueStatus == null) {
+      return null;
+    }
+    final tower = catalogueStatus?.catalogue?.service('tower');
+    if (tower != null && !_sameHttpOrigin(tower.endpoint, url)) return null;
     final workspaces = <NStackWorkspace>[];
     final seen = <String>{};
     final seenRemote = <String>{};
@@ -342,26 +617,30 @@ class NStackEntry {
         workspaces.add(workspace);
       }
     }
-    final discovery = value['workspace_discovery'] == null
+    final workspaceDiscovery = value['workspace_discovery'] == null
         ? null
         : NStackWorkspaceDiscoveryStatus.tryParse(value['workspace_discovery']);
-    if (value['workspace_discovery'] != null && discovery == null) return null;
+    if (value['workspace_discovery'] != null && workspaceDiscovery == null) {
+      return null;
+    }
     return NStackEntry(
       id: id,
       name: name,
+      towerNpub: towerNpub,
       url: url,
       fipsEndpoint: fipsEndpoint,
       peerNpub: peerNpub,
       workspaces: List.unmodifiable(workspaces),
       settings: NStackBrowserSettings.tryParse(value['settings']),
-      workspaceDiscovery: discovery,
+      catalogueStatus: catalogueStatus,
+      workspaceDiscovery: workspaceDiscovery,
     );
   }
 }
 
 class NStackRegistry {
   const NStackRegistry({
-    this.version = 1,
+    this.version = nstackRegistryVersion,
     this.revision = 0,
     this.activeStackId,
     this.hostStackId,
@@ -380,7 +659,6 @@ class NStackRegistry {
 
   NStackEntry? get activeStack => _byId(activeStackId);
   NStackEntry? get hostStack => _byId(hostStackId);
-
   NStackEntry? get backupStack => _byId(backupDestination?.stackId);
 
   NStackWorkspace? get backupWorkspace {
@@ -423,7 +701,7 @@ class NStackRegistry {
     String? valid(String? value) =>
         nextStacks.any((stack) => stack.id == value) ? value : null;
     return NStackRegistry(
-      version: 1,
+      version: nstackRegistryVersion,
       revision: revision + 1,
       activeStackId:
           valid(clearActive ? null : activeStackId ?? this.activeStackId),
@@ -452,7 +730,7 @@ class NStackRegistry {
   static NStackRegistry? tryParse(Object? value) {
     if (value is! Map<String, dynamic> ||
         value['schema'] != 'org.wingman.nbrowser.nstack-registry' ||
-        value['version'] != 1 ||
+        (value['version'] != 1 && value['version'] != nstackRegistryVersion) ||
         value['stacks'] is! List) {
       return null;
     }
@@ -476,6 +754,7 @@ class NStackRegistry {
       return null;
     }
     return NStackRegistry(
+      version: nstackRegistryVersion,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       activeStackId: active,
       hostStackId: host,
@@ -498,6 +777,77 @@ class NStackRegistry {
 bool isWorkspaceUuid(String value) => RegExp(
       r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
     ).hasMatch(value);
+
+bool _sameHttpOrigin(String left, String right) {
+  final a = Uri.tryParse(left);
+  final b = Uri.tryParse(right);
+  if (a == null || b == null) return false;
+  int port(Uri uri) =>
+      uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
+  return a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
+      a.host.toLowerCase() == b.host.toLowerCase() &&
+      port(a) == port(b);
+}
+
+String? _boundedString(Object? value, int minimum, int maximum) {
+  if (value is! String || value.length < minimum || value.length > maximum) {
+    return null;
+  }
+  if (value.trim() != value || value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+    return null;
+  }
+  return value;
+}
+
+List<String>? _boundedStringList(
+    Object? value, int maximumItems, int maximumLength) {
+  if (value is! List || value.length > maximumItems) return null;
+  final result = <String>[];
+  final seen = <String>{};
+  for (final item in value) {
+    final text = _boundedString(item, 1, maximumLength);
+    if (text == null || !seen.add(text)) return null;
+    result.add(text);
+  }
+  return result;
+}
+
+List<int>? _boundedIntList(Object? value, int maximumItems) {
+  if (value == null) return const [];
+  if (value is! List || value.length > maximumItems) return null;
+  final result = <int>[];
+  final seen = <int>{};
+  for (final item in value) {
+    if (item is! int || item < 1 || item > 65535 || !seen.add(item)) {
+      return null;
+    }
+    result.add(item);
+  }
+  return result;
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}
+
+Uri? _canonicalServiceOrigin(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.query.isNotEmpty ||
+      uri.fragment.isNotEmpty ||
+      (uri.path.isNotEmpty && uri.path != '/')) {
+    return null;
+  }
+  final host = uri.host.toLowerCase();
+  final local = {'localhost', '127.0.0.1', '::1'}.contains(host);
+  if (!{'https', 'wss'}.contains(uri.scheme) &&
+      !(local && {'http', 'ws'}.contains(uri.scheme))) {
+    return null;
+  }
+  return uri.replace(host: host, path: '');
+}
 
 String? canonicalNStackUrl(String? value) {
   final raw = value?.trim() ?? '';
@@ -544,12 +894,21 @@ String? _optionalNpub(Object? value) {
       : null;
 }
 
-String? _bounded({required Object? value, required int maximum}) {
-  final text = _nonEmpty(value);
-  if (text == null ||
-      text.length > maximum ||
-      text.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
-    return null;
+/// Presentation only: never use abbreviated values for identity comparisons.
+String abbreviatedNpub(String? value) {
+  if (value == null || !value.startsWith('npub1') || value.length < 16) {
+    return 'Identity unavailable';
+  }
+  return '${value.substring(0, 9)}…${value.substring(value.length - 4)}';
+}
+
+String safeConnectionName(String value, {required String fallback}) {
+  final text = value.trim();
+  if (text.isEmpty ||
+      text.contains(RegExp(
+          r'https?://|wss?://|npub1|[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}|[0-9a-fA-F]{64}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}',
+          caseSensitive: false))) {
+    return fallback;
   }
   return text;
 }
