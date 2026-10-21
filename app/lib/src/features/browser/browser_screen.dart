@@ -29,6 +29,7 @@ import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
 import 'bookmark_editor.dart';
 import 'browser_app_selector.dart';
+import 'browser_background.dart';
 import 'browser_download.dart';
 import 'browser_navigation_state.dart';
 import 'browser_snapshot.dart';
@@ -575,72 +576,96 @@ class BrowserScreenState extends State<BrowserScreen>
       useSafeArea: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, updateOverview) => Dialog.fullscreen(
-          child: SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                AppBar(
-                  automaticallyImplyLeading: false,
-                  title: Text('Tabs (${_tabs.length})'),
-                  actions: [
-                    IconButton(
-                      tooltip: 'New tab',
-                      onPressed: () {
-                        _createHomeTab();
-                        Navigator.of(dialogContext).pop();
-                      },
-                      icon: const Icon(Icons.add),
+          child: BrowserBackground(
+            image: _selectorBackground ?? _defaultSelectorBackground,
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AppBar(
+                    automaticallyImplyLeading: false,
+                    backgroundColor: Colors.transparent,
+                    surfaceTintColor: Colors.transparent,
+                    title: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        child: Text('Tabs (${_tabs.length})'),
+                      ),
                     ),
-                    IconButton(
-                      tooltip: 'Close tab overview',
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 720 ? 3 : 2;
-                      return GridView.builder(
-                        key: const ValueKey('browser-mobile-tab-overview'),
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio:
-                              constraints.maxWidth > constraints.maxHeight
-                                  ? 1.55
-                                  : 0.82,
-                        ),
-                        itemCount: _tabs.length,
-                        itemBuilder: (context, index) {
-                          final tab = _tabs[index];
-                          return _MobileTabOverviewCard(
-                            key: ValueKey('tab-overview-${tab.id}'),
-                            title: tab.label,
-                            url: tab.currentUrl ?? tab.addressController.text,
-                            active: tab.id == _activeTabId,
-                            isHome: tab.isHome,
-                            isFips: tab.isFips,
-                            loading: tab.navigation.isLoading,
-                            previewBytes: tab.previewBytes,
-                            onSelect: () {
-                              Navigator.of(dialogContext).pop();
-                              if (tab.id != _activeTabId) _activateTab(tab.id);
-                            },
-                            onClose: () {
-                              _closeTab(tab.id);
-                              updateOverview(() {});
-                            },
-                          );
+                    actions: [
+                      IconButton(
+                        tooltip: 'New tab',
+                        style: IconButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surface),
+                        onPressed: () {
+                          _createHomeTab();
+                          Navigator.of(dialogContext).pop();
                         },
-                      );
-                    },
+                        icon: const Icon(Icons.add),
+                      ),
+                      IconButton(
+                        tooltip: 'Close tab overview',
+                        style: IconButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surface),
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 720 ? 3 : 2;
+                        return GridView.builder(
+                          key: const ValueKey('browser-mobile-tab-overview'),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: columns,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio:
+                                constraints.maxWidth > constraints.maxHeight
+                                    ? 1.55
+                                    : 0.82,
+                          ),
+                          itemCount: _tabs.length,
+                          itemBuilder: (context, index) {
+                            final tab = _tabs[index];
+                            return _MobileTabOverviewCard(
+                              key: ValueKey('tab-overview-${tab.id}'),
+                              title: tab.label,
+                              url: tab.currentUrl ?? tab.addressController.text,
+                              active: tab.id == _activeTabId,
+                              isHome: tab.isHome,
+                              isFips: tab.isFips,
+                              loading: tab.navigation.isLoading,
+                              previewBytes: tab.previewBytes,
+                              onSelect: () {
+                                Navigator.of(dialogContext).pop();
+                                if (tab.id != _activeTabId) {
+                                  _activateTab(tab.id);
+                                }
+                              },
+                              onClose: () {
+                                _closeTab(tab.id);
+                                updateOverview(() {});
+                              },
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

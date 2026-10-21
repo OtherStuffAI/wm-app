@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:wingman_app/src/features/browser/browser_background.dart';
+import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
@@ -25,6 +29,7 @@ void main() {
     WidgetTester tester, {
     Size size = const Size(390, 844),
     bool reducedMotion = false,
+    AppConfig? config,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -43,7 +48,7 @@ void main() {
         home: Scaffold(
           body: BrowserScreen(
             key: browserKey,
-            config: AppConfig.defaults(),
+            config: config ?? AppConfig.defaults(),
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
             onOpenDrawer: () {},
@@ -278,6 +283,48 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('mobile-tab-loading')), findsNothing);
     expect(find.byTooltip('Reload'), findsOneWidget);
+  });
+
+  testWidgets(
+      'overview shares custom wallpaper and reset restores bundled default',
+      (tester) async {
+    final data = await rootBundle.load('assets/app-selector/voxel-beach.png');
+    final bundled =
+        'data:image/png;base64,${base64Encode(data.buffer.asUint8List())}';
+    const custom =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+    const identity = 'wallpaper-test-identity';
+    final store = BrowserBookmarkStore();
+    await store.saveBackground(identity, custom);
+    await pumpBrowser(tester,
+        config: AppConfig.defaults().copyWith(deviceNpub: identity));
+    await tester.tap(find.byKey(const ValueKey('browser-mobile-tab-count')));
+    await tester.pumpAndSettle();
+    expect(
+        tester.widget<BrowserBackground>(find.byType(BrowserBackground)).image,
+        custom);
+    final appBar = tester.widget<AppBar>(find.byType(AppBar));
+    expect(appBar.backgroundColor, Colors.transparent);
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BrowserBackground), findsNothing);
+    expect(find.text('2'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await store.saveBackground(identity, null);
+    browserKey = GlobalKey<BrowserScreenState>();
+    await pumpBrowser(tester,
+        config: AppConfig.defaults().copyWith(deviceNpub: identity));
+    browserKey.currentState!.openTab('https://example.com');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('browser-mobile-tab-count')));
+    await tester.pumpAndSettle();
+    expect(
+        tester.widget<BrowserBackground>(find.byType(BrowserBackground)).image,
+        bundled);
+    await tester.tap(find.byTooltip('Close tab overview'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BrowserBackground), findsNothing);
   });
 
   testWidgets('desktop keeps the reorderable tab strip', (tester) async {

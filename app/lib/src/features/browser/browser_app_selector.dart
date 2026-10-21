@@ -1,6 +1,7 @@
 import '../../core/app_product.dart';
 import '../../theme/browser_palette.dart';
 import 'browser_bookmark_store.dart';
+import 'browser_background.dart';
 
 String _escape(String value) => value
     .replaceAll('&', '&amp;')
@@ -34,7 +35,7 @@ String browserAppSelectorHtml(
 <title>${AppProduct.title} New Tab</title>
 <style>
 :root {font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#19382f;background:#e4eee6;color-scheme:light}
-* {box-sizing:border-box} body {margin:0;min-height:100vh;background:linear-gradient(145deg,#dbe8dd,#e9ede2 55%,#c5dbd5);${background == null ? '' : 'background-image:linear-gradient(#edf4e755,#edf4e755),url("${_escape(background)}");background-size:cover;background-position:center;background-attachment:fixed;'}}
+* {box-sizing:border-box} body {margin:0;min-height:100vh;background:${BrowserBackgroundStyle.gradientCss};${background == null ? '' : 'background-image:linear-gradient(${BrowserBackgroundStyle.tintCss},${BrowserBackgroundStyle.tintCss}),url("${_escape(background)}");background-size:cover;background-position:center;background-attachment:fixed;'}}
 main {max-width:1056px;margin:auto;padding:88px 24px 32px}
 .settings {position:fixed;top:16px;right:16px;z-index:2;border:1px solid #ffffff88;border-radius:50%;width:44px;height:44px;font-size:24px;color:white;background:#19382f99;box-shadow:0 2px 8px #0006;cursor:pointer}
 .grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:28px 20px;align-items:start}
@@ -52,7 +53,7 @@ button {font:inherit} .app-open {border:0;background:transparent;color:inherit;d
 ${AppProduct.ambulando ? '' : '''
 /* Shared brand tokens; the landscape and custom app imagery remain intact. */
 :root {${BrowserPalette.cssVariables};color:var(--ink);background:var(--frame)}
-body {background-color:var(--frame);background-image:linear-gradient(145deg,#291c3d,#513568 55%,#7040aa);${background == null ? '' : 'background-image:linear-gradient(#291c3d33,#291c3d33),url("${_escape(background)}");'}}
+body {background-color:var(--frame);background-image:${BrowserBackgroundStyle.gradientCss};${background == null ? '' : 'background-image:linear-gradient(${BrowserBackgroundStyle.tintCss},${BrowserBackgroundStyle.tintCss}),url("${_escape(background)}");'}}
 .settings {background:var(--frame);color:var(--lavender);border-color:var(--outline);border-radius:8px;box-shadow:3px 3px 0 #291c3d66}
 .fallback {background:var(--active);color:var(--lavender);border:1px solid var(--outline);border-radius:8px;box-shadow:4px 4px 0 #291c3d99}
 .app-open {border-radius:8px}
