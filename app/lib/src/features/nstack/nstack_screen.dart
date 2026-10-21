@@ -340,6 +340,9 @@ class _NStackScreenState extends State<NStackScreen> {
               for (final workspace in stack.workspaces)
                 ListTile(
                   key: ValueKey('backup-workspace-${stack.id}-${workspace.id}'),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  minLeadingWidth: 0,
+                  horizontalTitleGap: 8,
                   dense: true,
                   leading: Radio<String>(
                     value: '${stack.id}:${workspace.id}',
@@ -363,6 +366,9 @@ class _NStackScreenState extends State<NStackScreen> {
                       : () => _selectBackupDestination(stack, workspace),
                 ),
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              minLeadingWidth: 0,
+              horizontalTitleGap: 8,
               leading: Icon(active
                   ? Icons.radio_button_checked
                   : Icons.radio_button_unchecked),
