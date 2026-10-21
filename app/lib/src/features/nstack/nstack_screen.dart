@@ -131,12 +131,14 @@ class _NStackScreenState extends State<NStackScreen> {
       child: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          Row(
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text('NStacks',
-                    style: Theme.of(context).textTheme.headlineMedium),
-              ),
+              Text('NStacks',
+                  style: Theme.of(context).textTheme.headlineMedium),
               FilledButton.icon(
                 key: const ValueKey('add-nstack'),
                 onPressed: _busy || !widget.config.hasDeviceSecret
@@ -192,14 +194,87 @@ class _NStackScreenState extends State<NStackScreen> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            ListTile(
-              leading: const Icon(Icons.dns_outlined),
-              title: Text(stack.displayName),
-              subtitle: Text(
-                  '${abbreviatedNpub(stack.publicIdentity)}\n${stack.workspaces.length} workspace(s)'),
-              isThreeLine: true,
-              trailing: Wrap(
+            LayoutBuilder(builder: (context, constraints) {
+              // Use the card's constraints, including when embedded on desktop.
+              final compact = constraints.maxWidth <
+                  640 * MediaQuery.textScalerOf(context).scale(1);
+              final labels = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Text(stack.displayName,
+                      key: ValueKey('nstack-name-${stack.id}'),
+                      style: Theme.of(context).textTheme.titleMedium,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
+                  Text(abbreviatedNpub(stack.publicIdentity),
+                      key: ValueKey('nstack-identity-${stack.id}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  Text('${stack.workspaces.length} workspace(s)'),
+                ],
+              );
+              final refresh = IconButton(
+                tooltip: 'Refresh workspaces',
+                onPressed: _busy || !widget.config.hasDeviceSecret
+                    ? null
+                    : () => _refreshStack(stack),
+                icon: _refreshingStackId == stack.id
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh),
+              );
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.dns_outlined),
+                      const Spacer(),
+                      refresh,
+                      PopupMenuButton<String>(
+                        tooltip: 'NStack actions',
+                        enabled: !_busy,
+                        onSelected: (action) {
+                          if (_busy) return;
+                          switch (action) {
+                            case 'rename':
+                              _renameStack(stack);
+                            case 'details':
+                              _showDetails(stack);
+                            case 'address':
+                              if (widget.config.hasDeviceSecret) {
+                                _editStack(stack);
+                              }
+                            case 'remove':
+                              _removeStack(stack);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                              value: 'rename', child: Text('Rename NStack')),
+                          const PopupMenuItem(
+                              value: 'details',
+                              child: Text('Reveal connection details')),
+                          PopupMenuItem(
+                              value: 'address',
+                              enabled: widget.config.hasDeviceSecret,
+                              child: const Text('Change address')),
+                          const PopupMenuItem(
+                              value: 'remove', child: Text('Remove NStack')),
+                        ],
+                      ),
+                    ]),
+                    labels,
+                    const SizedBox(height: 12),
+                  ],
+                );
+              }
+              return Row(children: [
+                const Icon(Icons.dns_outlined),
+                const SizedBox(width: 16),
+                Expanded(child: labels),
+                Row(mainAxisSize: MainAxisSize.min, children: [
                   IconButton(
                     tooltip: 'Refresh workspaces',
                     onPressed: _busy || !widget.config.hasDeviceSecret
@@ -234,9 +309,9 @@ class _NStackScreenState extends State<NStackScreen> {
                     onPressed: _busy ? null : () => _removeStack(stack),
                     icon: const Icon(Icons.delete_outline),
                   ),
-                ],
-              ),
-            ),
+                ]),
+              ]);
+            }),
             _serviceCatalogue(stack),
             if (stack.workspaceDiscovery == null)
               const ListTile(
@@ -272,11 +347,14 @@ class _NStackScreenState extends State<NStackScreen> {
                         workspace.supportsBackup &&
                         stack.workspaceDiscovery?.stale != true,
                   ),
-                  title: Text(workspace.displayName),
+                  title: Text(workspace.displayName,
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
                   subtitle: Text(
                     workspace.supportsBackup
                         ? '${stack.displayName} · ${abbreviatedNpub(workspace.workspaceServiceNpub)}'
                         : '${stack.displayName} · unavailable for workspace backup',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   onTap: _busy ||
                           !workspace.supportsBackup ||
@@ -618,6 +696,7 @@ class _NStackScreenState extends State<NStackScreen> {
     await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
+              scrollable: true,
               title: const Text('Connection details'),
               content: SizedBox(
                   width: 520,
@@ -651,14 +730,22 @@ class _NStackScreenState extends State<NStackScreen> {
             ));
   }
 
-  Widget _detail(String label, String value) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(label),
-        subtitle: SelectableText(value),
-        trailing: IconButton(
-            tooltip: 'Copy $label',
-            icon: const Icon(Icons.copy),
-            onPressed: () => Clipboard.setData(ClipboardData(text: value))),
+  Widget _detail(String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(children: [
+              Expanded(child: Text(label)),
+              IconButton(
+                  tooltip: 'Copy $label',
+                  icon: const Icon(Icons.copy),
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: value))),
+            ]),
+            SelectableText(value),
+          ],
+        ),
       );
 
   Future<void> _editStack([NStackEntry? existing]) async {
@@ -737,7 +824,9 @@ class _NStackScreenState extends State<NStackScreen> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text('Remove ${stack.displayName}?'),
+            scrollable: true,
+            title: Text('Remove ${stack.displayName}?',
+                maxLines: 2, overflow: TextOverflow.ellipsis),
             content: const Text(
                 'This removes its local metadata and website discovery aliases. Existing encrypted backup objects are immutable.'),
             actions: [
@@ -874,6 +963,7 @@ class _NStackEditorState extends State<_NStackEditor> {
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
                     labelText: 'NStack HTTPS address',
+                    helperMaxLines: 8,
                     helperText:
                         'NBrowser will authenticate and discover every workspace available to the active identity.',
                   )),

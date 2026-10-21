@@ -1,4 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +25,182 @@ void main() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
   });
+
+  for (final width in [320.0, 375.0, 390.0, 1200.0]) {
+    for (final scale in [1.0, 1.5, 2.0]) {
+      testWidgets('readable NStack at $width with text scale $scale',
+          (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 1000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final evidence = Platform.environment['NSTACK_SCREENSHOTS'];
+        if (evidence != null) {
+          final fonts = Platform.environment['NSTACK_FONT_DIRECTORY']!;
+          for (final entry in {
+            'LayoutEvidence': 'Roboto-Regular.ttf',
+            'MaterialIcons': 'MaterialIcons-Regular.otf',
+          }.entries) {
+            final font = FontLoader(entry.key)
+              ..addFont(Future.value(ByteData.sublistView(
+                  File('$fonts/${entry.value}').readAsBytesSync())));
+            await font.load();
+          }
+        }
+        final registry = NStackRegistryStore();
+        final stack = _backupStackWithTwoWorkspaces.copyWith(
+            name: 'Home NStack',
+            towerNpub: _workspaceOwner,
+            workspaces: [
+              for (final workspace in _backupStackWithTwoWorkspaces.workspaces)
+                NStackWorkspace.tryParse({
+                  ...workspace.toJson(),
+                  'name': workspace.id == 'workspace-b'
+                      ? List.filled(12, 'Operations').join(' ')
+                      : 'Home'
+                })!
+            ],
+            workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+                lastAttemptAt: DateTime.utc(2026, 10, 20), stale: false));
+        await registry.addOrUpdate('npub-test', stack, makeActive: true);
+        final grants = NStackGrantStore();
+        final access =
+            NStackAccessService(registryStore: registry, grantStore: grants);
+        final capture = GlobalKey();
+        final discovery = _PendingDiscovery();
+        await tester.pumpWidget(MaterialApp(
+          theme:
+              ThemeData(fontFamily: evidence == null ? null : 'LayoutEvidence'),
+          builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!),
+          home: RepaintBoundary(
+              key: capture,
+              child: Scaffold(
+                  body: NStackScreen(
+                config: AppConfig.defaults().copyWith(
+                    deviceNpub: 'npub-test', deviceSecret: 'secret-present'),
+                registryStore: registry,
+                grantStore: grants,
+                accessService: access,
+                discoveryService: NStackWorkspaceDiscoveryService(
+                    registryStore: registry, discovery: discovery),
+                recoveryService: NStackRecoveryService(
+                    registryStore: registry,
+                    storage: _NamespaceStorage(),
+                    relay: _NoRelay()),
+                onRegistryChanged: () {},
+              ))),
+        ));
+        await tester.pumpAndSettle();
+        final name = find.byKey(const ValueKey('nstack-name-stack-a'));
+        await tester.scrollUntilVisible(name, 300);
+        await tester.pumpAndSettle();
+        await tester.pumpAndSettle();
+        expect(tester.getSize(name).width, greaterThan(180));
+        expect(tester.getSize(name).height, lessThan(100));
+        expect(tester.takeException(), isNull);
+        if (evidence != null && width != 1200) {
+          await tester.ensureVisible(find.byTooltip('NStack actions'));
+          await tester.pumpAndSettle();
+          await tester.runAsync(() async {
+            final boundary = capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+            final image = await boundary.toImage(pixelRatio: 2);
+            final bytes =
+                await image.toByteData(format: ui.ImageByteFormat.png);
+            File('$evidence/nstack-$width-$scale.png')
+                .writeAsBytesSync(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+        final compact = width < 640 * scale + 80;
+        Future<void> action(String label) async {
+          await tester.scrollUntilVisible(name, -300);
+          await tester.pumpAndSettle();
+          if (compact) {
+            await tester.ensureVisible(find.byTooltip('NStack actions'));
+            await tester.pumpAndSettle();
+            await tester.tap(find.byTooltip('NStack actions'));
+            await tester.pumpAndSettle();
+            await tester.tap(find.text(label));
+          } else {
+            await tester.tap(find.byTooltip(label == 'Change address'
+                ? 'Connection details and address'
+                : label));
+          }
+          await tester.pumpAndSettle();
+        }
+
+        await action('Reveal connection details');
+        expect(find.text('https://personal.example'), findsWidgets);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('Close'));
+        await tester.pumpAndSettle();
+        await action('Change address');
+        expect(find.text('Change NStack address'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        await action('Rename NStack');
+        final longName = List.filled(12, 'Long name').join(' ');
+        await tester.enterText(find.byType(TextFormField), longName);
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+        expect((await registry.load('npub-test')).activeStack!.name, longName);
+        expect(tester.getSize(name).height, lessThan(100));
+        expect(tester.takeException(), isNull);
+        final workspace =
+            find.byKey(const ValueKey('backup-workspace-stack-a-workspace-a'));
+        await tester.ensureVisible(workspace);
+        await tester.pumpAndSettle();
+        await tester.tap(workspace);
+        await tester.pumpAndSettle();
+        final summary =
+            find.byKey(const ValueKey('backup-destination-selected'));
+        await tester.scrollUntilVisible(summary, 300);
+        await tester.pumpAndSettle();
+        expect(summary, findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await action('Remove NStack');
+        expect(find.text('Remove'), findsOneWidget);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        expect((await registry.load('npub-test')).stacks, hasLength(1));
+        await tester.scrollUntilVisible(name, -300);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.byTooltip('Refresh workspaces'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Refresh workspaces'));
+        await tester.pump();
+        if (!compact) {
+          expect(
+              tester
+                  .widget<IconButton>(find.widgetWithIcon(
+                      IconButton, Icons.drive_file_rename_outline))
+                  .onPressed,
+              isNull);
+        }
+        if (compact) {
+          expect(
+              tester
+                  .widget<PopupMenuButton<String>>(
+                      find.byType(PopupMenuButton<String>))
+                  .enabled,
+              isFalse);
+        }
+        discovery.result.complete(const []);
+        await tester.pumpAndSettle();
+        expect((await registry.load('npub-test')).activeStack!.name, longName);
+        expect((await registry.load('npub-test')).activeStack!.workspaces,
+            isEmpty);
+        expect(tester.takeException(), isNull);
+        await action('Remove NStack');
+        await tester.tap(find.text('Remove'));
+        await tester.pumpAndSettle();
+        expect((await registry.load('npub-test')).stacks, isEmpty);
+      });
+    }
+  }
 
   testWidgets('management surface hides endpoints and revokes origin discovery',
       (tester) async {
@@ -72,7 +253,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Personal NStack'), findsOneWidget);
-    expect(find.text('Identity unavailable\n0 workspace(s)'), findsOneWidget);
+    expect(find.text('Identity unavailable'), findsOneWidget);
+    expect(find.text('0 workspace(s)'), findsOneWidget);
     expect(find.textContaining('https://host.example'), findsNothing);
     await tester.tap(find.byTooltip('Reveal connection details'));
     await tester.pumpAndSettle();
@@ -467,6 +649,8 @@ void main() {
 
   testWidgets('locked native identity cannot add or refresh NStacks',
       (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     const identity = 'npub-locked';
     final registry = NStackRegistryStore();
     await registry.addOrUpdate(
@@ -508,6 +692,22 @@ void main() {
           .onPressed,
       isNull,
     );
+    await tester.ensureVisible(find.byTooltip('NStack actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('NStack actions'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<PopupMenuItem<String>>(
+                find.widgetWithText(PopupMenuItem<String>, 'Change address'))
+            .enabled,
+        isFalse);
+    expect(
+        tester
+            .widget<PopupMenuItem<String>>(
+                find.widgetWithText(PopupMenuItem<String>, 'Rename NStack'))
+            .enabled,
+        isTrue);
   });
 }
 
@@ -519,6 +719,16 @@ class _NoDiscovery implements NStackWorkspaceDiscovery {
     required String secret,
   }) =>
       throw UnimplementedError();
+}
+
+class _PendingDiscovery implements NStackWorkspaceDiscovery {
+  final result = Completer<List<NStackWorkspace>>();
+  @override
+  Future<List<NStackWorkspace>> discover(
+          {required String address,
+          required String identityNpub,
+          required String secret}) =>
+      result.future;
 }
 
 class _EmptyDiscovery implements NStackWorkspaceDiscovery {
